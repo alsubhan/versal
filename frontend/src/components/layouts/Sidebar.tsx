@@ -34,6 +34,11 @@ import {
   UploadCloud
 } from "lucide-react";
 
+// Add prop for performance dashboard toggle
+type SidebarProps = {
+  onPerformanceToggle?: () => void;
+};
+
 const sidebarLinks = [{
   name: "Dashboard",
   href: "/",
@@ -70,11 +75,6 @@ const sidebarLinks = [{
   icon: Users,
   permission: 'customers_view'
 }, {
-  name: "Inventory",
-  href: "/inventory",
-  icon: Package,
-  permission: 'inventory_view'
-}, {
   name: "Purchase Orders",
   href: "/purchase-orders",
   icon: ShoppingCart,
@@ -100,6 +100,11 @@ const sidebarLinks = [{
   icon: CreditCard,
   permission: 'credit_notes_view'
 }, {
+  name: "Inventory",
+  href: "/inventory",
+  icon: Package,
+  permission: 'inventory_view'
+}, {
   name: "Reports",
   href: "/reports",
   icon: BarChart3,
@@ -115,7 +120,7 @@ const sidebarLinks = [{
   icon: UploadCloud,
   permission: 'backup_view'
 }, {
-  name: "Users",
+  name: "Users & Access",
   href: "/users",
   icon: User,
   permission: 'users_view'
@@ -127,7 +132,7 @@ const sidebarLinks = [{
 }
 ];
 
-export const Sidebar = () => {
+export const Sidebar = ({ onPerformanceToggle }: SidebarProps) => {
   const [collapsed, setCollapsed] = useState(false);
   const location = useLocation();
   const {
@@ -175,7 +180,11 @@ export const Sidebar = () => {
   return <div className={cn("flex flex-col border-r bg-card border-border h-screen transition-all duration-300", collapsed ? "w-16" : "w-64")}>
       <div className="flex items-center justify-between p-4 border-b border-border h-16">
         {!collapsed && (
-          <div className="flex items-center space-x-2">
+          <div 
+            className="flex items-center space-x-2 cursor-pointer hover:opacity-80 transition-opacity"
+            onClick={onPerformanceToggle}
+            title="Click to open Performance Dashboard"
+          >
             <Package className="h-8 w-8 text-primary" />
             <div>
               <h1 className="text-xl font-bold">Versal WMS</h1>
