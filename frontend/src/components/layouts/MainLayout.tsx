@@ -1,13 +1,19 @@
 
-import React from "react";
+import React, { useState } from "react";
 import { Navigate, useLocation, Outlet } from "react-router-dom";
 import { Sidebar } from "@/components/layouts/Sidebar";
 import { useAuth } from "@/hooks/useAuth";
 import { ConfigIndicator } from '@/components/ConfigIndicator';
+import { PerformanceDashboard } from '@/components/PerformanceDashboard';
 
 export const MainLayout: React.FC = () => {
   const { isAuthenticated, loading } = useAuth();
   const location = useLocation();
+  const [isPerformanceDashboardVisible, setIsPerformanceDashboardVisible] = useState(false);
+
+  const togglePerformanceDashboard = () => {
+    setIsPerformanceDashboardVisible(!isPerformanceDashboardVisible);
+  };
 
   if (loading) {
     return (
@@ -24,13 +30,19 @@ export const MainLayout: React.FC = () => {
 
   return (
     <div className="flex h-screen overflow-hidden">
-      <Sidebar />
+      <Sidebar onPerformanceToggle={togglePerformanceDashboard} />
       <div className="flex flex-col flex-1 overflow-hidden">
         <main className="flex-1 overflow-y-auto p-6 bg-background">
           <Outlet />
         </main>
       </div>
       <ConfigIndicator />
+      {isPerformanceDashboardVisible && (
+        <PerformanceDashboard 
+          isVisible={isPerformanceDashboardVisible}
+          onClose={() => setIsPerformanceDashboardVisible(false)}
+        />
+      )}
     </div>
   );
 };
