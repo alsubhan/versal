@@ -9,6 +9,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { createTax, updateTax } from "@/lib/api";
 import { toast } from "sonner";
+import { PermissionGuard } from "@/components/ui/permission-guard";
 
 const TaxesPage = () => {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
@@ -45,10 +46,14 @@ const TaxesPage = () => {
   };
   
   return (
-    <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <h1 className="text-2xl font-bold tracking-tight">Tax Rates</h1>
-        {canCreateTaxes ? (
+    <PermissionGuard 
+      requiredPermission="taxes_view"
+      fallbackMessage="You do not have permission to view taxes. Please contact an administrator."
+    >
+      <div className="space-y-6">
+        <div className="flex justify-between items-center">
+          <h1 className="text-2xl font-bold tracking-tight">Tax Rates</h1>
+          {canCreateTaxes ? (
         <Button 
           onClick={handleAddTax}
           className="flex items-center gap-1"
@@ -84,7 +89,8 @@ const TaxesPage = () => {
         tax={editingTax}
         onSubmit={handleTaxSubmit}
       />
-    </div>
+      </div>
+    </PermissionGuard>
   );
 };
 

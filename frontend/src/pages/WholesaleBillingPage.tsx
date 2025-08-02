@@ -23,6 +23,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Lock } from "lucide-react";
+import { PermissionGuard } from "@/components/ui/permission-guard";
 
 // Sample data for demonstration
 const sampleBills: WholesaleBill[] = [
@@ -246,24 +247,9 @@ export default function WholesaleBillingPage() {
   const [creditNotes, setCreditNotes] = useState<CreditNote[]>([]);
 
   const { hasPermission } = useAuth();
-  const canViewBilling = hasPermission('sale_invoices_view');
   const canCreateBilling = hasPermission('sale_invoices_create');
   const canEditBilling = hasPermission('sale_invoices_edit');
   const canDeleteBilling = hasPermission('sale_invoices_delete');
-
-  if (!canViewBilling) {
-    return (
-      <div className="space-y-6">
-        <h1 className="text-2xl font-bold tracking-tight">Sale Invoices</h1>
-        <Alert>
-          <Lock className="h-4 w-4" />
-          <AlertDescription>
-            You do not have permission to view sale invoices. Please contact an administrator.
-          </AlertDescription>
-        </Alert>
-      </div>
-    );
-  }
 
   const handleAddNew = () => {
     setSelectedBill(undefined);
@@ -379,9 +365,13 @@ export default function WholesaleBillingPage() {
   };
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold tracking-tight">Sale Invoices</h1>
+    <PermissionGuard 
+      requiredPermission="wholesale_billing_view"
+      fallbackMessage="You do not have permission to view wholesale billing. Please contact an administrator."
+    >
+      <div className="space-y-6">
+        <div className="flex items-center justify-between">
+          <h1 className="text-2xl font-bold tracking-tight">Sale Invoices</h1>
         {canCreateBilling ? (
         <Button onClick={handleAddNew} className="flex items-center gap-2">
           <PlusCircle size={18} />
@@ -453,5 +443,6 @@ export default function WholesaleBillingPage() {
         </AlertDialogContent>
       </AlertDialog>
     </div>
+    </PermissionGuard>
   );
 }

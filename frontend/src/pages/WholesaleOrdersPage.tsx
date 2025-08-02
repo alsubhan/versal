@@ -20,6 +20,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Lock } from "lucide-react";
+import { PermissionGuard } from "@/components/ui/permission-guard";
 
 // Sample data for demonstration
 const sampleOrders: WholesaleOrder[] = [
@@ -187,24 +188,9 @@ export default function WholesaleOrdersPage() {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [itemToDeleteId, setItemToDeleteId] = useState<string | null>(null);
   const { hasPermission } = useAuth();
-  const canViewOrders = hasPermission('sale_orders_view');
   const canCreateOrders = hasPermission('sale_orders_create');
   const canEditOrders = hasPermission('sale_orders_edit');
   const canDeleteOrders = hasPermission('sale_orders_delete');
-
-  if (!canViewOrders) {
-    return (
-      <div className="space-y-6">
-        <h1 className="text-2xl font-bold tracking-tight">Sale Orders</h1>
-        <Alert>
-          <Lock className="h-4 w-4" />
-          <AlertDescription>
-            You do not have permission to view sale orders. Please contact an administrator.
-          </AlertDescription>
-        </Alert>
-      </div>
-    );
-  }
 
   const handleAddNew = () => {
     setSelectedOrder(undefined);
@@ -275,9 +261,13 @@ export default function WholesaleOrdersPage() {
   };
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold tracking-tight">Sale Orders</h1>
+    <PermissionGuard 
+      requiredPermission="wholesale_orders_view"
+      fallbackMessage="You do not have permission to view wholesale orders. Please contact an administrator."
+    >
+      <div className="space-y-6">
+        <div className="flex items-center justify-between">
+          <h1 className="text-2xl font-bold tracking-tight">Sale Orders</h1>
         {canCreateOrders ? (
         <Button onClick={handleAddNew} className="flex items-center gap-2">
           <PlusCircle size={18} />
@@ -336,5 +326,6 @@ export default function WholesaleOrdersPage() {
         </AlertDialogContent>
       </AlertDialog>
     </div>
+    </PermissionGuard>
   );
 }

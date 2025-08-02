@@ -163,15 +163,15 @@ export const StockLevelTable = ({ onEdit, canEdit = true }: StockLevelTableProps
                   </TableCell>
                   <TableCell>
                     <div className="flex items-center gap-1">
-                      {canEdit && (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => onEdit(item)}
-                        >
-                          <Edit className="h-4 w-4" />
-                        </Button>
-                      )}
+                    {canEdit && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => onEdit(item)}
+                      >
+                        <Edit className="h-4 w-4" />
+                      </Button>
+                    )}
                       {canEdit && (
                         <Button
                           variant="ghost"

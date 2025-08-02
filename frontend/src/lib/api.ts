@@ -24,7 +24,45 @@ export async function apiFetch(path: string, options: RequestInit = {}) {
   });
   
   if (!res.ok) {
-    throw new Error(await res.text());
+    // Clone the response so we can read it multiple times
+    const responseClone = res.clone();
+    
+    // Try to get the error text first
+    try {
+      const errorText = await responseClone.text();
+      
+      // Try to parse as JSON
+      try {
+        const errorData = JSON.parse(errorText);
+        
+        // Return error response instead of throwing
+        return {
+          error: true,
+          status: res.status,
+          statusText: res.statusText,
+          detail: errorData.detail || errorData.message || errorText,
+          data: errorData
+        };
+      } catch (jsonError) {
+        // If JSON parsing fails, use the raw text
+        return {
+          error: true,
+          status: res.status,
+          statusText: res.statusText,
+          detail: errorText || `HTTP ${res.status}: ${res.statusText}`,
+          data: null
+        };
+      }
+    } catch (textError) {
+      // If even text reading fails, use status info
+      return {
+        error: true,
+        status: res.status,
+        statusText: res.statusText,
+        detail: `HTTP ${res.status}: ${res.statusText}`,
+        data: null
+      };
+    }
   }
   
   return res.json();
@@ -36,7 +74,14 @@ export async function getUsers() {
 }
 
 export async function createUser(user: any) {
-  return apiFetch('/users', { method: 'POST', body: JSON.stringify(user) });
+  const result = await apiFetch('/users', { method: 'POST', body: JSON.stringify(user) });
+  
+  // Check if the result is an error response
+  if (result && result.error) {
+    throw new Error(result.detail);
+  }
+  
+  return result;
 }
 
 export async function updateUser(id: string, user: any) {
@@ -53,11 +98,25 @@ export async function getRoles() {
 }
 
 export async function createRole(role: any) {
-  return apiFetch('/roles', { method: 'POST', body: JSON.stringify(role) });
+  const result = await apiFetch('/roles', { method: 'POST', body: JSON.stringify(role) });
+  
+  // Check if the result is an error response
+  if (result && result.error) {
+    throw new Error(result.detail);
+  }
+  
+  return result;
 }
 
 export async function updateRole(roleName: string, role: any) {
-  return apiFetch(`/roles/${roleName}`, { method: 'PUT', body: JSON.stringify(role) });
+  const result = await apiFetch(`/roles/${roleName}`, { method: 'PUT', body: JSON.stringify(role) });
+  
+  // Check if the result is an error response
+  if (result && result.error) {
+    throw new Error(result.detail);
+  }
+  
+  return result;
 }
 
 export async function deleteRole(roleName: string) {

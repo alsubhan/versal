@@ -83,22 +83,14 @@ def to_camel_case_category(category):
     }
 
 def to_camel_case_role(role):
-    permissions_data = role.get("permissions", [])
-    
-    # Parse permissions if it's a JSON string, otherwise use as-is
-    if isinstance(permissions_data, str):
-        try:
-            permissions = json.loads(permissions_data)
-        except json.JSONDecodeError:
-            permissions = []
-    else:
-        permissions = permissions_data or []
-    
+    """Convert role data from snake_case to camelCase"""
     return {
-        **role,
+        "id": role.get("id"),
+        "name": role.get("name"),
+        "description": role.get("description"),
+        "permissions": role.get("permissions", []),
         "createdAt": role.get("created_at"),
-        "updatedAt": role.get("updated_at"),
-        "permissions": permissions
+        "updatedAt": role.get("updated_at")
     }
 
 def to_camel_case_user(user):
@@ -796,8 +788,28 @@ def get_roles(payload=Depends(require_role(["admin"]))):
     roles = [to_camel_case_role(role) for role in data.data]
     return JSONResponse(content=roles)
 
+# Helper function to check for duplicate role names
+def check_duplicate_role_name(name: str, exclude_role_name: str = None):
+    """Check if a role with the given name already exists"""
+    try:
+        query = supabase.table("roles").select("name").eq("name", name)
+        if exclude_role_name:
+            query = query.neq("name", exclude_role_name)
+        result = query.execute()
+        return len(result.data) > 0
+    except Exception:
+        return False
+
 @app.post("/roles")
 def create_role(role: dict = Body(...), payload=Depends(require_role(["admin"]))):
+    # Check for duplicate role name
+    role_name = role.get("name")
+    if not role_name:
+        raise HTTPException(status_code=400, detail="Role name is required")
+    
+    if check_duplicate_role_name(role_name):
+        raise HTTPException(status_code=409, detail=f"A role with name '{role_name}' already exists")
+    
     # Map camelCase to snake_case
     if "createdAt" in role:
         role["created_at"] = role.pop("createdAt")
@@ -815,7 +827,13 @@ def create_role(role: dict = Body(...), payload=Depends(require_role(["admin"]))
 
 @app.put("/roles/{role_name}")
 def update_role(role_name: str, role: dict = Body(...), payload=Depends(require_role(["admin"]))):
-    # Map camelCase to snake_case
+    # Check for duplicate role name if name is being changed
+    new_role_name = role.get("name")
+    if new_role_name and new_role_name != role_name:
+        if check_duplicate_role_name(new_role_name, role_name):
+            raise HTTPException(status_code=409, detail=f"A role with name '{new_role_name}' already exists")
+    
+    # Map camelCase to snake_case for timestamp fields
     if "createdAt" in role:
         role["created_at"] = role.pop("createdAt")
     if "updatedAt" in role:
@@ -826,6 +844,17 @@ def update_role(role_name: str, role: dict = Body(...), payload=Depends(require_
         role["permissions"] = role["permissions"]
     else:
         role["permissions"] = []
+    
+    # Remove id field if present (shouldn't be updated)
+    role.pop("id", None)
+    
+    # For updates, we typically don't want to change created_at, 
+    # but we can allow updated_at to be set (though the trigger will handle it)
+    if "created_at" in role:
+        # Only allow created_at to be set if it's not already set in the database
+        existing_role = supabase.table("roles").select("created_at").eq("name", role_name).execute()
+        if existing_role.data and existing_role.data[0].get("created_at"):
+            role.pop("created_at")  # Don't update existing created_at
     
     data = supabase.table("roles").update(role).eq("name", role_name).execute()
     return JSONResponse(content=data.data)
@@ -885,14 +914,72 @@ def get_users(payload=Depends(require_role(["admin"]))):
     
     return JSONResponse(content=users)
 
+# Helper function to check for duplicate user names
+def check_duplicate_user_name(name: str, exclude_user_id: str = None):
+    """Check if a user with the given name already exists"""
+    try:
+        query = supabase.table("profiles").select("id").eq("full_name", name)
+        if exclude_user_id:
+            query = query.neq("id", exclude_user_id)
+        result = query.execute()
+        return len(result.data) > 0
+    except Exception:
+        return False
+
+# Helper function to check for duplicate user emails
+def check_duplicate_user_email(email: str, exclude_user_id: str = None):
+    """Check if a user with the given email already exists"""
+    try:
+        # First check if email column exists in profiles table
+        # If not, we'll check auth.users instead
+        query = supabase.table("profiles").select("id").eq("email", email)
+        if exclude_user_id:
+            query = query.neq("id", exclude_user_id)
+        result = query.execute()
+        return len(result.data) > 0
+    except Exception:
+        # If profiles table doesn't have email column, try checking auth.users
+        try:
+            # This is a fallback - check if user exists in auth
+            resp = requests.get(
+                f"{SUPABASE_URL}/auth/v1/admin/users",
+                headers={
+                    "apiKey": SUPABASE_SERVICE_KEY,
+                    "Authorization": f"Bearer {SUPABASE_SERVICE_KEY}",
+                    "Content-Type": "application/json"
+                },
+                params={"email": email}
+            )
+            if resp.status_code == 200:
+                users = resp.json()
+                # Filter out the current user if we're updating
+                if exclude_user_id:
+                    users = [u for u in users if u.get("id") != exclude_user_id]
+                return len(users) > 0
+            return False
+        except Exception:
+            return False
+
 @app.post("/users")
 def create_user(user: dict = Body(...), payload=Depends(require_role(["admin"]))):
     try:
         email = user.get("email")
         password = user.get("password") or "TempPassword123!"
+        name = user.get("name")
         
         if not email:
             raise HTTPException(status_code=400, detail="Email is required")
+        
+        if not name:
+            raise HTTPException(status_code=400, detail="Name is required")
+        
+        # Check if user with same email already exists
+        if check_duplicate_user_email(email):
+            raise HTTPException(status_code=409, detail=f"A user with email '{email}' already exists")
+        
+        # Check if user with same name already exists
+        if check_duplicate_user_name(name):
+            raise HTTPException(status_code=409, detail=f"A user with name '{name}' already exists")
         
         # Use the same approach as frontend signup - this will trigger the database trigger
         # to automatically create the profile
@@ -904,7 +991,7 @@ def create_user(user: dict = Body(...), payload=Depends(require_role(["admin"]))
             # Prepare user metadata (this will be used by the database trigger)
             user_metadata = {
                 "username": email.split("@")[0],
-                "full_name": user.get("name") or "New User",
+                "full_name": name,
                 "role": user.get("role") or "staff"
             }
             
@@ -936,16 +1023,16 @@ def create_user(user: dict = Body(...), payload=Depends(require_role(["admin"]))
                                     
                                     # Update profile with role_id
                                     supabase.table("profiles").update({"role_id": role_id}).eq("id", user_id).execute()
-                            except Exception:
-                                pass
+                            except Exception as e:
+                                print(f"Error updating role_id: {str(e)}")  # Debug log
                         
                         # Update the profile with status if provided
                         if user.get("status"):
                             try:
                                 is_active = (user.get("status") == "Active")
                                 supabase.table("profiles").update({"is_active": is_active}).eq("id", user_id).execute()
-                            except Exception:
-                                pass
+                            except Exception as e:
+                                print(f"Error updating status: {str(e)}")  # Debug log
                         
                         # Return user data
                         user_data = {
@@ -970,15 +1057,25 @@ def create_user(user: dict = Body(...), payload=Depends(require_role(["admin"]))
         except Exception as auth_error:
             raise HTTPException(status_code=500, detail=f"Failed to create user: {str(auth_error)}")
         
+    except HTTPException:
+        # Re-raise HTTP exceptions as-is
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Database error creating new user: {str(e)}")
 
 @app.put("/users/{user_id}")
 def update_user(user_id: str, user: dict = Body(...), payload=Depends(require_role(["admin"]))):
-    # Remove email and lastLogin from user data since they're not in profiles table
+    # Remove fields that are not in profiles table
     user_data = user.copy()
     user_data.pop("email", None)  # Remove email if present
     user_data.pop("lastLogin", None)  # Remove lastLogin if present
+    user_data.pop("password", None)  # Remove password if present - handled by Supabase Auth
+    
+    # Check for duplicate name if name is being updated
+    if "name" in user_data:
+        new_name = user_data["name"]
+        if check_duplicate_user_name(new_name, user_id):
+            raise HTTPException(status_code=409, detail=f"A user with name '{new_name}' already exists")
     
     # Map status to is_active
     if "status" in user_data:
@@ -1058,26 +1155,6 @@ def get_profiles_schema(payload=Depends(require_role(["admin"]))):
             }
         else:
             return {"columns": [], "sample_data": None}
-    except Exception as e:
-        return {"error": str(e)}
-
-@app.get("/debug/roles-schema")
-def get_roles_schema(payload=Depends(require_role(["admin"]))):
-    """Debug endpoint to check roles table structure and data"""
-    try:
-        # Get roles table data
-        result = supabase.table("roles").select("*").execute()
-        if result.data:
-            # Get the first row to see column names
-            sample_row = result.data[0]
-            return {
-                "columns": list(sample_row.keys()),
-                "roles_data": result.data,
-                "roles_count": len(result.data),
-                "sample_role": sample_row
-            }
-        else:
-            return {"columns": [], "roles_data": [], "roles_count": 0}
     except Exception as e:
         return {"error": str(e)}
 

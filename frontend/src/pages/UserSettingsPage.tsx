@@ -17,7 +17,7 @@ import { ChangePasswordDialog } from "@/components/dialogs/ChangePasswordDialog"
 import { getUserSettings, createUserSetting, updateUserSetting } from "@/lib/api";
 
 const UserSettingsPage = () => {
-  const { user, hasPermission } = useAuth();
+  const { user, hasPermission, loading: authLoading, permissions } = useAuth();
   const { theme, setTheme } = useTheme();
   const canViewSettings = hasPermission('settings_view');
   const canEditSettings = hasPermission('settings_edit');
@@ -66,8 +66,23 @@ const UserSettingsPage = () => {
 
     if (canViewSettings) {
       fetchUserSettings();
+    } else {
+      // If user doesn't have permission, stop loading immediately
+      setLoading(false);
     }
   }, [canViewSettings]);
+
+  // Show loading spinner during auth/permission check OR data loading
+  if (authLoading || permissions.length === 0 || loading) {
+    return (
+      <div className="flex items-center justify-center min-h-[400px]">
+        <div className="flex flex-col items-center space-y-4">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+          <p className="text-sm text-muted-foreground">Loading...</p>
+        </div>
+      </div>
+    );
+  }
 
   // If user doesn't have permission to view settings, show access denied
   if (!canViewSettings) {

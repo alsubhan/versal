@@ -21,6 +21,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Lock } from "lucide-react";
 import { createCreditNote, updateCreditNote, deleteCreditNote } from "@/lib/api";
+import { PermissionGuard } from "@/components/ui/permission-guard";
 
 export default function CreditNotesPage() {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
@@ -31,27 +32,9 @@ export default function CreditNotesPage() {
   const [creditNoteToDelete, setCreditNoteToDelete] = useState<string | null>(null);
   
   const { hasPermission } = useAuth();
-  const canViewCreditNotes = hasPermission('credit_notes_view');
   const canCreateCreditNotes = hasPermission('credit_notes_create');
   const canEditCreditNotes = hasPermission('credit_notes_edit');
   const canDeleteCreditNotes = hasPermission('credit_notes_delete');
-
-  // Check if user has any credit note permissions
-  if (!canViewCreditNotes && !canCreateCreditNotes && !canEditCreditNotes && !canDeleteCreditNotes) {
-    return (
-      <div className="space-y-6">
-        <div className="flex justify-between items-center">
-          <h1 className="text-2xl font-bold tracking-tight">Credit Notes</h1>
-        </div>
-        <Alert>
-          <Lock className="h-4 w-4" />
-          <AlertDescription>
-            You do not have permission to access credit notes. Please contact your administrator.
-          </AlertDescription>
-        </Alert>
-      </div>
-    );
-  }
 
   const handleAddNew = () => {
     setEditingCreditNote(null);
@@ -107,9 +90,13 @@ export default function CreditNotesPage() {
   };
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold tracking-tight">Credit Notes</h1>
+    <PermissionGuard 
+      requiredPermission="credit_notes_view"
+      fallbackMessage="You do not have permission to view credit notes. Please contact an administrator."
+    >
+      <div className="space-y-6">
+        <div className="flex items-center justify-between">
+          <h1 className="text-2xl font-bold tracking-tight">Credit Notes</h1>
         {canCreateCreditNotes ? (
         <Button onClick={handleAddNew} className="flex items-center gap-2">
           <PlusCircle size={18} />
@@ -166,5 +153,6 @@ export default function CreditNotesPage() {
         </AlertDialogContent>
       </AlertDialog>
     </div>
+    </PermissionGuard>
   );
 }

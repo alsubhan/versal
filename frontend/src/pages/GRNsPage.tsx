@@ -18,8 +18,7 @@ import {
 import { toast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Lock } from "lucide-react";
+import { PermissionGuard } from "@/components/ui/permission-guard";
 
 // Sample data for demonstration
 const sampleGrns: GoodsReceiveNote[] = [
@@ -148,24 +147,9 @@ export default function GRNsPage() {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [itemToDeleteId, setItemToDeleteId] = useState<string | null>(null);
   const { hasPermission } = useAuth();
-  const canViewGRN = hasPermission('grn_view');
   const canCreateGRN = hasPermission('grn_create');
   const canEditGRN = hasPermission('grn_edit');
   const canDeleteGRN = hasPermission('grn_delete');
-
-  if (!canViewGRN) {
-    return (
-      <div className="space-y-6">
-        <h1 className="text-2xl font-bold tracking-tight">Goods Receive Notes</h1>
-        <Alert>
-          <Lock className="h-4 w-4" />
-          <AlertDescription>
-            You do not have permission to view GRNs. Please contact an administrator.
-          </AlertDescription>
-        </Alert>
-      </div>
-    );
-  }
 
   const handleAddNew = () => {
     setSelectedGrn(undefined);
@@ -233,64 +217,69 @@ export default function GRNsPage() {
   };
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold tracking-tight">Goods Receive Notes</h1>
-        {canCreateGRN ? (
-        <Button onClick={handleAddNew} className="flex items-center gap-2">
-          <PlusCircle size={18} />
-          New GRN
-        </Button>
-        ) : (
-          <TooltipProvider>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <span>
-                  <Button disabled className="flex items-center gap-2">
-                    <PlusCircle size={18} />
-                    New GRN
-                  </Button>
-                </span>
-              </TooltipTrigger>
-              <TooltipContent>
-                You do not have permission to create GRNs
-              </TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
-        )}
+    <PermissionGuard 
+      requiredPermission="grn_view"
+      fallbackMessage="You do not have permission to view goods receive notes. Please contact an administrator."
+    >
+      <div className="space-y-6">
+        <div className="flex items-center justify-between">
+          <h1 className="text-2xl font-bold tracking-tight">Goods Receive Notes</h1>
+          {canCreateGRN ? (
+            <Button onClick={handleAddNew} className="flex items-center gap-2">
+              <PlusCircle size={18} />
+              New GRN
+            </Button>
+          ) : (
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span>
+                    <Button disabled className="flex items-center gap-2">
+                      <PlusCircle size={18} />
+                      New GRN
+                    </Button>
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent>
+                  You do not have permission to create GRNs
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          )}
+        </div>
+
+        <GRNTable
+          grns={data}
+          onView={handleView}
+          onEdit={canEditGRN ? handleEdit : undefined}
+          onDelete={canDeleteGRN ? handleDeleteClick : undefined}
+          canEdit={canEditGRN}
+          canDelete={canDeleteGRN}
+        />
+
+        <GRNDialog
+          open={dialogOpen}
+          onOpenChange={setDialogOpen}
+          grn={selectedGrn}
+          onSave={handleSave}
+        />
+
+        <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Are you sure?</AlertDialogTitle>
+              <AlertDialogDescription>
+                This action cannot be undone. This will permanently delete the
+                goods receive note and all associated data.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction onClick={handleDelete}>Delete</AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </div>
-
-      <GRNTable
-        grns={data}
-        onView={handleView}
-        onEdit={canEditGRN ? handleEdit : undefined}
-        onDelete={canDeleteGRN ? handleDeleteClick : undefined}
-        canEdit={canEditGRN}
-        canDelete={canDeleteGRN}
-      />
-
-      <GRNDialog
-        open={dialogOpen}
-        onOpenChange={setDialogOpen}
-        grn={selectedGrn}
-        onSave={handleSave}
-      />
-
-      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Are you sure?</AlertDialogTitle>
-            <AlertDialogDescription>
-              This action cannot be undone. This will permanently delete the
-              goods receive note and all associated data.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={handleDelete}>Delete</AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    </div>
+    </PermissionGuard>
   );
 }

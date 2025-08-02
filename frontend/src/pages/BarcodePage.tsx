@@ -7,9 +7,8 @@ import { Barcode, Download, Printer } from "lucide-react";
 import { useReactToPrint } from "react-to-print";
 import { useRef } from "react";
 import { useAuth } from "@/hooks/useAuth";
-import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Lock } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { PermissionGuard } from "@/components/ui/permission-guard";
 
 const BarcodePage = () => {
   // Move all hooks to the top - always call them in the same order
@@ -27,7 +26,6 @@ const BarcodePage = () => {
 
   const barcodeRef = useRef<HTMLDivElement>(null);
   const { hasPermission } = useAuth();
-  const canViewBarcode = hasPermission('barcode_view');
   const canCreateBarcode = hasPermission('barcode_create');
   const canPrintBarcode = hasPermission('barcode_print');
 
@@ -35,21 +33,6 @@ const BarcodePage = () => {
     documentTitle: "Barcodes",
     contentRef: barcodeRef,
   });
-
-  // Now do the conditional render after all hooks are called
-  if (!canViewBarcode) {
-    return (
-      <div className="space-y-6">
-        <h1 className="text-2xl font-bold tracking-tight">Barcode Printing</h1>
-        <Alert>
-          <Lock className="h-4 w-4" />
-          <AlertDescription>
-            You do not have permission to view barcode printing. Please contact an administrator.
-          </AlertDescription>
-        </Alert>
-      </div>
-    );
-  }
 
   const handleAddBarcode = () => {
     if (newBarcode.code && newBarcode.label) {
@@ -67,38 +50,42 @@ const BarcodePage = () => {
   };
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold tracking-tight">Barcode Printing</h1>
-        <div className="flex space-x-2">
-          {canPrintBarcode ? (
-          <Button onClick={handlePrint} className="flex items-center gap-2">
-            <Printer size={18} />
-            Print Barcodes
-          </Button>
-          ) : (
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <span>
-                    <Button disabled className="flex items-center gap-2">
-                      <Printer size={18} />
-                      Print Barcodes
-                    </Button>
-                  </span>
-                </TooltipTrigger>
-                <TooltipContent>
-                  You do not have permission to print barcodes
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-          )}
-          <Button variant="outline" className="flex items-center gap-2">
-            <Download size={18} />
-            Export PDF
-          </Button>
+    <PermissionGuard 
+      requiredPermission="barcode_view"
+      fallbackMessage="You do not have permission to view barcode printing. Please contact an administrator."
+    >
+      <div className="space-y-6">
+        <div className="flex items-center justify-between">
+          <h1 className="text-2xl font-bold tracking-tight">Barcode Printing</h1>
+          <div className="flex space-x-2">
+            {canPrintBarcode ? (
+            <Button onClick={handlePrint} className="flex items-center gap-2">
+              <Printer size={18} />
+              Print Barcodes
+            </Button>
+            ) : (
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span>
+                      <Button disabled className="flex items-center gap-2">
+                        <Printer size={18} />
+                        Print Barcodes
+                      </Button>
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    You do not have permission to print barcodes
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            )}
+            <Button variant="outline" className="flex items-center gap-2">
+              <Download size={18} />
+              Export PDF
+            </Button>
+          </div>
         </div>
-      </div>
       
       <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
         <Card>
@@ -214,6 +201,7 @@ const BarcodePage = () => {
         </Card>
       </div>
     </div>
+    </PermissionGuard>
   );
 };
 

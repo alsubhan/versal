@@ -135,13 +135,13 @@ export function StockLevelDialog({ open, onOpenChange, stockLevel, onSuccess }: 
         });
       } else {
         await createStockLevel(stockLevelData);
-        toast({
+    toast({
           title: "Stock level created successfully",
           description: `Created stock level for ${products.find(p => p.id === data.productId)?.name}`,
-        });
+    });
       }
       
-      onOpenChange(false);
+    onOpenChange(false);
       onSuccess?.(); // Callback to refresh the table
     } catch (error) {
       console.error('Error saving stock level:', error);

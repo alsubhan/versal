@@ -1,5 +1,6 @@
 
 import { useState, useEffect } from "react";
+import { useLocation } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { 
   Table, 
@@ -43,11 +44,15 @@ import {
   Trash2, 
   Shield, 
   KeyRound, 
-  CheckSquare 
+  CheckSquare,
+  Loader2,
+  RefreshCw
 } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { getUsers, createUser, updateUser, deleteUser, getRoles, createRole, updateRole, deleteRole } from "@/lib/api";
+import { PermissionGuard } from "@/components/ui/permission-guard";
 
 // User type definition
 interface UserData {
@@ -186,29 +191,66 @@ interface Role {
   permissions: string[];
 }
 
+// Simple cache for users and roles data
+const dataCache = {
+  users: null as UserData[] | null,
+  roles: null as Role[] | null,
+  lastFetch: 0,
+  isInitialized: false
+};
+
 const UsersPage = () => {
   const { toast } = useToast();
   const { user, hasPermission } = useAuth();
+  const location = useLocation();
   const canManageUsers = hasPermission('users_manage') || hasPermission('users_create') || hasPermission('users_edit') || hasPermission('users_delete');
   const canCreateUsers = hasPermission('users_create');
   const canEditUsers = hasPermission('users_edit');
   const canDeleteUsers = hasPermission('users_delete');
   
+  // Role management permissions
+  const canManageRoles = hasPermission('roles_manage') || hasPermission('roles_create') || hasPermission('roles_edit') || hasPermission('roles_delete');
+  const canCreateRoles = hasPermission('roles_create');
+  const canEditRoles = hasPermission('roles_edit');
+  const canDeleteRoles = hasPermission('roles_delete');
+  
   const [users, setUsers] = useState<UserData[]>([]);
   const [roles, setRoles] = useState<Role[]>([]);
-  const [activeTab, setActiveTab] = useState("users");
   const [loading, setLoading] = useState(false);
+  const [usersLoading, setUsersLoading] = useState(false);
+  const [rolesLoading, setRolesLoading] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [lastFetchTime, setLastFetchTime] = useState<number>(0);
+  const [hasInitialized, setHasInitialized] = useState(false);
   
-  // User dialog state
+  // User dialog state with change tracking
   const [userDialogOpen, setUserDialogOpen] = useState(false);
   const [currentUser, setCurrentUser] = useState<UserData | null>(null);
-  const [selectedRole, setSelectedRole] = useState<string>("");
-  const [selectedStatus, setSelectedStatus] = useState<string>("Active");
+  const [userFormData, setUserFormData] = useState<UserData>({
+    id: '',
+    name: '',
+    email: '',
+    role: '',
+    status: 'Active' as const,
+    lastLogin: '',
+    password: ''
+  });
+  const [originalUserData, setOriginalUserData] = useState<UserData | null>(null);
+  const [modifiedUserFields, setModifiedUserFields] = useState<Set<string>>(new Set());
+  const [userFormValid, setUserFormValid] = useState(false);
   
-  // Role dialog state
+  // Role dialog state with change tracking
   const [roleDialogOpen, setRoleDialogOpen] = useState(false);
   const [currentRole, setCurrentRole] = useState<Role | null>(null);
+  const [roleFormData, setRoleFormData] = useState<Role>({
+    name: '',
+    description: '',
+    permissions: []
+  });
+  const [originalRoleData, setOriginalRoleData] = useState<Role | null>(null);
+  const [modifiedRoleFields, setModifiedRoleFields] = useState<Set<string>>(new Set());
   const [selectedPermissions, setSelectedPermissions] = useState<string[]>([]);
+  const [roleFormValid, setRoleFormValid] = useState(false);
   
   // Confirmation dialogs state
   const [deleteUserDialogOpen, setDeleteUserDialogOpen] = useState(false);
@@ -226,11 +268,24 @@ const UsersPage = () => {
   }, {} as Record<string, Permission[]>);
 
   // Fetch users and roles from API
-  const fetchUsers = async () => {
+  const fetchUsers = async (forceRefresh = false) => {
+    // Check cache first
+    if (!forceRefresh && dataCache.users && (Date.now() - dataCache.lastFetch) < 5 * 60 * 1000) {
+      setUsers(dataCache.users);
+      setLastFetchTime(dataCache.lastFetch);
+      return;
+    }
+
     try {
-      setLoading(true);
+      setUsersLoading(true);
       const data = await getUsers();
-      setUsers(data || []);
+      const userData = data || [];
+      setUsers(userData);
+      setLastFetchTime(Date.now());
+      
+      // Update cache
+      dataCache.users = userData;
+      dataCache.lastFetch = Date.now();
     } catch (error: any) {
       toast({
         title: "Error",
@@ -238,27 +293,96 @@ const UsersPage = () => {
         variant: "destructive"
       });
     } finally {
-      setLoading(false);
+      setUsersLoading(false);
     }
   };
 
-  const fetchRoles = async () => {
+  const fetchRoles = async (forceRefresh = false) => {
+    // Check cache first
+    if (!forceRefresh && dataCache.roles && (Date.now() - dataCache.lastFetch) < 5 * 60 * 1000) {
+      setRoles(dataCache.roles);
+      setLastFetchTime(dataCache.lastFetch);
+      return;
+    }
+
     try {
+      setRolesLoading(true);
       const data = await getRoles();
-      setRoles(data || []);
+      const roleData = data || [];
+      setRoles(roleData);
+      setLastFetchTime(Date.now());
+      
+      // Update cache
+      dataCache.roles = roleData;
+      dataCache.lastFetch = Date.now();
     } catch (error: any) {
       toast({
         title: "Error",
         description: error.message,
         variant: "destructive"
       });
+    } finally {
+      setRolesLoading(false);
     }
   };
 
+  // Smart refresh logic
+  const shouldRefreshData = () => {
+    const now = Date.now();
+    const fiveMinutes = 5 * 60 * 1000; // 5 minutes in milliseconds
+    
+    // Don't refresh if we already have data and it's fresh
+    if (users.length > 0 && roles.length > 0 && (now - lastFetchTime) < fiveMinutes) {
+      return false;
+    }
+    
+    // Only refresh if data is missing or stale
+    return !hasInitialized || users.length === 0 || roles.length === 0 || (now - lastFetchTime) > fiveMinutes;
+  };
+
+  // Initial load and smart refresh on navigation
   useEffect(() => {
-    fetchUsers();
-    fetchRoles();
-  }, []);
+    if (hasPermission('users_view')) {
+      // Check if we have cached data
+      if (dataCache.users && dataCache.roles && !dataCache.isInitialized) {
+        // Use cached data
+        setUsers(dataCache.users);
+        setRoles(dataCache.roles);
+        setLastFetchTime(dataCache.lastFetch);
+        setHasInitialized(true);
+        setLoading(false);
+        return;
+      }
+      
+      // Only show loading if we don't have any data
+      if (users.length === 0 && roles.length === 0) {
+        setLoading(true);
+      }
+      
+      if (shouldRefreshData()) {
+        setHasInitialized(true);
+        dataCache.isInitialized = true;
+        Promise.all([fetchUsers(), fetchRoles()]).finally(() => {
+          setLoading(false);
+        });
+      } else {
+        // Data is fresh, no need to show loading
+        setLoading(false);
+      }
+    }
+  }, [hasPermission, location.pathname]); // React to route changes
+
+  // Show loading spinner
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center min-h-[400px]">
+        <div className="flex flex-col items-center space-y-4">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+          <p className="text-sm text-muted-foreground">Loading users and roles...</p>
+        </div>
+      </div>
+    );
+  }
 
   const formatDate = (dateString: string) => {
     const options: Intl.DateTimeFormatOptions = {
@@ -271,29 +395,439 @@ const UsersPage = () => {
     return new Date(dateString).toLocaleDateString(undefined, options);
   };
 
+  // Change tracking functions
+  const handleUserFieldChange = (field: keyof UserData, value: string) => {
+    setUserFormData(prev => {
+      const newFormData = { ...prev, [field]: value };
+      
+      // Track if this field has been modified from its original value
+      if (originalUserData && originalUserData[field] !== value) {
+        setModifiedUserFields(prevFields => new Set(prevFields).add(field));
+      } else if (originalUserData && originalUserData[field] === value) {
+        setModifiedUserFields(prevFields => {
+          const newSet = new Set(prevFields);
+          newSet.delete(field);
+          return newSet;
+        });
+      }
+      
+      // Real-time validation for new users
+      if (!currentUser) {
+        const validation = validateUserFormWithData(newFormData);
+        setUserFormValid(validation.isValid);
+      }
+      
+      return newFormData;
+    });
+  };
+
+  // Helper function to validate form with specific data
+  const validateUserFormWithData = (formData: UserData): { isValid: boolean; errors: string[] } => {
+    const errors: string[] = [];
+    
+    if (!formData.name.trim()) {
+      errors.push("Name is required");
+    } else if (formData.name.trim().length < 2) {
+      errors.push("Name must be at least 2 characters");
+    }
+    
+    if (!formData.email.trim()) {
+      errors.push("Email is required");
+    } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email)) {
+      errors.push("Invalid email format");
+    }
+    
+    if (!formData.role) {
+      errors.push("Role is required");
+    }
+    
+    // Only validate password for new users or if password field has content
+    if (!currentUser && !formData.password) {
+      errors.push("Password is required for new users");
+    } else if (formData.password && formData.password.length < 8) {
+      errors.push("Password must be at least 8 characters");
+    }
+    
+    return { isValid: errors.length === 0, errors };
+  };
+
+  const handleRoleFieldChange = (field: keyof Role, value: string) => {
+    setRoleFormData(prev => {
+      const newFormData = { ...prev, [field]: value };
+      
+      // Track if this field has been modified from its original value
+      if (originalRoleData && originalRoleData[field] !== value) {
+        setModifiedRoleFields(prevFields => new Set(prevFields).add(field));
+      } else if (originalRoleData && originalRoleData[field] === value) {
+        setModifiedRoleFields(prevFields => {
+          const newSet = new Set(prevFields);
+          newSet.delete(field);
+          return newSet;
+        });
+      }
+      
+      // Real-time validation for new roles
+      if (!currentRole) {
+        const validation = validateRoleFormWithData(newFormData);
+        setRoleFormValid(validation.isValid);
+      }
+      
+      return newFormData;
+    });
+  };
+
+  // Helper function to validate role form with specific data
+  const validateRoleFormWithData = (formData: Role): { isValid: boolean; errors: string[] } => {
+    const errors: string[] = [];
+    
+    if (!formData.name.trim()) {
+      errors.push("Role name is required");
+    } else if (formData.name.trim().length < 2) {
+      errors.push("Role name must be at least 2 characters");
+    }
+    
+    if (!formData.description.trim()) {
+      errors.push("Role description is required");
+    }
+    
+    return { isValid: errors.length === 0, errors };
+  };
+
+  const handlePermissionChange = (permissionId: string, checked: boolean) => {
+    let newPermissions: string[];
+    if (checked) {
+      newPermissions = [...selectedPermissions, permissionId];
+    } else {
+      newPermissions = selectedPermissions.filter(id => id !== permissionId);
+    }
+    setSelectedPermissions(newPermissions);
+    setRoleFormData(prev => ({ ...prev, permissions: newPermissions }));
+    
+    // Track permissions changes
+    if (originalRoleData && JSON.stringify(originalRoleData.permissions.sort()) !== JSON.stringify(newPermissions.sort())) {
+      setModifiedRoleFields(prev => new Set(prev).add('permissions'));
+    } else if (originalRoleData && JSON.stringify(originalRoleData.permissions.sort()) === JSON.stringify(newPermissions.sort())) {
+      setModifiedRoleFields(prev => {
+        const newSet = new Set(prev);
+        newSet.delete('permissions');
+        return newSet;
+      });
+    }
+  };
+
+  const isUserFieldModified = (fieldName: string) => {
+    return modifiedUserFields.has(fieldName);
+  };
+
+  const isRoleFieldModified = (fieldName: string) => {
+    return modifiedRoleFields.has(fieldName);
+  };
+
+  const getUserFieldClassName = (fieldName: string) => {
+    return isUserFieldModified(fieldName) ? "border-orange-300 bg-orange-50 dark:bg-orange-950/20" : "";
+  };
+
+  const getRoleFieldClassName = (fieldName: string) => {
+    return isRoleFieldModified(fieldName) ? "border-orange-300 bg-orange-50 dark:bg-orange-950/20" : "";
+  };
+
+  const resetUserChanges = () => {
+    if (originalUserData) {
+      setUserFormData(originalUserData);
+      setModifiedUserFields(new Set());
+        toast({
+        title: "Changes reset",
+        description: "User changes have been reset to original values."
+      });
+    }
+  };
+
+  const resetRoleChanges = () => {
+    if (originalRoleData) {
+      setRoleFormData(originalRoleData);
+      setSelectedPermissions(originalRoleData.permissions);
+      setModifiedRoleFields(new Set());
+        toast({
+        title: "Changes reset",
+        description: "Role changes have been reset to original values."
+      });
+    }
+  };
+
+  // Form validation
+  const validateUserForm = (): { isValid: boolean; errors: string[] } => {
+    const errors: string[] = [];
+    
+    if (!userFormData.name.trim()) {
+      errors.push("Name is required");
+    } else if (userFormData.name.trim().length < 2) {
+      errors.push("Name must be at least 2 characters");
+    }
+    
+    if (!userFormData.email.trim()) {
+      errors.push("Email is required");
+    } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(userFormData.email)) {
+      errors.push("Invalid email format");
+    }
+    
+    if (!userFormData.role) {
+      errors.push("Role is required");
+    }
+    
+    // Only validate password for new users or if password field has content
+    if (!currentUser && !userFormData.password) {
+      errors.push("Password is required for new users");
+    } else if (userFormData.password && userFormData.password.length < 8) {
+      errors.push("Password must be at least 8 characters");
+    }
+    
+    return { isValid: errors.length === 0, errors };
+  };
+
+  const validateRoleForm = (): { isValid: boolean; errors: string[] } => {
+    const errors: string[] = [];
+    
+    if (!roleFormData.name.trim()) {
+      errors.push("Role name is required");
+    } else if (roleFormData.name.trim().length < 2) {
+      errors.push("Role name must be at least 2 characters");
+    }
+    
+    if (!roleFormData.description.trim()) {
+      errors.push("Role description is required");
+    }
+    
+    return { isValid: errors.length === 0, errors };
+  };
+
+  const isUserFormValid = () => {
+    const validation = validateUserForm();
+    return validation.isValid;
+  };
+
+  const isRoleFormValid = () => {
+    const validation = validateRoleForm();
+    return validation.isValid;
+  };
+
+  const shouldEnableUserSave = () => {
+    // For new users: check if form is valid
+    if (!currentUser) {
+      return userFormValid && !isSubmitting;
+    }
+    // For existing users: check if there are modifications
+    return modifiedUserFields.size > 0 && !isSubmitting;
+  };
+
+  const shouldEnableRoleSave = () => {
+    // Check permissions first
+    if (!currentRole && !canCreateRoles) {
+      return false;
+    }
+    if (currentRole && !canEditRoles) {
+      return false;
+    }
+    
+    // For new roles: check if form is valid
+    if (!currentRole) {
+      return roleFormValid && !isSubmitting;
+    }
+    // For existing roles: check if there are modifications
+    return modifiedRoleFields.size > 0 && !isSubmitting;
+  };
+
   const confirmDeleteUser = (user: UserData) => {
     setUserToDelete(user);
     setDeleteUserDialogOpen(true);
+  };
+  
+  const handleEditUser = (user: UserData) => {
+    setCurrentUser(user);
+    setUserFormData({
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      role: user.role,
+      status: user.status,
+      lastLogin: user.lastLogin,
+      password: ''
+    });
+    setOriginalUserData(user);
+    setModifiedUserFields(new Set());
+    setUserDialogOpen(true);
+  };
+  
+  const handleAddUser = () => {
+    setCurrentUser(null);
+    const newUser: UserData = {
+      id: '',
+      name: '',
+      email: '',
+      role: '',
+      status: 'Active' as const,
+      lastLogin: new Date().toISOString(),
+      password: ''
+    };
+    setUserFormData(newUser);
+    setOriginalUserData(null);
+    setModifiedUserFields(new Set());
+    setUserFormValid(false); // Reset validation state - will be updated as user types
+    setUserDialogOpen(true);
+  };
+  
+  const handleSaveUser = async () => {
+    // Validate form
+    const validation = validateUserForm();
+    if (!validation.isValid) {
+      toast({
+        title: "Validation Error",
+        description: validation.errors.join(", "),
+        variant: "destructive"
+      });
+      return;
+    }
+
+    try {
+      setIsSubmitting(true);
+      if (currentUser) {
+        // Update existing user
+        await updateUser(currentUser.id, userFormData);
+        toast({
+          title: "User updated",
+          description: "The user has been successfully updated."
+        });
+      } else {
+        // Add new user
+        await createUser(userFormData);
+        toast({
+          title: "User created",
+          description: "The new user has been successfully created."
+        });
+      }
+      setUserDialogOpen(false);
+      setModifiedUserFields(new Set());
+      // Refresh users data and update cache
+      await fetchUsers(true);
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "An error occurred while saving the user",
+        variant: "destructive"
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+  
+  const handleAddRole = () => {
+    setCurrentRole(null);
+    const newRole: Role = {
+      name: '',
+      description: '',
+      permissions: []
+    };
+    setRoleFormData(newRole);
+    setOriginalRoleData(null);
+    setSelectedPermissions([]);
+    setModifiedRoleFields(new Set());
+    setRoleFormValid(false); // Reset validation state
+    setRoleDialogOpen(true);
+  };
+  
+  const handleEditRole = (role: Role) => {
+    setCurrentRole(role);
+    setRoleFormData(role);
+    setOriginalRoleData(role);
+    setSelectedPermissions(role.permissions);
+    setModifiedRoleFields(new Set());
+    setRoleDialogOpen(true);
+  };
+  
+  const handleSaveRole = async () => {
+    // Check permissions
+    if (currentRole && !canEditRoles) {
+      toast({
+        title: "Permission Denied",
+        description: "You do not have permission to edit roles.",
+        variant: "destructive"
+      });
+      return;
+    }
+    
+    if (!currentRole && !canCreateRoles) {
+      toast({
+        title: "Permission Denied",
+        description: "You do not have permission to create roles.",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    // Validate form
+    const validation = validateRoleForm();
+    if (!validation.isValid) {
+      toast({
+        title: "Validation Error",
+        description: validation.errors.join(", "),
+        variant: "destructive"
+      });
+      return;
+    }
+
+    try {
+      setIsSubmitting(true);
+      if (currentRole) {
+        // Update existing role
+        await updateRole(currentRole.name, roleFormData);
+        toast({
+          title: "Role updated",
+          description: "The role has been successfully updated."
+        });
+      } else {
+        // Add new role
+        await createRole(roleFormData);
+        toast({
+          title: "Role created",
+          description: "The new role has been successfully created."
+        });
+      }
+      setRoleDialogOpen(false);
+      setModifiedRoleFields(new Set());
+      // Refresh roles data and update cache
+      await fetchRoles(true);
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "An error occurred while saving the role",
+        variant: "destructive"
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const handleConfirmDeleteUser = async () => {
     if (userToDelete) {
       try {
+        setIsSubmitting(true);
         await deleteUser(userToDelete.id);
         toast({
           title: "User deleted",
           description: "The user has been successfully deleted."
         });
-        fetchUsers();
-      } catch (error: any) {
-        toast({
-          title: "Error",
-          description: error.message,
-          variant: "destructive"
-        });
+        // Force refresh users data after deletion
+        await fetchUsers(true);
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message,
+        variant: "destructive"
+      });
+      } finally {
+        setIsSubmitting(false);
+        setDeleteUserDialogOpen(false);
+        setUserToDelete(null);
       }
-      setDeleteUserDialogOpen(false);
-      setUserToDelete(null);
     }
   };
 
@@ -303,139 +837,60 @@ const UsersPage = () => {
   };
 
   const handleConfirmDeleteRole = async () => {
+    if (!canDeleteRoles) {
+      toast({
+        title: "Permission Denied",
+        description: "You do not have permission to delete roles.",
+        variant: "destructive"
+      });
+      return;
+    }
+    
     if (roleToDelete) {
       try {
+        setIsSubmitting(true);
         await deleteRole(roleToDelete.name);
         toast({
           title: "Role deleted",
           description: "The role has been successfully deleted."
         });
-        fetchRoles();
+        // Force refresh roles data after deletion
+        await fetchRoles(true);
       } catch (error: any) {
         toast({
           title: "Error",
           description: error.message,
           variant: "destructive"
         });
+      } finally {
+        setIsSubmitting(false);
+        setDeleteRoleDialogOpen(false);
+        setRoleToDelete(null);
       }
-      setDeleteRoleDialogOpen(false);
-      setRoleToDelete(null);
-    }
-  };
-  
-  const handleEditUser = (user: UserData) => {
-    setCurrentUser(user);
-    setSelectedRole(user.role);
-    setSelectedStatus(user.status);
-    setUserDialogOpen(true);
-  };
-  
-  const handleAddUser = () => {
-    setCurrentUser(null);
-    setSelectedRole("");
-    setSelectedStatus("Active");
-    setUserDialogOpen(true);
-  };
-  
-  const handleSaveUser = async (userData: UserData) => {
-    try {
-      if (currentUser) {
-        // Update existing user
-        await updateUser(currentUser.id, userData);
-        toast({
-          title: "User updated",
-          description: "The user has been successfully updated."
-        });
-      } else {
-        // Add new user
-        await createUser(userData);
-        toast({
-          title: "User created",
-          description: "The new user has been successfully created."
-        });
-      }
-      setUserDialogOpen(false);
-      fetchUsers();
-    } catch (error: any) {
-      toast({
-        title: "Error",
-        description: error.message,
-        variant: "destructive"
-      });
-    }
-  };
-  
-  const handleAddRole = () => {
-    setCurrentRole(null);
-    setSelectedPermissions([]); // Reset selected permissions for new role
-    setRoleDialogOpen(true);
-  };
-  
-  const handleEditRole = (role: Role) => {
-    setCurrentRole(role);
-    setSelectedPermissions(role.permissions); // Set selected permissions for editing
-    setRoleDialogOpen(true);
-  };
-  
-  const handleSaveRole = async (roleData: Role) => {
-    try {
-      if (currentRole) {
-        // Update existing role
-        await updateRole(currentRole.name, roleData);
-        toast({
-          title: "Role updated",
-          description: "The role has been successfully updated."
-        });
-      } else {
-        // Add new role
-        await createRole(roleData);
-        toast({
-          title: "Role created",
-          description: "The new role has been successfully created."
-        });
-      }
-      setRoleDialogOpen(false);
-      setSelectedPermissions([]); // Reset permissions after saving
-      fetchRoles();
-    } catch (error: any) {
-      toast({
-        title: "Error",
-        description: error.message,
-        variant: "destructive"
-      });
     }
   };
 
   return (
+        <PermissionGuard
+          requiredPermission="users_view"
+          fallbackMessage="You do not have permission to view users. Please contact an administrator."
+        >
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold tracking-tight">Users & Access Control</h1>
+          <h1 className="text-2xl font-bold tracking-tight">Users & Roles</h1>
       </div>
 
-      <div className="flex space-x-2 border-b">
-        <button
-          className={`px-4 py-2 font-medium ${
-            activeTab === "users"
-              ? "text-primary border-b-2 border-primary"
-              : "text-gray-500 hover:text-gray-700"
-          }`}
-          onClick={() => setActiveTab("users")}
-        >
+        <Tabs defaultValue="users" className="space-y-4">
+                <TabsList className="grid w-full grid-cols-2">
+          <TabsTrigger value="users">
           Users
-        </button>
-        <button
-          className={`px-4 py-2 font-medium ${
-            activeTab === "roles"
-              ? "text-primary border-b-2 border-primary"
-              : "text-gray-500 hover:text-gray-700"
-          }`}
-          onClick={() => setActiveTab("roles")}
-        >
+          </TabsTrigger>
+          <TabsTrigger value="roles">
           Roles
-        </button>
-      </div>
+          </TabsTrigger>
+        </TabsList>
 
-      {activeTab === "users" && (
+        <TabsContent value="users" className="space-y-4">
         <Card>
           <CardHeader>
             <div className="flex justify-between items-center">
@@ -482,7 +937,7 @@ const UsersPage = () => {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {loading ? (
+                {usersLoading ? (
                   <TableRow>
                     <TableCell colSpan={6} className="py-8">
                       <div className="flex flex-col items-center justify-center min-h-[200px] text-center">
@@ -577,10 +1032,9 @@ const UsersPage = () => {
             </Table>
           </CardContent>
         </Card>
-      )}
+        </TabsContent>
 
-      {activeTab === "roles" && (
-        <div className="space-y-6">
+        <TabsContent value="roles" className="space-y-4">
           <Card>
             <CardHeader>
               <div className="flex justify-between items-center">
@@ -590,7 +1044,7 @@ const UsersPage = () => {
                     Define user roles and their permissions
                   </CardDescription>
                 </div>
-                {canManageUsers ? (
+                {canCreateRoles ? (
                   <Button onClick={handleAddRole}>
                     <Shield size={16} className="mr-2" /> Create New Role
                   </Button>
@@ -614,8 +1068,8 @@ const UsersPage = () => {
             </CardHeader>
             <CardContent>
               <div className="space-y-6">
-                {loading ? (
-                  <div className="text-center py-8">
+                {rolesLoading ? (
+                  <div className="flex flex-col items-center justify-center min-h-[200px] text-center">
                     <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
                     <p className="mt-2 text-gray-500">Loading roles...</p>
                   </div>
@@ -637,7 +1091,7 @@ const UsersPage = () => {
                           </p>
                         </div>
                         <div className="flex space-x-2">
-                          {canManageUsers ? (
+                          {canEditRoles ? (
                             <Button variant="outline" size="sm" onClick={() => handleEditRole(role)}>
                               Edit Role
                             </Button>
@@ -657,7 +1111,7 @@ const UsersPage = () => {
                               </Tooltip>
                             </TooltipProvider>
                           )}
-                          {canManageUsers ? (
+                          {canDeleteRoles ? (
                             <Button 
                               variant="outline" 
                               size="sm" 
@@ -708,8 +1162,8 @@ const UsersPage = () => {
               </div>
             </CardContent>
           </Card>
-        </div>
-      )}
+        </TabsContent>
+      </Tabs>
 
       {/* User Dialog */}
       <Dialog open={userDialogOpen} onOpenChange={setUserDialogOpen}>
@@ -730,8 +1184,10 @@ const UsersPage = () => {
               </Label>
               <Input
                 id="name"
-                defaultValue={currentUser?.name || ""}
-                className="col-span-3"
+                value={userFormData.name}
+                onChange={(e) => handleUserFieldChange('name', e.target.value)}
+                className={`col-span-3 ${getUserFieldClassName('name')}`}
+                disabled={isSubmitting}
               />
             </div>
             
@@ -742,8 +1198,10 @@ const UsersPage = () => {
               <Input
                 id="email"
                 type="email"
-                defaultValue={currentUser?.email || ""}
-                className="col-span-3"
+                value={userFormData.email}
+                onChange={(e) => handleUserFieldChange('email', e.target.value)}
+                className={`col-span-3 ${getUserFieldClassName('email')}`}
+                disabled={isSubmitting}
               />
             </div>
             
@@ -755,7 +1213,10 @@ const UsersPage = () => {
                 <Input
                   id="password"
                   type="password"
-                  className="col-span-3"
+                  value={userFormData.password || ''}
+                  onChange={(e) => handleUserFieldChange('password', e.target.value)}
+                  className={`col-span-3 ${getUserFieldClassName('password')}`}
+                  disabled={isSubmitting}
                 />
               </div>
             )}
@@ -764,8 +1225,12 @@ const UsersPage = () => {
               <Label htmlFor="role" className="text-right">
                 Role
               </Label>
-              <Select value={selectedRole} onValueChange={setSelectedRole}>
-                <SelectTrigger className="col-span-3">
+              <Select 
+                value={userFormData.role} 
+                onValueChange={(value) => handleUserFieldChange('role', value)}
+                disabled={isSubmitting}
+              >
+                <SelectTrigger className={`col-span-3 ${getUserFieldClassName('role')}`}>
                   <SelectValue placeholder="Select role" />
                 </SelectTrigger>
                 <SelectContent>
@@ -782,8 +1247,12 @@ const UsersPage = () => {
               <Label htmlFor="status" className="text-right">
                 Status
               </Label>
-              <Select value={selectedStatus} onValueChange={setSelectedStatus}>
-                <SelectTrigger className="col-span-3">
+              <Select 
+                value={userFormData.status} 
+                onValueChange={(value) => handleUserFieldChange('status', value as "Active" | "Inactive")}
+                disabled={isSubmitting}
+              >
+                <SelectTrigger className={`col-span-3 ${getUserFieldClassName('status')}`}>
                   <SelectValue placeholder="Select status" />
                 </SelectTrigger>
                 <SelectContent>
@@ -795,22 +1264,20 @@ const UsersPage = () => {
           </div>
           
           <DialogFooter>
-            <Button variant="outline" onClick={() => setUserDialogOpen(false)}>
-              Cancel
+            {modifiedUserFields.size > 0 && (
+              <Button variant="outline" onClick={resetUserChanges} disabled={isSubmitting}>
+                Revert Changes
             </Button>
-            <Button onClick={() => {
-              const formData: UserData = {
-                id: currentUser?.id || "",
-                name: (document.getElementById("name") as HTMLInputElement).value,
-                email: (document.getElementById("email") as HTMLInputElement).value,
-                role: selectedRole,
-                status: selectedStatus as "Active" | "Inactive",
-                lastLogin: currentUser?.lastLogin || new Date().toISOString(),
-                password: currentUser ? undefined : (document.getElementById("password") as HTMLInputElement)?.value
-              };
-              handleSaveUser(formData);
-            }}>
-              Save
+            )}
+            <Button onClick={handleSaveUser} disabled={!shouldEnableUserSave()}>
+              {isSubmitting ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Saving...
+                </>
+              ) : (
+                currentUser ? `Save Changes ${modifiedUserFields.size > 0 ? `(${modifiedUserFields.size})` : ''}` : 'Create User'
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -835,9 +1302,11 @@ const UsersPage = () => {
               </Label>
               <Input
                 id="roleName"
-                defaultValue={currentRole?.name || ""}
-                className="col-span-3"
+                value={roleFormData.name}
+                onChange={(e) => handleRoleFieldChange('name', e.target.value)}
+                className={`col-span-3 ${getRoleFieldClassName('name')}`}
                 readOnly={!!currentRole} // Prevent editing existing role names
+                disabled={isSubmitting}
               />
             </div>
             
@@ -847,8 +1316,10 @@ const UsersPage = () => {
               </Label>
               <Input
                 id="roleDescription"
-                defaultValue={currentRole?.description || ""}
-                className="col-span-3"
+                value={roleFormData.description}
+                onChange={(e) => handleRoleFieldChange('description', e.target.value)}
+                className={`col-span-3 ${getRoleFieldClassName('description')}`}
+                disabled={isSubmitting}
               />
             </div>
             
@@ -864,10 +1335,15 @@ const UsersPage = () => {
                     onCheckedChange={(checked) => {
                       if (checked) {
                         setSelectedPermissions(allPermissions.map(p => p.id));
+                        setRoleFormData(prev => ({ ...prev, permissions: allPermissions.map(p => p.id) }));
+                        setModifiedRoleFields(prev => new Set(prev).add('permissions'));
                       } else {
                         setSelectedPermissions([]);
+                        setRoleFormData(prev => ({ ...prev, permissions: [] }));
+                        setModifiedRoleFields(prev => new Set(prev).add('permissions'));
                       }
                     }}
+                    disabled={isSubmitting}
                   />
                   <Label htmlFor="select-all-permissions" className="font-medium">
                     Select All Permissions
@@ -895,11 +1371,17 @@ const UsersPage = () => {
                                 }
                               });
                               setSelectedPermissions(newPermissions);
+                              setRoleFormData(prev => ({ ...prev, permissions: newPermissions }));
+                              setModifiedRoleFields(prev => new Set(prev).add('permissions'));
                             } else {
                               // Remove all module permissions
-                              setSelectedPermissions(selectedPermissions.filter(id => !modulePermissionIds.includes(id)));
+                              const newPermissions = selectedPermissions.filter(id => !modulePermissionIds.includes(id));
+                              setSelectedPermissions(newPermissions);
+                              setRoleFormData(prev => ({ ...prev, permissions: newPermissions }));
+                              setModifiedRoleFields(prev => new Set(prev).add('permissions'));
                             }
                           }}
+                          disabled={isSubmitting}
                         />
                         <Label htmlFor={`select-all-${module.toLowerCase().replace(/\s+/g, '-')}`} className="text-sm font-medium">
                           Select All {module}
@@ -912,13 +1394,8 @@ const UsersPage = () => {
                           <Checkbox 
                             id={permission.id}
                             checked={selectedPermissions.includes(permission.id)}
-                            onCheckedChange={(checked) => {
-                              if (checked) {
-                                setSelectedPermissions([...selectedPermissions, permission.id]);
-                              } else {
-                                setSelectedPermissions(selectedPermissions.filter(id => id !== permission.id));
-                              }
-                            }}
+                            onCheckedChange={(checked) => handlePermissionChange(permission.id, checked as boolean)}
+                            disabled={isSubmitting}
                           />
                           <Label htmlFor={permission.id} className="flex-1">
                             {permission.name}
@@ -934,25 +1411,20 @@ const UsersPage = () => {
           </div>
           
           <DialogFooter>
-            <Button variant="outline" onClick={() => {
-              setRoleDialogOpen(false);
-              setSelectedPermissions([]);
-            }}>
-              Cancel
+            {modifiedRoleFields.size > 0 && (
+              <Button variant="outline" onClick={resetRoleChanges} disabled={isSubmitting}>
+                Revert Changes
             </Button>
-            <Button onClick={() => {
-              const name = (document.getElementById("roleName") as HTMLInputElement).value;
-              const description = (document.getElementById("roleDescription") as HTMLInputElement).value;
-              
-              const roleData: Role = {
-                name,
-                description,
-                permissions: selectedPermissions
-              };
-              
-              handleSaveRole(roleData);
-            }}>
-              Save
+            )}
+            <Button onClick={handleSaveRole} disabled={!shouldEnableRoleSave()}>
+              {isSubmitting ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Saving...
+                </>
+              ) : (
+                currentRole ? `Save Changes ${modifiedRoleFields.size > 0 ? `(${modifiedRoleFields.size})` : ''}` : 'Create Role'
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -968,8 +1440,19 @@ const UsersPage = () => {
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel onClick={() => setDeleteUserDialogOpen(false)}>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={handleConfirmDeleteUser}>Delete</AlertDialogAction>
+            <AlertDialogCancel onClick={() => setDeleteUserDialogOpen(false)} disabled={isSubmitting}>
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction onClick={handleConfirmDeleteUser} disabled={isSubmitting}>
+              {isSubmitting ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Deleting...
+                </>
+              ) : (
+                "Delete"
+              )}
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
@@ -984,12 +1467,24 @@ const UsersPage = () => {
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel onClick={() => setDeleteRoleDialogOpen(false)}>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={handleConfirmDeleteRole}>Delete</AlertDialogAction>
+            <AlertDialogCancel onClick={() => setDeleteRoleDialogOpen(false)} disabled={isSubmitting}>
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction onClick={handleConfirmDeleteRole} disabled={isSubmitting}>
+              {isSubmitting ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Deleting...
+                </>
+              ) : (
+                "Delete"
+              )}
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
     </div>
+    </PermissionGuard>
   );
 };
 
