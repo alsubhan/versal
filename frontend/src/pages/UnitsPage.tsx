@@ -9,6 +9,7 @@ import { toast } from "sonner";
 import { useAuth } from "@/hooks/useAuth";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { createUnit, updateUnit } from "@/lib/api";
+import { PermissionGuard } from "@/components/ui/permission-guard";
 
 const UnitsPage = () => {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
@@ -45,10 +46,14 @@ const UnitsPage = () => {
   };
   
   return (
-    <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <h1 className="text-2xl font-bold tracking-tight">Units</h1>
-        {canCreateUnits ? (
+    <PermissionGuard 
+      requiredPermission="units_view"
+      fallbackMessage="You do not have permission to view units. Please contact an administrator."
+    >
+      <div className="space-y-6">
+        <div className="flex justify-between items-center">
+          <h1 className="text-2xl font-bold tracking-tight">Units</h1>
+          {canCreateUnits ? (
         <Button 
           onClick={handleAddUnit}
           className="flex items-center gap-1"
@@ -85,6 +90,7 @@ const UnitsPage = () => {
         onSubmit={handleUnitSubmit}
       />
     </div>
+    </PermissionGuard>
   );
 };
 

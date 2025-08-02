@@ -14,6 +14,8 @@ import { useAuth } from '@/hooks/useAuth';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Lock } from 'lucide-react';
 import { Spinner } from '@/components/ui/spinner';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { PermissionGuard } from "@/components/ui/permission-guard";
 
 export default function Dashboard() {
   const { hasPermission, loading } = useAuth();
@@ -27,26 +29,18 @@ export default function Dashboard() {
     );
   }
 
-  if (!canViewDashboard) {
-    return (
-      <div className="space-y-6">
-        <h1 className="text-3xl font-bold tracking-tight">Dashboard</h1>
-        <Alert>
-          <Lock className="h-4 w-4" />
-          <AlertDescription>
-            You do not have permission to view the dashboard. Please contact an administrator.
-          </AlertDescription>
-        </Alert>
-      </div>
-    );
-  }
+
 
   return (
-    <div className="space-y-6">
-      {/* Page Header */}
-      <div>
-        <h1 className="text-3xl font-bold tracking-tight">Dashboard</h1>
-        <p className="text-muted-foreground">
+    <PermissionGuard 
+      requiredPermission="dashboard_view"
+      fallbackMessage="You do not have permission to view the dashboard. Please contact an administrator."
+    >
+      <div className="space-y-6">
+        {/* Page Header */}
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight">Dashboard</h1>
+          <p className="text-muted-foreground">
           Welcome to your warehouse management dashboard
         </p>
       </div>
@@ -224,5 +218,6 @@ export default function Dashboard() {
         </CardContent>
       </Card>
     </div>
+    </PermissionGuard>
   );
 }

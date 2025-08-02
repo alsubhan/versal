@@ -7,6 +7,7 @@ import { PurchaseOrderTable } from "@/components/purchase-orders/PurchaseOrderTa
 import { type PurchaseOrder } from "@/types/purchase-order";
 import { useAuth } from "@/hooks/useAuth";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { PermissionGuard } from "@/components/ui/permission-guard";
 
 const PurchaseOrdersPage = () => {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
@@ -25,10 +26,14 @@ const PurchaseOrdersPage = () => {
   };
   
   return (
-    <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <h1 className="text-2xl font-bold tracking-tight">Purchase Orders</h1>
-        {canCreatePurchaseOrders ? (
+    <PermissionGuard 
+      requiredPermission="purchase_orders_view"
+      fallbackMessage="You do not have permission to view purchase orders. Please contact an administrator."
+    >
+      <div className="space-y-6">
+        <div className="flex justify-between items-center">
+          <h1 className="text-2xl font-bold tracking-tight">Purchase Orders</h1>
+          {canCreatePurchaseOrders ? (
         <Button 
           onClick={handleAddPurchaseOrder}
           className="flex items-center gap-1"
@@ -63,7 +68,8 @@ const PurchaseOrdersPage = () => {
         onOpenChange={setIsDialogOpen}
         purchaseOrder={editingPurchaseOrder}
       />
-    </div>
+      </div>
+    </PermissionGuard>
   );
 };
 

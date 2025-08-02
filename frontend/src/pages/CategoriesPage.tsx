@@ -8,6 +8,7 @@ import { type Category } from "@/types/category";
 import { apiFetch } from '@/lib/api';
 import { useAuth } from "@/hooks/useAuth";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { PermissionGuard } from "@/components/ui/permission-guard";
 
 const CategoriesPage = () => {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
@@ -45,10 +46,14 @@ const CategoriesPage = () => {
   };
 
   return (
-    <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <h1 className="text-2xl font-bold tracking-tight">Categories</h1>
-        {canCreateCategories ? (
+    <PermissionGuard 
+      requiredPermission="categories_view"
+      fallbackMessage="You do not have permission to view categories. Please contact an administrator."
+    >
+      <div className="space-y-6">
+        <div className="flex justify-between items-center">
+          <h1 className="text-2xl font-bold tracking-tight">Categories</h1>
+          {canCreateCategories ? (
         <Button 
           onClick={handleAddCategory}
           className="flex items-center gap-1"
@@ -82,7 +87,8 @@ const CategoriesPage = () => {
         category={editingCategory}
         onSave={handleSaveCategory}
       />
-    </div>
+      </div>
+    </PermissionGuard>
   );
 };
 

@@ -19,7 +19,7 @@ import { useState, useEffect, useCallback } from "react";
 
 const SettingsPage = () => {
   const { currency, setCurrency } = useCurrencyStore();
-  const { hasPermission } = useAuth();
+  const { hasPermission, loading: authLoading, permissions } = useAuth();
   const canViewSettings = hasPermission('settings_view');
   const canEditSettings = hasPermission('settings_edit');
   const [systemSettings, setSystemSettings] = useState<Array<{
@@ -229,8 +229,23 @@ const SettingsPage = () => {
 
     if (canViewSettings) {
       fetchSettings();
+    } else {
+      // If user doesn't have permission, stop loading immediately
+      setLoading(false);
     }
   }, [canViewSettings]); // Only depend on canViewSettings
+
+  // Show loading spinner during auth/permission check OR data loading
+  if (authLoading || permissions.length === 0 || loading) {
+    return (
+      <div className="flex items-center justify-center min-h-[400px]">
+        <div className="flex flex-col items-center space-y-4">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+          <p className="text-sm text-muted-foreground">Loading...</p>
+        </div>
+      </div>
+    );
+  }
 
   // If user doesn't have permission to view settings, show access denied
   if (!canViewSettings) {
@@ -243,18 +258,6 @@ const SettingsPage = () => {
             You do not have permission to view settings. Please contact an administrator.
           </AlertDescription>
         </Alert>
-      </div>
-    );
-  }
-
-  // Show loading spinner
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-[400px]">
-        <div className="flex flex-col items-center space-y-4">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
-          <p className="text-sm text-muted-foreground">Loading settings...</p>
-        </div>
       </div>
     );
   }

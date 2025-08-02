@@ -9,6 +9,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { createCustomer, updateCustomer } from "@/lib/api";
 import { toast } from "sonner";
+import { PermissionGuard } from "@/components/ui/permission-guard";
 
 const CustomersPage = () => {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
@@ -45,44 +46,49 @@ const CustomersPage = () => {
   };
   
   return (
-    <div className="space-y-6">
-      <div className="flex justify-between items-center">
-      <h1 className="text-2xl font-bold tracking-tight">Customers</h1>
-        {canCreateCustomers ? (
-          <Button 
-            onClick={handleAddCustomer}
-            className="flex items-center gap-1"
-          >
-            <Plus className="h-4 w-4" /> Add Customer
-          </Button>
-        ) : (
-          <TooltipProvider>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <span>
-                  <Button 
-                    disabled
-                    className="flex items-center gap-1"
-                  >
-                    <Plus className="h-4 w-4" /> Add Customer
-                  </Button>
-                </span>
-              </TooltipTrigger>
-              <TooltipContent>
-                You do not have permission to create customers
-              </TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
-        )}
+    <PermissionGuard 
+      requiredPermission="customers_view"
+      fallbackMessage="You do not have permission to view customers. Please contact an administrator."
+    >
+      <div className="space-y-6">
+        <div className="flex justify-between items-center">
+          <h1 className="text-2xl font-bold tracking-tight">Customers</h1>
+          {canCreateCustomers ? (
+            <Button 
+              onClick={handleAddCustomer}
+              className="flex items-center gap-1"
+            >
+              <Plus className="h-4 w-4" /> Add Customer
+            </Button>
+          ) : (
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span>
+                    <Button 
+                      disabled
+                      className="flex items-center gap-1"
+                    >
+                      <Plus className="h-4 w-4" /> Add Customer
+                    </Button>
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent>
+                  You do not have permission to create customers
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          )}
+        </div>
+        <CustomerTable onEdit={handleEditCustomer} />
+        <CustomerDialog 
+          open={isDialogOpen} 
+          onOpenChange={setIsDialogOpen}
+          customer={editingCustomer}
+          onSubmit={handleCustomerSubmit}
+        />
       </div>
-      <CustomerTable onEdit={handleEditCustomer} />
-      <CustomerDialog 
-        open={isDialogOpen} 
-        onOpenChange={setIsDialogOpen}
-        customer={editingCustomer}
-        onSubmit={handleCustomerSubmit}
-      />
-    </div>
+    </PermissionGuard>
   );
 };
 

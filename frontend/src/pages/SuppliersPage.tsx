@@ -9,6 +9,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { createSupplier, updateSupplier } from "@/lib/api";
 import { toast } from "sonner";
+import { PermissionGuard } from "@/components/ui/permission-guard";
 
 const SuppliersPage = () => {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
@@ -45,10 +46,14 @@ const SuppliersPage = () => {
   };
   
   return (
-    <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <h1 className="text-2xl font-bold tracking-tight">Suppliers</h1>
-        {canCreateSuppliers ? (
+    <PermissionGuard 
+      requiredPermission="suppliers_view"
+      fallbackMessage="You do not have permission to view suppliers. Please contact an administrator."
+    >
+      <div className="space-y-6">
+        <div className="flex justify-between items-center">
+          <h1 className="text-2xl font-bold tracking-tight">Suppliers</h1>
+          {canCreateSuppliers ? (
         <Button 
           onClick={handleAddSupplier}
           className="flex items-center gap-1"
@@ -85,6 +90,7 @@ const SuppliersPage = () => {
         onSubmit={handleSupplierSubmit}
       />
     </div>
+    </PermissionGuard>
   );
 };
 

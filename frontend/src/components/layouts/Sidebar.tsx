@@ -120,7 +120,7 @@ const sidebarLinks = [{
   icon: UploadCloud,
   permission: 'backup_view'
 }, {
-  name: "Users & Access",
+  name: "Users & Roles",
   href: "/users",
   icon: User,
   permission: 'users_view'
