@@ -9,6 +9,7 @@ import requests
 from jose import jwt as jose_jwt
 from jose.exceptions import JWTError
 from fastapi.middleware.cors import CORSMiddleware
+import uvicorn
 
 load_dotenv()  # Load environment variables from .env file
 
@@ -96,7 +97,7 @@ def to_camel_case_role(role):
 def to_camel_case_user(user):
     return {
         **user,
-        "roleId": user.get("role_id"),
+        "role": user.get("role"),
         "createdAt": user.get("created_at"),
         "updatedAt": user.get("updated_at"),
     }
@@ -127,50 +128,61 @@ def require_permission(required_permission):
         
         # Get user's role and permissions from profiles and roles tables
         try:
-            # Get user profile with role
+            print(f"Checking permission '{required_permission}' for user {user_id}")
+            
+            # Get user profile with role_id
             profile_data = supabase.table("profiles").select("role_id").eq("id", user_id).execute()
             if not profile_data.data:
+                print(f"User profile not found for user {user_id}")
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail="User profile not found"
                 )
             
-            role_id = profile_data.data[0].get("role_id")
-            if not role_id:
+            user_role_id = profile_data.data[0].get("role_id")
+            if not user_role_id:
+                print(f"User {user_id} has no assigned role")
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail="User has no assigned role"
                 )
             
-            # Get role permissions
-            role_data = supabase.table("roles").select("permissions").eq("id", role_id).execute()
+            print(f"User {user_id} has role_id: {user_role_id}")
+            
+            # Get role name from roles table
+            role_data = supabase.table("roles").select("name, permissions").eq("id", user_role_id).execute()
             if not role_data.data:
+                print(f"Role not found for role_id {user_role_id}")
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail="Role not found"
                 )
             
-            permissions_data = role_data.data[0].get("permissions", [])
+            user_role_name = role_data.data[0].get("name")
+            user_permissions = role_data.data[0].get("permissions", [])
             
-            # Parse permissions if it's a JSON string, otherwise use as-is
-            if isinstance(permissions_data, str):
+            print(f"User {user_id} has role '{user_role_name}' with permissions: {user_permissions}")
+            
+            # Parse permissions if it's a JSON string
+            if isinstance(user_permissions, str):
                 try:
-                    user_permissions = json.loads(permissions_data)
+                    user_permissions = json.loads(user_permissions)
                 except json.JSONDecodeError:
                     user_permissions = []
-            else:
-                user_permissions = permissions_data or []
             
             # Check if user has the required permission
             if required_permission not in user_permissions:
+                print(f"User {user_id} missing permission '{required_permission}'. Available: {user_permissions}")
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail=f"Forbidden: missing permission '{required_permission}'"
                 )
             
+            print(f"Permission '{required_permission}' granted for user {user_id}")
             return payload
             
         except Exception as e:
+            print(f"Error checking permissions for user {user_id}: {str(e)}")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Error checking permissions: {str(e)}"
@@ -185,6 +197,7 @@ def to_camel_case_unit(unit):
         "name": unit["name"],
         "abbreviation": unit["abbreviation"],
         "description": unit.get("description"),
+        "is_active": unit.get("is_active", True),
         "createdAt": unit.get("created_at"),
         "updatedAt": unit.get("updated_at")
     }
@@ -193,7 +206,7 @@ def to_camel_case_tax(tax):
     return {
         "id": tax["id"],
         "name": tax["name"],
-        "rate": float(tax["rate"]) if tax.get("rate") else 0,
+        "rate": float(tax["rate"]) * 100 if tax.get("rate") else 0,  # Convert decimal to percentage
         "isDefault": tax.get("is_default", False),
         "appliedTo": tax.get("applied_to", "products"),
         "description": tax.get("description"),
@@ -203,6 +216,25 @@ def to_camel_case_tax(tax):
     }
 
 def to_camel_case_supplier(supplier):
+    # Parse JSONB addresses if they exist
+    billing_address = supplier.get("billing_address")
+    shipping_address = supplier.get("shipping_address")
+    
+    # If addresses are strings (JSON), try to parse them
+    if isinstance(billing_address, str):
+        try:
+            import json
+            billing_address = json.loads(billing_address)
+        except:
+            billing_address = None
+    
+    if isinstance(shipping_address, str):
+        try:
+            import json
+            shipping_address = json.loads(shipping_address)
+        except:
+            shipping_address = None
+    
     return {
         "id": supplier["id"],
         "name": supplier["name"],
@@ -210,6 +242,8 @@ def to_camel_case_supplier(supplier):
         "email": supplier.get("email"),
         "phone": supplier.get("phone"),
         "address": supplier.get("address"),
+        "billingAddress": billing_address or {},
+        "shippingAddress": shipping_address or {},
         "paymentTerms": supplier.get("payment_terms"),
         "taxId": supplier.get("tax_id"),
         "notes": supplier.get("notes"),
@@ -219,18 +253,38 @@ def to_camel_case_supplier(supplier):
     }
 
 def to_camel_case_customer(customer):
+    # Parse JSONB addresses if they exist
+    billing_address = customer.get("billing_address")
+    shipping_address = customer.get("shipping_address")
+    
+    # If addresses are strings (JSON), try to parse them
+    if isinstance(billing_address, str):
+        try:
+            import json
+            billing_address = json.loads(billing_address)
+        except:
+            billing_address = None
+    
+    if isinstance(shipping_address, str):
+        try:
+            import json
+            shipping_address = json.loads(shipping_address)
+        except:
+            shipping_address = None
+    
     return {
         "id": customer["id"],
         "name": customer["name"],
         "email": customer.get("email"),
         "phone": customer.get("phone"),
-        "billingAddress": customer.get("billing_address"),
-        "shippingAddress": customer.get("shipping_address"),
+        "billingAddress": billing_address or {},
+        "shippingAddress": shipping_address or {},
         "taxId": customer.get("tax_id"),
         "notes": customer.get("notes"),
         "creditLimit": float(customer["credit_limit"]) if customer.get("credit_limit") else 0,
         "currentCredit": float(customer["current_credit"]) if customer.get("current_credit") else 0,
         "customerType": customer.get("customer_type", "retail"),
+        "isActive": customer.get("is_active", True),
         "createdAt": customer.get("created_at"),
         "updatedAt": customer.get("updated_at")
     }
@@ -351,8 +405,366 @@ def read_root():
 
 @app.get("/products")
 def get_products(payload=Depends(verify_jwt)):
-    data = supabase.table("products").select("*").execute()
-    return JSONResponse(content=data.data)
+    try:
+        print("Products endpoint: Starting query with stock_levels...")
+        # Query products with related category, unit, and stock data
+        # Use specific relationship names to avoid conflicts
+        products_data = supabase.table("products").select("""
+            *,
+            categories!products_category_id_fkey(name),
+            units(name, abbreviation),
+            stock_levels(quantity_on_hand, quantity_available)
+        """).execute()
+        
+        print(f"Products endpoint: Query successful, got {len(products_data.data) if products_data.data else 0} products")
+        
+        if products_data.data:
+            # Process the data to ensure stock_levels is always an array
+            processed_data = []
+            for product in products_data.data:
+                print(f"Processing product {product.get('name', 'Unknown')}: stock_levels = {product.get('stock_levels')}")
+                print(f"Product {product.get('name', 'Unknown')}: reorder_point = {product.get('reorder_point')} (type: {type(product.get('reorder_point'))})")
+                # Convert stock_levels object to array if it's not already
+                if product.get('stock_levels') and not isinstance(product['stock_levels'], list):
+                    product['stock_levels'] = [product['stock_levels']]
+                elif not product.get('stock_levels'):
+                    product['stock_levels'] = []
+                processed_data.append(product)
+            
+            print(f"Products endpoint: Returning {len(processed_data)} processed products")
+            return JSONResponse(content=processed_data)
+        else:
+            print("Products endpoint: No data returned from query")
+            return JSONResponse(content=[])
+            
+    except Exception as e:
+        print(f"Exception in products endpoint: {str(e)}")
+        # Fallback to basic query if join fails
+        try:
+            print("Products endpoint: Trying fallback query...")
+            products_data = supabase.table("products").select("*").execute()
+            print(f"Fallback query returned {len(products_data.data) if products_data.data else 0} products")
+            return JSONResponse(content=products_data.data or [])
+        except Exception as fallback_error:
+            print(f"Fallback query also failed: {str(fallback_error)}")
+            return JSONResponse(content=[])
+
+@app.post("/products")
+def create_product(product: dict = Body(...), payload=Depends(require_permission("products_create"))):
+    try:
+        # Validate and trim input fields
+        product_name = product.get("name", "").strip()
+        sku_code = product.get("skuCode", "").strip()
+        hsn_code = product.get("hsnCode", "").strip()
+        ean_code = product.get("eanCode", "").strip()
+        
+        # Validation checks
+        if not product_name:
+            raise HTTPException(status_code=400, detail="Product name is required")
+        
+        if not sku_code:
+            raise HTTPException(status_code=400, detail="SKU code is required")
+        
+        if not hsn_code:
+            raise HTTPException(status_code=400, detail="HSN code is required")
+        
+        # Validate SKU code (alphanumeric only, no spaces)
+        if not sku_code.replace(" ", "").isalnum():
+            raise HTTPException(status_code=400, detail="SKU code must contain only letters and numbers, no spaces allowed")
+        
+        # Validate HSN code (numeric only)
+        if not hsn_code.isdigit():
+            raise HTTPException(status_code=400, detail="HSN code must contain only numbers")
+        
+        # Validate EAN code (numeric only, if provided)
+        if ean_code and not ean_code.isdigit():
+            raise HTTPException(status_code=400, detail="EAN code must contain only numbers")
+        
+        # Check for duplicates
+        if check_duplicate_product_name(product_name):
+            raise HTTPException(status_code=409, detail=f"A product with name '{product_name}' already exists")
+        
+        if check_duplicate_sku_code(sku_code):
+            raise HTTPException(status_code=409, detail=f"A product with SKU code '{sku_code}' already exists")
+        
+        if check_duplicate_hsn_code(hsn_code):
+            raise HTTPException(status_code=409, detail=f"A product with HSN code '{hsn_code}' already exists")
+        
+        if ean_code and check_duplicate_ean_code(ean_code):
+            raise HTTPException(status_code=409, detail=f"A product with EAN code '{ean_code}' already exists")
+        
+        # Map camelCase to snake_case
+        product_data = {
+            "name": product_name,  # Use trimmed name
+            "description": product.get("description"),
+            "sku_code": sku_code,  # Use trimmed SKU code
+            "hsn_code": hsn_code,  # Use trimmed HSN code
+            "barcode": ean_code,   # Use trimmed EAN code
+            "category_id": product.get("categoryId"),
+            "subcategory_id": product.get("subcategoryId"),
+            "unit_id": product.get("unitId"),
+            "cost_price": product.get("costPrice"),
+            "selling_price": product.get("retailPrice"),
+            "sale_price": product.get("salePrice"),
+            "mrp": product.get("mrp"),
+            "minimum_stock": int(product.get("reorderLevel", 0)) if product.get("reorderLevel") is not None else 0,
+            "maximum_stock": product.get("maximumStock"),
+            "reorder_point": int(product.get("reorderLevel", 0)) if product.get("reorderLevel") is not None else 0,
+            "is_active": product.get("isActive", True),
+            "supplier_id": product.get("supplierId"),
+            "sale_tax_id": product.get("saleTaxId"),
+            "sale_tax_type": product.get("saleTaxType", "exclusive"),
+            "purchase_tax_id": product.get("purchaseTaxId"),
+            "purchase_tax_type": product.get("purchaseTaxType", "exclusive"),
+            "manufacturer": product.get("manufacturer"),
+            "brand": product.get("brand"),
+            "manufacturer_part_number": product.get("manufacturerPartNumber"),
+            "warranty_period": product.get("warrantyPeriod"),
+            "warranty_unit": product.get("warrantyUnit"),
+            "product_tags": product.get("productTags", []),
+            "is_serialized": product.get("isSerialized", False),
+            "track_inventory": product.get("trackInventory", True),
+            "allow_override_price": product.get("allowOverridePrice", False),
+            "discount_percentage": product.get("discountPercentage", 0),
+            "warehouse_rack": product.get("warehouseRack"),
+            "unit_conversions": product.get("unitConversions")
+        }
+        
+        # Create the product
+        data = supabase.table("products").insert(product_data).execute()
+        created_product = data.data[0] if data.data else {}
+        
+        # Handle initial stock quantity
+        initial_quantity = product.get("initialQty", 0)
+        print(f"Create product: initial_quantity = {initial_quantity}, product_id = {created_product.get('id') if created_product else 'None'}")
+        
+        # Always create stock level record, even if initial_quantity is 0
+        if created_product:
+            try:
+                # Create stock level record with proper field mapping
+                stock_data = {
+                    "product_id": created_product["id"],
+                    "quantity_on_hand": initial_quantity or 0,
+                    "quantity_reserved": 0
+                    # quantity_available is a generated column, so we don't set it
+                }
+                print(f"Creating stock level with data: {stock_data}")
+                
+                # Create the stock level
+                stock_result = supabase.table("stock_levels").insert(stock_data).execute()
+                print(f"Stock level created successfully for product {created_product['id']}")
+                
+                # Create inventory transaction for audit trail only if there's initial quantity
+                if stock_result.data and len(stock_result.data) > 0 and initial_quantity > 0:
+                    created_stock = stock_result.data[0]
+                    transaction_data = {
+                        "product_id": created_stock["product_id"],
+                        "transaction_type": "initial_stock",
+                        "quantity_change": initial_quantity,
+                        "reference_type": "product_creation",
+                        "reference_id": created_product["id"],
+                        "notes": f"Initial stock quantity set during product creation - Quantity: {initial_quantity}",
+                        "created_by": payload.get("sub")
+                    }
+                    
+                    try:
+                        supabase.table("inventory_transactions").insert(transaction_data).execute()
+                        print(f"Created inventory transaction for initial stock")
+                    except Exception as transaction_error:
+                        print(f"Error creating inventory transaction: {str(transaction_error)}")
+                        # Don't fail if transaction creation fails
+                else:
+                    print(f"Stock level created for product {created_product['id']} with quantity: {initial_quantity}")
+                    
+            except Exception as stock_error:
+                print(f"Error creating stock level: {str(stock_error)}")
+                # Check if it's a unique constraint violation (stock level already exists)
+                if "duplicate key value violates unique constraint" in str(stock_error) and "stock_levels_product_id_key" in str(stock_error):
+                    print(f"Stock level already exists for product {created_product['id']}, skipping stock creation")
+                else:
+                    print(f"Unexpected error creating stock level: {str(stock_error)}")
+                # Don't fail the product creation if stock creation fails
+        
+        return JSONResponse(content=created_product)
+        
+    except Exception as e:
+        print(f"Error creating product: {str(e)}")
+        
+        # Handle unique constraint violations
+        if "duplicate key value violates unique constraint" in str(e):
+            if "products_sku_code_key" in str(e):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="SKU Code already exists. Please use a different SKU Code."
+                )
+            elif "products_name_key" in str(e):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Product name already exists. Please use a different product name."
+                )
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="A product with this information already exists."
+                )
+        
+        # Handle UUID format errors
+        elif "invalid input syntax for type uuid" in str(e):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid data format. Please check your input and try again."
+            )
+        
+        # Generic error
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Error creating product: {str(e)}"
+            )
+
+@app.put("/products/{product_id}")
+def update_product(product_id: str, product: dict = Body(...), payload=Depends(require_permission("products_edit"))):
+    try:
+        print(f"Update product {product_id}: Received data = {product}")
+        print(f"Update product {product_id}: reorderLevel value = {product.get('reorderLevel')} (type: {type(product.get('reorderLevel'))})")
+        
+        # Validate and trim input fields
+        product_name = product.get("name", "").strip()
+        sku_code = product.get("skuCode", "").strip()
+        hsn_code = product.get("hsnCode", "").strip()
+        ean_code = product.get("eanCode", "").strip()
+        
+        # Validation checks
+        if not product_name:
+            raise HTTPException(status_code=400, detail="Product name is required")
+        
+        if not sku_code:
+            raise HTTPException(status_code=400, detail="SKU code is required")
+        
+        if not hsn_code:
+            raise HTTPException(status_code=400, detail="HSN code is required")
+        
+        # Validate SKU code (alphanumeric only, no spaces)
+        if not sku_code.replace(" ", "").isalnum():
+            raise HTTPException(status_code=400, detail="SKU code must contain only letters and numbers, no spaces allowed")
+        
+        # Validate HSN code (numeric only)
+        if not hsn_code.isdigit():
+            raise HTTPException(status_code=400, detail="HSN code must contain only numbers")
+        
+        # Validate EAN code (numeric only, if provided)
+        if ean_code and not ean_code.isdigit():
+            raise HTTPException(status_code=400, detail="EAN code must contain only numbers")
+        
+        # Check for duplicates (excluding current product)
+        if check_duplicate_product_name(product_name, product_id):
+            raise HTTPException(status_code=409, detail=f"A product with name '{product_name}' already exists")
+        
+        if check_duplicate_sku_code(sku_code, product_id):
+            raise HTTPException(status_code=409, detail=f"A product with SKU code '{sku_code}' already exists")
+        
+        if check_duplicate_hsn_code(hsn_code, product_id):
+            raise HTTPException(status_code=409, detail=f"A product with HSN code '{hsn_code}' already exists")
+        
+        if ean_code and check_duplicate_ean_code(ean_code, product_id):
+            raise HTTPException(status_code=409, detail=f"A product with EAN code '{ean_code}' already exists")
+        
+        # Map camelCase to snake_case
+        product_data = {
+            "name": product_name,  # Use trimmed name
+            "description": product.get("description"),
+            "sku_code": sku_code,  # Use trimmed SKU code
+            "hsn_code": hsn_code,  # Use trimmed HSN code
+            "barcode": ean_code,   # Use trimmed EAN code
+            "category_id": product.get("categoryId"),
+            "subcategory_id": product.get("subcategoryId"),
+            "unit_id": product.get("unitId"),
+            "cost_price": product.get("costPrice"),
+            "selling_price": product.get("retailPrice"),
+            "sale_price": product.get("salePrice"),
+            "mrp": product.get("mrp"),
+            "minimum_stock": int(product.get("reorderLevel", 0)) if product.get("reorderLevel") is not None else 0,
+            "maximum_stock": product.get("maximumStock"),
+            "reorder_point": int(product.get("reorderLevel", 0)) if product.get("reorderLevel") is not None else 0,
+            "is_active": product.get("isActive", True),
+            "supplier_id": product.get("supplierId"),
+            "sale_tax_id": product.get("saleTaxId"),
+            "sale_tax_type": product.get("saleTaxType", "exclusive"),
+            "purchase_tax_id": product.get("purchaseTaxId"),
+            "purchase_tax_type": product.get("purchaseTaxType", "exclusive"),
+            "manufacturer": product.get("manufacturer"),
+            "brand": product.get("brand"),
+            "manufacturer_part_number": product.get("manufacturerPartNumber"),
+            "warranty_period": product.get("warrantyPeriod"),
+            "warranty_unit": product.get("warrantyUnit"),
+            "product_tags": product.get("productTags", []),
+            "is_serialized": product.get("isSerialized", False),
+            "track_inventory": product.get("trackInventory", True),
+            "allow_override_price": product.get("allowOverridePrice", False),
+            "discount_percentage": product.get("discountPercentage", 0),
+            "warehouse_rack": product.get("warehouseRack"),
+            "unit_conversions": product.get("unitConversions")
+        }
+        
+        print(f"Update product {product_id}: Saving data = {product_data}")
+        print(f"Update product {product_id}: reorder_point being saved = {product_data.get('reorder_point')} (type: {type(product_data.get('reorder_point'))})")
+        data = supabase.table("products").update(product_data).eq("id", product_id).execute()
+        updated_product = data.data[0] if data.data else {}
+        print(f"Update product {product_id}: Updated product = {updated_product}")
+        print(f"Update product {product_id}: reorder_point in response = {updated_product.get('reorder_point')} (type: {type(updated_product.get('reorder_point'))})")
+        
+        # Note: Stock level updates are disabled in edit mode
+        # Stock quantities should be managed through the dedicated inventory module
+        # This ensures proper audit trails and prevents accidental stock modifications
+        
+        return JSONResponse(content=updated_product)
+        
+    except Exception as e:
+        print(f"Error updating product: {str(e)}")
+        
+        # Handle unique constraint violations
+        if "duplicate key value violates unique constraint" in str(e):
+            if "products_sku_code_key" in str(e):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="SKU Code already exists. Please use a different SKU Code."
+                )
+            elif "products_name_key" in str(e):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Product name already exists. Please use a different product name."
+                )
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="A product with this information already exists."
+                )
+        
+        # Handle UUID format errors
+        elif "invalid input syntax for type uuid" in str(e):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid data format. Please check your input and try again."
+            )
+        
+        # Generic error
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Error updating product: {str(e)}"
+            )
+
+@app.delete("/products/{product_id}")
+def delete_product(product_id: str, payload=Depends(require_permission("products_delete"))):
+    try:
+        data = supabase.table("products").delete().eq("id", product_id).execute()
+        return JSONResponse(content={"message": "Product deleted successfully"})
+    except Exception as e:
+        print(f"Error deleting product: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error deleting product: {str(e)}"
+        )
 
 @app.get("/customers")
 def get_customers(payload=Depends(verify_jwt)):
@@ -362,39 +774,72 @@ def get_customers(payload=Depends(verify_jwt)):
 
 @app.post("/customers")
 def create_customer(customer: dict = Body(...), payload=Depends(require_permission("customers_create"))):
-    # Map camelCase to snake_case
-    customer_data = {
-        "name": customer["name"],
-        "email": customer.get("email"),
-        "phone": customer.get("phone"),
-        "billing_address": customer.get("billingAddress"),
-        "shipping_address": customer.get("shippingAddress"),
-        "tax_id": customer.get("taxId"),
-        "notes": customer.get("notes"),
-        "credit_limit": customer.get("creditLimit", 0),
-        "current_credit": customer.get("currentCredit", 0),
-        "customer_type": customer.get("customerType", "retail")
-    }
-    data = supabase.table("customers").insert(customer_data).execute()
-    return JSONResponse(content=data.data)
+    try:
+        # Check for duplicate customer name
+        customer_name = customer.get("name", "").strip()
+        if not customer_name:
+            raise HTTPException(status_code=400, detail="Customer name is required")
+        
+        if check_duplicate_customer_name(customer_name):
+            raise HTTPException(status_code=409, detail=f"A customer with name '{customer_name}' already exists")
+        
+        # Map camelCase to snake_case
+        customer_data = {
+            "name": customer_name,  # Use trimmed name
+            "email": customer.get("email"),
+            "phone": customer.get("phone"),
+            "billing_address": customer.get("billingAddress"),
+            "shipping_address": customer.get("shippingAddress"),
+            "tax_id": customer.get("taxId"),
+            "notes": customer.get("notes"),
+            "credit_limit": customer.get("creditLimit", 0),
+            "current_credit": customer.get("currentCredit", 0),
+            "customer_type": customer.get("customerType", "retail"),
+            "is_active": customer.get("isActive", True)
+        }
+        data = supabase.table("customers").insert(customer_data).execute()
+        return JSONResponse(content=data.data)
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error creating customer: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error creating customer: {str(e)}"
+        )
 
 @app.put("/customers/{customer_id}")
 def update_customer(customer_id: str, customer: dict = Body(...), payload=Depends(require_permission("customers_edit"))):
-    # Map camelCase to snake_case
-    customer_data = {
-        "name": customer["name"],
-        "email": customer.get("email"),
-        "phone": customer.get("phone"),
-        "billing_address": customer.get("billingAddress"),
-        "shipping_address": customer.get("shippingAddress"),
-        "tax_id": customer.get("taxId"),
-        "notes": customer.get("notes"),
-        "credit_limit": customer.get("creditLimit", 0),
-        "current_credit": customer.get("currentCredit", 0),
-        "customer_type": customer.get("customerType", "retail")
-    }
-    data = supabase.table("customers").update(customer_data).eq("id", customer_id).execute()
-    return JSONResponse(content=data.data)
+    try:
+        # Check for duplicate customer name
+        customer_name = customer.get("name", "").strip()
+        if customer_name and check_duplicate_customer_name(customer_name, customer_id):
+            raise HTTPException(status_code=409, detail=f"A customer with name '{customer_name}' already exists")
+        
+        # Map camelCase to snake_case
+        customer_data = {
+            "name": customer_name,  # Use trimmed name
+            "email": customer.get("email"),
+            "phone": customer.get("phone"),
+            "billing_address": customer.get("billingAddress"),
+            "shipping_address": customer.get("shippingAddress"),
+            "tax_id": customer.get("taxId"),
+            "notes": customer.get("notes"),
+            "credit_limit": customer.get("creditLimit", 0),
+            "current_credit": customer.get("currentCredit", 0),
+            "customer_type": customer.get("customerType", "retail"),
+            "is_active": customer.get("isActive", True)
+        }
+        data = supabase.table("customers").update(customer_data).eq("id", customer_id).execute()
+        return JSONResponse(content=data.data)
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error updating customer: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error updating customer: {str(e)}"
+        )
 
 @app.delete("/customers/{customer_id}")
 def delete_customer(customer_id: str, payload=Depends(require_permission("customers_delete"))):
@@ -409,37 +854,70 @@ def get_suppliers(payload=Depends(verify_jwt)):
 
 @app.post("/suppliers")
 def create_supplier(supplier: dict = Body(...), payload=Depends(require_permission("suppliers_create"))):
-    # Map camelCase to snake_case
-    supplier_data = {
-        "name": supplier["name"],
-        "contact_name": supplier["contactName"],
-        "email": supplier.get("email"),
-        "phone": supplier.get("phone"),
-        "address": supplier.get("address"),
-        "payment_terms": supplier.get("paymentTerms"),
-        "tax_id": supplier.get("taxId"),
-        "notes": supplier.get("notes"),
-        "is_active": supplier.get("isActive", True)
-    }
-    data = supabase.table("suppliers").insert(supplier_data).execute()
-    return JSONResponse(content=data.data)
+    try:
+        # Check for duplicate supplier name
+        supplier_name = supplier.get("name", "").strip()
+        if not supplier_name:
+            raise HTTPException(status_code=400, detail="Supplier name is required")
+        
+        if check_duplicate_supplier_name(supplier_name):
+            raise HTTPException(status_code=409, detail=f"A supplier with name '{supplier_name}' already exists")
+        
+        # Map camelCase to snake_case
+        supplier_data = {
+            "name": supplier_name,  # Use trimmed name
+            "contact_name": supplier["contactName"],
+            "email": supplier.get("email"),
+            "phone": supplier.get("phone"),
+            "billing_address": supplier.get("billingAddress"),
+            "shipping_address": supplier.get("shippingAddress"),
+            "payment_terms": supplier.get("paymentTerms"),
+            "tax_id": supplier.get("taxId"),
+            "notes": supplier.get("notes"),
+            "is_active": supplier.get("isActive", True)
+        }
+        data = supabase.table("suppliers").insert(supplier_data).execute()
+        return JSONResponse(content=data.data)
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error creating supplier: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error creating supplier: {str(e)}"
+        )
 
 @app.put("/suppliers/{supplier_id}")
 def update_supplier(supplier_id: str, supplier: dict = Body(...), payload=Depends(require_permission("suppliers_edit"))):
-    # Map camelCase to snake_case
-    supplier_data = {
-        "name": supplier["name"],
-        "contact_name": supplier["contactName"],
-        "email": supplier.get("email"),
-        "phone": supplier.get("phone"),
-        "address": supplier.get("address"),
-        "payment_terms": supplier.get("paymentTerms"),
-        "tax_id": supplier.get("taxId"),
-        "notes": supplier.get("notes"),
-        "is_active": supplier.get("isActive", True)
-    }
-    data = supabase.table("suppliers").update(supplier_data).eq("id", supplier_id).execute()
-    return JSONResponse(content=data.data)
+    try:
+        # Check for duplicate supplier name
+        supplier_name = supplier.get("name", "").strip()
+        if supplier_name and check_duplicate_supplier_name(supplier_name, supplier_id):
+            raise HTTPException(status_code=409, detail=f"A supplier with name '{supplier_name}' already exists")
+        
+        # Map camelCase to snake_case
+        supplier_data = {
+            "name": supplier_name,  # Use trimmed name
+            "contact_name": supplier["contactName"],
+            "email": supplier.get("email"),
+            "phone": supplier.get("phone"),
+            "billing_address": supplier.get("billingAddress"),
+            "shipping_address": supplier.get("shippingAddress"),
+            "payment_terms": supplier.get("paymentTerms"),
+            "tax_id": supplier.get("taxId"),
+            "notes": supplier.get("notes"),
+            "is_active": supplier.get("isActive", True)
+        }
+        data = supabase.table("suppliers").update(supplier_data).eq("id", supplier_id).execute()
+        return JSONResponse(content=data.data)
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error updating supplier: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error updating supplier: {str(e)}"
+        )
 
 @app.delete("/suppliers/{supplier_id}")
 def delete_supplier(supplier_id: str, payload=Depends(require_permission("suppliers_delete"))):
@@ -454,31 +932,70 @@ def get_taxes(payload=Depends(verify_jwt)):
 
 @app.post("/taxes")
 def create_tax(tax: dict = Body(...), payload=Depends(require_permission("taxes_create"))):
-    # Map camelCase to snake_case
-    tax_data = {
-        "name": tax["name"],
-        "rate": tax["rate"],
-        "is_default": tax.get("isDefault", False),
-        "applied_to": tax.get("appliedTo", "products"),
-        "description": tax.get("description"),
-        "is_active": tax.get("isActive", True)
-    }
-    data = supabase.table("taxes").insert(tax_data).execute()
-    return JSONResponse(content=data.data)
+    try:
+        # Check for duplicate tax name
+        tax_name = tax.get("name", "").strip()
+        if not tax_name:
+            raise HTTPException(status_code=400, detail="Tax name is required")
+        
+        if check_duplicate_tax_name(tax_name):
+            raise HTTPException(status_code=409, detail=f"A tax with name '{tax_name}' already exists")
+        
+        # Convert percentage to decimal (e.g., 5 -> 0.05)
+        rate_percentage = float(tax["rate"])
+        rate_decimal = rate_percentage / 100.0
+        
+        # Map camelCase to snake_case
+        tax_data = {
+            "name": tax_name,  # Use trimmed name
+            "rate": rate_decimal,
+            "is_default": False,  # Always false since we removed the default feature
+            "applied_to": tax.get("appliedTo", "products"),
+            "description": tax.get("description"),
+            "is_active": tax.get("isActive", True)
+        }
+        data = supabase.table("taxes").insert(tax_data).execute()
+        return JSONResponse(content=data.data)
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error creating tax: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error creating tax: {str(e)}"
+        )
 
 @app.put("/taxes/{tax_id}")
 def update_tax(tax_id: str, tax: dict = Body(...), payload=Depends(require_permission("taxes_edit"))):
-    # Map camelCase to snake_case
-    tax_data = {
-        "name": tax["name"],
-        "rate": tax["rate"],
-        "is_default": tax.get("isDefault", False),
-        "applied_to": tax.get("appliedTo", "products"),
-        "description": tax.get("description"),
-        "is_active": tax.get("isActive", True)
-    }
-    data = supabase.table("taxes").update(tax_data).eq("id", tax_id).execute()
-    return JSONResponse(content=data.data)
+    try:
+        # Check for duplicate tax name
+        tax_name = tax.get("name", "").strip()
+        if tax_name and check_duplicate_tax_name(tax_name, tax_id):
+            raise HTTPException(status_code=409, detail=f"A tax with name '{tax_name}' already exists")
+        
+        # Convert percentage to decimal (e.g., 5 -> 0.05)
+        rate_percentage = float(tax["rate"])
+        rate_decimal = rate_percentage / 100.0
+        
+        # Map camelCase to snake_case
+        tax_data = {
+            "name": tax_name,  # Use trimmed name
+            "rate": rate_decimal,
+            "is_default": False,  # Always false since we removed the default feature
+            "applied_to": tax.get("appliedTo", "products"),
+            "description": tax.get("description"),
+            "is_active": tax.get("isActive", True)
+        }
+        data = supabase.table("taxes").update(tax_data).eq("id", tax_id).execute()
+        return JSONResponse(content=data.data)
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error updating tax: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error updating tax: {str(e)}"
+        )
 
 @app.delete("/taxes/{tax_id}")
 def delete_tax(tax_id: str, payload=Depends(require_permission("taxes_delete"))):
@@ -493,25 +1010,58 @@ def get_units(payload=Depends(verify_jwt)):
 
 @app.post("/units")
 def create_unit(unit: dict = Body(...), payload=Depends(require_permission("units_create"))):
-    # Map camelCase to snake_case
-    unit_data = {
-        "name": unit["name"],
-        "abbreviation": unit["abbreviation"],
-        "description": unit.get("description")
-    }
-    data = supabase.table("units").insert(unit_data).execute()
-    return JSONResponse(content=data.data)
+    try:
+        # Check for duplicate unit name
+        unit_name = unit.get("name", "").strip()
+        if not unit_name:
+            raise HTTPException(status_code=400, detail="Unit name is required")
+        
+        if check_duplicate_unit_name(unit_name):
+            raise HTTPException(status_code=409, detail=f"A unit with name '{unit_name}' already exists")
+        
+        # Map camelCase to snake_case
+        unit_data = {
+            "name": unit_name,  # Use trimmed name
+            "abbreviation": unit["abbreviation"],
+            "description": unit.get("description"),
+            "is_active": unit.get("isActive", True)
+        }
+        data = supabase.table("units").insert(unit_data).execute()
+        return JSONResponse(content=data.data)
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error creating unit: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error creating unit: {str(e)}"
+        )
 
 @app.put("/units/{unit_id}")
 def update_unit(unit_id: str, unit: dict = Body(...), payload=Depends(require_permission("units_edit"))):
-    # Map camelCase to snake_case
-    unit_data = {
-        "name": unit["name"],
-        "abbreviation": unit["abbreviation"],
-        "description": unit.get("description")
-    }
-    data = supabase.table("units").update(unit_data).eq("id", unit_id).execute()
-    return JSONResponse(content=data.data)
+    try:
+        # Check for duplicate unit name
+        unit_name = unit.get("name", "").strip()
+        if unit_name and check_duplicate_unit_name(unit_name, unit_id):
+            raise HTTPException(status_code=409, detail=f"A unit with name '{unit_name}' already exists")
+        
+        # Map camelCase to snake_case
+        unit_data = {
+            "name": unit_name,  # Use trimmed name
+            "abbreviation": unit["abbreviation"],
+            "description": unit.get("description"),
+            "is_active": unit.get("isActive", True)
+        }
+        data = supabase.table("units").update(unit_data).eq("id", unit_id).execute()
+        return JSONResponse(content=data.data)
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error updating unit: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error updating unit: {str(e)}"
+        )
 
 @app.delete("/units/{unit_id}")
 def delete_unit(unit_id: str, payload=Depends(require_permission("units_delete"))):
@@ -737,44 +1287,98 @@ def delete_location(location_id: str, payload=Depends(require_permission("invent
 @app.get("/categories")
 def get_categories(payload=Depends(verify_jwt)):
     data = supabase.table("categories").select("*").execute()
-    categories = [to_camel_case_category(cat) for cat in data.data]
+    categories = [to_camel_case_category(category) for category in data.data]
     return JSONResponse(content=categories)
 
 @app.post("/categories")
 def create_category(category: dict = Body(...), payload=Depends(verify_jwt)):
-    # Map camelCase to snake_case
-    if "isActive" in category:
-        category["is_active"] = category.pop("isActive")
-    if "parentId" in category:
-        value = category.pop("parentId")
-        if not value or value == "none":
-            category["parent_id"] = None
-        else:
-            category["parent_id"] = value
-    if "createdAt" in category:
-        category["created_at"] = category.pop("createdAt")
-    if "updatedAt" in category:
-        category["updated_at"] = category.pop("updatedAt")
-    data = supabase.table("categories").insert(category).execute()
-    return JSONResponse(content=data.data)
+    try:
+        # Check for duplicate category name with same parent
+        category_name = category.get("name", "").strip()
+        parent_id = category.get("parentId")
+        if not category_name:
+            raise HTTPException(status_code=400, detail="Category name is required")
+        
+        # Convert parentId to parent_id for checking
+        parent_id_for_check = None
+        if parent_id and parent_id != "none":
+            parent_id_for_check = parent_id
+        
+        if check_duplicate_category_name(category_name, parent_id_for_check):
+            parent_text = f" under parent '{parent_id}'" if parent_id_for_check else " (root category)"
+            raise HTTPException(status_code=409, detail=f"A category with name '{category_name}'{parent_text} already exists")
+        
+        # Map camelCase to snake_case
+        if "isActive" in category:
+            category["is_active"] = category.pop("isActive")
+        if "parentId" in category:
+            value = category.pop("parentId")
+            if not value or value == "none":
+                category["parent_id"] = None
+            else:
+                category["parent_id"] = value
+        if "createdAt" in category:
+            category["created_at"] = category.pop("createdAt")
+        if "updatedAt" in category:
+            category["updated_at"] = category.pop("updatedAt")
+        
+        # Use trimmed name
+        category["name"] = category_name
+        
+        data = supabase.table("categories").insert(category).execute()
+        return JSONResponse(content=data.data)
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error creating category: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error creating category: {str(e)}"
+        )
 
 @app.put("/categories/{category_id}")
 def update_category(category_id: str, category: dict = Body(...), payload=Depends(verify_jwt)):
-    # Map camelCase to snake_case
-    if "isActive" in category:
-        category["is_active"] = category.pop("isActive")
-    if "parentId" in category:
-        value = category.pop("parentId")
-        if not value or value == "none":
-            category["parent_id"] = None
-        else:
-            category["parent_id"] = value
-    if "createdAt" in category:
-        category["created_at"] = category.pop("createdAt")
-    if "updatedAt" in category:
-        category["updated_at"] = category.pop("updatedAt")
-    data = supabase.table("categories").update(category).eq("id", category_id).execute()
-    return JSONResponse(content=data.data)
+    try:
+        # Check for duplicate category name with same parent
+        category_name = category.get("name", "").strip()
+        parent_id = category.get("parentId")
+        if category_name:
+            # Convert parentId to parent_id for checking
+            parent_id_for_check = None
+            if parent_id and parent_id != "none":
+                parent_id_for_check = parent_id
+            
+            if check_duplicate_category_name(category_name, parent_id_for_check, category_id):
+                parent_text = f" under parent '{parent_id}'" if parent_id_for_check else " (root category)"
+                raise HTTPException(status_code=409, detail=f"A category with name '{category_name}'{parent_text} already exists")
+        
+        # Map camelCase to snake_case
+        if "isActive" in category:
+            category["is_active"] = category.pop("isActive")
+        if "parentId" in category:
+            value = category.pop("parentId")
+            if not value or value == "none":
+                category["parent_id"] = None
+            else:
+                category["parent_id"] = value
+        if "createdAt" in category:
+            category["created_at"] = category.pop("createdAt")
+        if "updatedAt" in category:
+            category["updated_at"] = category.pop("updatedAt")
+        
+        # Use trimmed name
+        category["name"] = category_name
+        
+        data = supabase.table("categories").update(category).eq("id", category_id).execute()
+        return JSONResponse(content=data.data)
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error updating category: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error updating category: {str(e)}"
+        )
 
 @app.delete("/categories/{category_id}")
 def delete_category(category_id: str, payload=Depends(require_role(['admin']))):
@@ -795,6 +1399,136 @@ def check_duplicate_role_name(name: str, exclude_role_name: str = None):
         query = supabase.table("roles").select("name").eq("name", name)
         if exclude_role_name:
             query = query.neq("name", exclude_role_name)
+        result = query.execute()
+        return len(result.data) > 0
+    except Exception:
+        return False
+
+# Helper function to check for duplicate category names with same parent
+def check_duplicate_category_name(name: str, parent_id: str = None, exclude_category_id: str = None):
+    """Check if a category with the given name and parent already exists"""
+    try:
+        # Trim leading and trailing spaces
+        trimmed_name = name.strip() if name else ""
+        query = supabase.table("categories").select("id").eq("name", trimmed_name)
+        if parent_id:
+            query = query.eq("parent_id", parent_id)
+        else:
+            query = query.is_("parent_id", "null")
+        if exclude_category_id:
+            query = query.neq("id", exclude_category_id)
+        result = query.execute()
+        return len(result.data) > 0
+    except Exception:
+        return False
+
+# Helper function to check for duplicate unit names
+def check_duplicate_unit_name(name: str, exclude_unit_id: str = None):
+    """Check if a unit with the given name already exists"""
+    try:
+        # Trim leading and trailing spaces
+        trimmed_name = name.strip() if name else ""
+        query = supabase.table("units").select("id").eq("name", trimmed_name)
+        if exclude_unit_id:
+            query = query.neq("id", exclude_unit_id)
+        result = query.execute()
+        return len(result.data) > 0
+    except Exception:
+        return False
+
+# Helper function to check for duplicate tax names
+def check_duplicate_tax_name(name: str, exclude_tax_id: str = None):
+    """Check if a tax with the given name already exists"""
+    try:
+        # Trim leading and trailing spaces
+        trimmed_name = name.strip() if name else ""
+        query = supabase.table("taxes").select("id").eq("name", trimmed_name)
+        if exclude_tax_id:
+            query = query.neq("id", exclude_tax_id)
+        result = query.execute()
+        return len(result.data) > 0
+    except Exception:
+        return False
+
+# Helper function to check for duplicate supplier names
+def check_duplicate_supplier_name(name: str, exclude_supplier_id: str = None):
+    """Check if a supplier with the given name already exists"""
+    try:
+        # Trim leading and trailing spaces
+        trimmed_name = name.strip() if name else ""
+        query = supabase.table("suppliers").select("id").eq("name", trimmed_name)
+        if exclude_supplier_id:
+            query = query.neq("id", exclude_supplier_id)
+        result = query.execute()
+        return len(result.data) > 0
+    except Exception:
+        return False
+
+# Helper function to check for duplicate customer names
+def check_duplicate_customer_name(name: str, exclude_customer_id: str = None):
+    """Check if a customer with the given name already exists"""
+    try:
+        # Trim leading and trailing spaces
+        trimmed_name = name.strip() if name else ""
+        query = supabase.table("customers").select("id").eq("name", trimmed_name)
+        if exclude_customer_id:
+            query = query.neq("id", exclude_customer_id)
+        result = query.execute()
+        return len(result.data) > 0
+    except Exception:
+        return False
+
+# Helper function to check for duplicate product names
+def check_duplicate_product_name(name: str, exclude_product_id: str = None):
+    """Check if a product with the given name already exists"""
+    try:
+        # Trim leading and trailing spaces
+        trimmed_name = name.strip() if name else ""
+        query = supabase.table("products").select("id").eq("name", trimmed_name)
+        if exclude_product_id:
+            query = query.neq("id", exclude_product_id)
+        result = query.execute()
+        return len(result.data) > 0
+    except Exception:
+        return False
+
+# Helper function to check for duplicate SKU codes
+def check_duplicate_sku_code(sku_code: str, exclude_product_id: str = None):
+    """Check if a product with the given SKU code already exists"""
+    try:
+        # Trim leading and trailing spaces
+        trimmed_sku = sku_code.strip() if sku_code else ""
+        query = supabase.table("products").select("id").eq("sku_code", trimmed_sku)
+        if exclude_product_id:
+            query = query.neq("id", exclude_product_id)
+        result = query.execute()
+        return len(result.data) > 0
+    except Exception:
+        return False
+
+# Helper function to check for duplicate HSN codes
+def check_duplicate_hsn_code(hsn_code: str, exclude_product_id: str = None):
+    """Check if a product with the given HSN code already exists"""
+    try:
+        # Trim leading and trailing spaces
+        trimmed_hsn = hsn_code.strip() if hsn_code else ""
+        query = supabase.table("products").select("id").eq("hsn_code", trimmed_hsn)
+        if exclude_product_id:
+            query = query.neq("id", exclude_product_id)
+        result = query.execute()
+        return len(result.data) > 0
+    except Exception:
+        return False
+
+# Helper function to check for duplicate EAN codes
+def check_duplicate_ean_code(ean_code: str, exclude_product_id: str = None):
+    """Check if a product with the given EAN code already exists"""
+    try:
+        # Trim leading and trailing spaces
+        trimmed_ean = ean_code.strip() if ean_code else ""
+        query = supabase.table("products").select("id").eq("barcode", trimmed_ean)
+        if exclude_product_id:
+            query = query.neq("id", exclude_product_id)
         result = query.execute()
         return len(result.data) > 0
     except Exception:
@@ -867,20 +1601,26 @@ def delete_role(role_name: str, payload=Depends(require_role(["admin"]))):
 # --- Users Endpoints ---
 @app.get("/users")
 def get_users(payload=Depends(require_role(["admin"]))):
-    # Get profiles data matching the actual schema
-    profiles_data = supabase.table("profiles").select("id, username, full_name, is_active, role_id, created_at, updated_at").execute()
+    try:
+        # Get profiles data with role_id
+        profiles_data = supabase.table("profiles").select("id, username, full_name, is_active, role_id, created_at, updated_at").execute()
+    except Exception as e:
+        print(f"Error fetching profiles: {str(e)}")
+        return JSONResponse(content=[])
+    
     users = []
     
     for profile in profiles_data.data:
-        # Get role name separately to avoid permissions field issues
-        role_name = "Unknown"
+        # Get role name from roles table using role_id
+        role_name = "staff"  # default fallback
         if profile.get("role_id"):
             try:
-                role_resp = supabase.table("roles").select("name").eq("id", profile["role_id"]).execute()
-                if role_resp.data:
-                    role_name = role_resp.data[0].get("name", "Unknown")
-            except Exception:
-                role_name = "Unknown"
+                role_data = supabase.table("roles").select("name").eq("id", profile["role_id"]).execute()
+                if role_data.data and len(role_data.data) > 0:
+                    role_name = role_data.data[0].get("name", "staff")
+            except Exception as e:
+                print(f"Error fetching role for user {profile.get('id')}: {str(e)}")
+                role_name = "staff"
         
         # Try to get auth user data, but don't fail if it doesn't exist
         auth_user = {}
@@ -1014,17 +1754,13 @@ def create_user(user: dict = Body(...), payload=Depends(require_role(["admin"]))
                     if profile_data.data:
                         profile = profile_data.data[0]
                         
-                        # Update the profile with the correct role_id if needed
+                        # Update the profile with the correct role if needed
                         if user.get("role"):
                             try:
-                                role_resp = supabase.table("roles").select("id").eq("name", user.get("role")).execute()
-                                if role_resp.data:
-                                    role_id = role_resp.data[0].get("id")
-                                    
-                                    # Update profile with role_id
-                                    supabase.table("profiles").update({"role_id": role_id}).eq("id", user_id).execute()
+                                # Update profile with role directly
+                                supabase.table("profiles").update({"role": user.get("role")}).eq("id", user_id).execute()
                             except Exception as e:
-                                print(f"Error updating role_id: {str(e)}")  # Debug log
+                                print(f"Error updating role: {str(e)}")  # Debug log
                         
                         # Update the profile with status if provided
                         if user.get("status"):
@@ -1082,19 +1818,16 @@ def update_user(user_id: str, user: dict = Body(...), payload=Depends(require_ro
         status = user_data.pop("status")
         user_data["is_active"] = (status == "Active")
     
-    # Map role name to role_id
+    # Map role name to role (no need to convert since we use role directly)
     if "role" in user_data:
-        role_name = user_data.pop("role")
-        try:
-            role_resp = supabase.table("roles").select("id").eq("name", role_name).execute()
-            if role_resp.data:
-                user_data["role_id"] = role_resp.data[0].get("id")
-        except Exception:
-            pass
+        # Keep the role as is, just ensure it's a valid enum value
+        role_name = user_data["role"]
+        if role_name not in ["admin", "manager", "staff"]:
+            raise HTTPException(status_code=400, detail=f"Invalid role: {role_name}")
     
     # Map camelCase to snake_case
     if "roleId" in user_data:
-        user_data["role_id"] = user_data.pop("roleId")
+        user_data["role"] = user_data.pop("roleId")
     if "createdAt" in user_data:
         user_data["created_at"] = user_data.pop("createdAt")
     if "updatedAt" in user_data:
@@ -1142,21 +1875,70 @@ def check_user_status(user_id: str, payload=Depends(verify_jwt)):
 
 @app.get("/debug/profiles-schema")
 def get_profiles_schema(payload=Depends(require_role(["admin"]))):
-    """Debug endpoint to check profiles table structure"""
     try:
-        # Try to get a single row to see the structure
-        result = supabase.table("profiles").select("*").limit(1).execute()
-        if result.data:
-            # Get the first row to see column names
-            sample_row = result.data[0]
-            return {
-                "columns": list(sample_row.keys()),
-                "sample_data": sample_row
-            }
+        # Try to get all columns from profiles table
+        profiles_data = supabase.table("profiles").select("*").limit(1).execute()
+        
+        # Get column names from the first row
+        if profiles_data.data and len(profiles_data.data) > 0:
+            columns = list(profiles_data.data[0].keys())
+            return JSONResponse(content={
+                "columns": columns,
+                "sample_data": profiles_data.data[0]
+            })
         else:
-            return {"columns": [], "sample_data": None}
+            return JSONResponse(content={
+                "columns": [],
+                "message": "No data found in profiles table"
+            })
     except Exception as e:
-        return {"error": str(e)}
+        return JSONResponse(content={
+            "error": str(e),
+            "message": "Failed to get profiles schema"
+        })
+
+@app.get("/debug/products")
+def debug_products():
+    try:
+        # Check if products table exists and has data
+        data = supabase.table("products").select("count").execute()
+        
+        # Test products with stock_levels
+        products_with_stock = supabase.table("products").select("""
+            *,
+            stock_levels(quantity_on_hand, quantity_available)
+        """).limit(1).execute()
+        
+        return {
+            "message": "Products table accessible",
+            "count": data.count if hasattr(data, 'count') else "Unknown",
+            "data": data.data if hasattr(data, 'data') else [],
+            "products_with_stock": products_with_stock.data[0] if products_with_stock.data else None,
+            "stock_levels_test": "Stock levels query executed successfully"
+        }
+    except Exception as e:
+        return {
+            "error": str(e),
+            "message": "Failed to access products table"
+        }
+
+@app.get("/debug/stock-levels")
+def debug_stock_levels():
+    try:
+        # Test direct access to stock_levels table
+        data = supabase.table("stock_levels").select("id, product_id, quantity_on_hand, quantity_reserved, quantity_available").limit(5).execute()
+        return {
+            "message": "Stock levels table accessible",
+            "count": data.count if hasattr(data, 'count') else "Unknown",
+            "sample_data": data.data if data.data else []
+        }
+    except Exception as e:
+        return {
+            "error": str(e),
+            "message": "Failed to access stock_levels table"
+        }
+
+
 
 @app.get("/config/supabase")
 def get_supabase_config():
@@ -1321,33 +2103,473 @@ def update_user_setting(user_setting: dict = Body(...), payload=Depends(verify_j
 # System Settings endpoints
 @app.get("/system-settings")
 def get_system_settings(payload=Depends(require_permission("settings_view"))):
-    data = supabase.table("system_settings").select("*").execute()
-    settings = [to_camel_case_system_setting(setting) for setting in data.data]
-    return JSONResponse(content=settings)
-
-@app.get("/public/system-settings")
-def get_public_system_settings():
-    """Public endpoint for basic system settings that don't require authentication"""
     try:
-        # Get only public system settings for better security and performance
-        data = supabase.table("system_settings").select("*").eq("is_public", True).execute()
-        settings = [to_camel_case_system_setting(setting) for setting in data.data]
-        return JSONResponse(content=settings)
+        data = supabase.table("system_settings").select("*").execute()
+        if data.data:
+            settings = [to_camel_case_system_setting(setting) for setting in data.data]
+            return JSONResponse(content=settings)
+        else:
+            # Return default settings if no settings exist in database
+            return JSONResponse(content=get_default_system_settings())
     except Exception as e:
-        # Return default settings if there's an error - default to disabled signup
-        default_settings = [
-            {
-                "id": "default-signup",
-                "key": "enable_signup",
-                "value": False,  # Changed from True to False
-                "type": "boolean",
-                "description": "Enable user signup",
-                "isPublic": True,
-                "createdAt": None,
-                "updatedAt": None
-            }
-        ]
-        return JSONResponse(content=default_settings)
+        print(f"Error fetching system settings: {str(e)}")
+        # Return default settings on error
+        return JSONResponse(content=get_default_system_settings())
+
+def get_default_system_settings():
+    """Return default system settings when database is empty or has errors"""
+    return [
+        {
+            "id": "default-company-name",
+            "key": "company_name",
+            "value": "Versal",
+            "type": "string",
+            "description": "Company name",
+            "isPublic": True,
+            "createdAt": None,
+            "updatedAt": None
+        },
+        {
+            "id": "default-company-email",
+            "key": "company_email",
+            "value": "contact@versal.com",
+            "type": "string",
+            "description": "Company email",
+            "isPublic": True,
+            "createdAt": None,
+            "updatedAt": None
+        },
+        {
+            "id": "default-currency",
+            "key": "default_currency",
+            "value": "USD",
+            "type": "string",
+            "description": "Default currency",
+            "isPublic": True,
+            "createdAt": None,
+            "updatedAt": None
+        },
+        {
+            "id": "default-date-format",
+            "key": "date_format",
+            "value": "MM/DD/YYYY",
+            "type": "string",
+            "description": "Date format",
+            "isPublic": True,
+            "createdAt": None,
+            "updatedAt": None
+        },
+        {
+            "id": "default-timezone",
+            "key": "timezone",
+            "value": "UTC",
+            "type": "string",
+            "description": "Timezone",
+            "isPublic": True,
+            "createdAt": None,
+            "updatedAt": None
+        },
+        {
+            "id": "default-language",
+            "key": "language",
+            "value": "en",
+            "type": "string",
+            "description": "Language",
+            "isPublic": True,
+            "createdAt": None,
+            "updatedAt": None
+        },
+        {
+            "id": "default-tax-rate",
+            "key": "tax_rate",
+            "value": "10.0",
+            "type": "string",
+            "description": "Default tax rate",
+            "isPublic": False,
+            "createdAt": None,
+            "updatedAt": None
+        },
+        {
+            "id": "default-invoice-prefix",
+            "key": "invoice_prefix",
+            "value": "INV",
+            "type": "string",
+            "description": "Invoice prefix",
+            "isPublic": False,
+            "createdAt": None,
+            "updatedAt": None
+        },
+        {
+            "id": "default-credit-note-prefix",
+            "key": "credit_note_prefix",
+            "value": "CN",
+            "type": "string",
+            "description": "Credit note prefix",
+            "isPublic": False,
+            "createdAt": None,
+            "updatedAt": None
+        },
+        {
+            "id": "default-purchase-order-prefix",
+            "key": "purchase_order_prefix",
+            "value": "PO",
+            "type": "string",
+            "description": "Purchase order prefix",
+            "isPublic": False,
+            "createdAt": None,
+            "updatedAt": None
+        },
+        {
+            "id": "default-grn-prefix",
+            "key": "grn_prefix",
+            "value": "GRN",
+            "type": "string",
+            "description": "GRN prefix",
+            "isPublic": False,
+            "createdAt": None,
+            "updatedAt": None
+        },
+        {
+            "id": "default-invoice-number-reset",
+            "key": "invoice_number_reset",
+            "value": "never",
+            "type": "string",
+            "description": "Invoice number reset",
+            "isPublic": False,
+            "createdAt": None,
+            "updatedAt": None
+        },
+        {
+            "id": "default-invoice-format-template",
+            "key": "invoice_format_template",
+            "value": "standard",
+            "type": "string",
+            "description": "Invoice format template",
+            "isPublic": False,
+            "createdAt": None,
+            "updatedAt": None
+        },
+        {
+            "id": "default-rounding-method",
+            "key": "rounding_method",
+            "value": "no_rounding",
+            "type": "string",
+            "description": "Rounding method",
+            "isPublic": False,
+            "createdAt": None,
+            "updatedAt": None
+        },
+        {
+            "id": "default-rounding-precision",
+            "key": "rounding_precision",
+            "value": "0.01",
+            "type": "string",
+            "description": "Rounding precision",
+            "isPublic": False,
+            "createdAt": None,
+            "updatedAt": None
+        },
+        {
+            "id": "default-invoice-notes",
+            "key": "default_invoice_notes",
+            "value": "Thank you for your business",
+            "type": "string",
+            "description": "Default invoice notes",
+            "isPublic": False,
+            "createdAt": None,
+            "updatedAt": None
+        },
+        {
+            "id": "default-include-company-logo",
+            "key": "include_company_logo",
+            "value": True,
+            "type": "boolean",
+            "description": "Include company logo on invoices",
+            "isPublic": False,
+            "createdAt": None,
+            "updatedAt": None
+        },
+        {
+            "id": "default-low-stock-threshold",
+            "key": "low_stock_threshold",
+            "value": "10",
+            "type": "string",
+            "description": "Low stock threshold",
+            "isPublic": False,
+            "createdAt": None,
+            "updatedAt": None
+        },
+        {
+            "id": "default-auto-reorder-enabled",
+            "key": "auto_reorder_enabled",
+            "value": False,
+            "type": "boolean",
+            "description": "Auto reorder enabled",
+            "isPublic": False,
+            "createdAt": None,
+            "updatedAt": None
+        },
+        {
+            "id": "default-email-notifications-enabled",
+            "key": "email_notifications_enabled",
+            "value": True,
+            "type": "boolean",
+            "description": "Email notifications enabled",
+            "isPublic": False,
+            "createdAt": None,
+            "updatedAt": None
+        },
+        {
+            "id": "default-backup-frequency",
+            "key": "backup_frequency",
+            "value": "daily",
+            "type": "string",
+            "description": "Backup frequency",
+            "isPublic": False,
+            "createdAt": None,
+            "updatedAt": None
+        },
+        {
+            "id": "default-session-timeout",
+            "key": "session_timeout",
+            "value": "3600",
+            "type": "string",
+            "description": "Session timeout",
+            "isPublic": False,
+            "createdAt": None,
+            "updatedAt": None
+        },
+        {
+            "id": "default-tax-calculation-method",
+            "key": "tax_calculation_method",
+            "value": "exclusive",
+            "type": "string",
+            "description": "Tax calculation method",
+            "isPublic": False,
+            "createdAt": None,
+            "updatedAt": None
+        },
+        {
+            "id": "default-auto-backup-enabled",
+            "key": "auto_backup_enabled",
+            "value": True,
+            "type": "boolean",
+            "description": "Auto backup enabled",
+            "isPublic": False,
+            "createdAt": None,
+            "updatedAt": None
+        },
+        {
+            "id": "default-low-stock-global-threshold",
+            "key": "low_stock_global_threshold",
+            "value": "10",
+            "type": "string",
+            "description": "Global low stock threshold",
+            "isPublic": False,
+            "createdAt": None,
+            "updatedAt": None
+        },
+        {
+            "id": "default-enable-multi-warehouse",
+            "key": "enable_multi_warehouse",
+            "value": False,
+            "type": "boolean",
+            "description": "Enable multi warehouse",
+            "isPublic": False,
+            "createdAt": None,
+            "updatedAt": None
+        },
+        {
+            "id": "default-grn-auto-numbering",
+            "key": "grn_auto_numbering",
+            "value": True,
+            "type": "boolean",
+            "description": "GRN auto numbering",
+            "isPublic": False,
+            "createdAt": None,
+            "updatedAt": None
+        },
+        {
+            "id": "default-po-auto-numbering",
+            "key": "po_auto_numbering",
+            "value": True,
+            "type": "boolean",
+            "description": "Purchase order auto numbering",
+            "isPublic": False,
+            "createdAt": None,
+            "updatedAt": None
+        },
+        {
+            "id": "default-invoice-auto-numbering",
+            "key": "invoice_auto_numbering",
+            "value": True,
+            "type": "boolean",
+            "description": "Invoice auto numbering",
+            "isPublic": False,
+            "createdAt": None,
+            "updatedAt": None
+        },
+        {
+            "id": "default-enable-signup",
+            "key": "enable_signup",
+            "value": True,
+            "type": "boolean",
+            "description": "Enable signup",
+            "isPublic": True,
+            "createdAt": None,
+            "updatedAt": None
+        },
+        {
+            "id": "default-require-email-verification",
+            "key": "require_email_verification",
+            "value": True,
+            "type": "boolean",
+            "description": "Require email verification",
+            "isPublic": False,
+            "createdAt": None,
+            "updatedAt": None
+        },
+        {
+            "id": "default-max-login-attempts",
+            "key": "max_login_attempts",
+            "value": "5",
+            "type": "string",
+            "description": "Max login attempts",
+            "isPublic": False,
+            "createdAt": None,
+            "updatedAt": None
+        },
+        {
+            "id": "default-lockout-duration",
+            "key": "lockout_duration",
+            "value": "300",
+            "type": "string",
+            "description": "Lockout duration",
+            "isPublic": False,
+            "createdAt": None,
+            "updatedAt": None
+        },
+        {
+            "id": "default-password-min-length",
+            "key": "password_min_length",
+            "value": "8",
+            "type": "string",
+            "description": "Password minimum length",
+            "isPublic": False,
+            "createdAt": None,
+            "updatedAt": None
+        },
+        {
+            "id": "default-password-require-special",
+            "key": "password_require_special",
+            "value": True,
+            "type": "boolean",
+            "description": "Password require special characters",
+            "isPublic": False,
+            "createdAt": None,
+            "updatedAt": None
+        },
+        {
+            "id": "default-session-timeout-warning",
+            "key": "session_timeout_warning",
+            "value": "300",
+            "type": "string",
+            "description": "Session timeout warning",
+            "isPublic": False,
+            "createdAt": None,
+            "updatedAt": None
+        },
+        {
+            "id": "default-enable-audit-log",
+            "key": "enable_audit_log",
+            "value": True,
+            "type": "boolean",
+            "description": "Enable audit log",
+            "isPublic": False,
+            "createdAt": None,
+            "updatedAt": None
+        },
+        {
+            "id": "default-enable-api-rate-limiting",
+            "key": "enable_api_rate_limiting",
+            "value": True,
+            "type": "boolean",
+            "description": "Enable API rate limiting",
+            "isPublic": False,
+            "createdAt": None,
+            "updatedAt": None
+        },
+        {
+            "id": "default-enable-two-factor-auth",
+            "key": "enable_two_factor_auth",
+            "value": False,
+            "type": "boolean",
+            "description": "Enable two factor authentication",
+            "isPublic": False,
+            "createdAt": None,
+            "updatedAt": None
+        },
+        {
+            "id": "default-enable-remember-me",
+            "key": "enable_remember_me",
+            "value": True,
+            "type": "boolean",
+            "description": "Enable remember me",
+            "isPublic": False,
+            "createdAt": None,
+            "updatedAt": None
+        },
+        {
+            "id": "default-enable-password-reset",
+            "key": "enable_password_reset",
+            "value": True,
+            "type": "boolean",
+            "description": "Enable password reset",
+            "isPublic": False,
+            "createdAt": None,
+            "updatedAt": None
+        },
+        {
+            "id": "default-enable-account-lockout",
+            "key": "enable_account_lockout",
+            "value": True,
+            "type": "boolean",
+            "description": "Enable account lockout",
+            "isPublic": False,
+            "createdAt": None,
+            "updatedAt": None
+        },
+        {
+            "id": "default-max-file-upload-size",
+            "key": "max_file_upload_size",
+            "value": "10485760",
+            "type": "string",
+            "description": "Max file upload size",
+            "isPublic": False,
+            "createdAt": None,
+            "updatedAt": None
+        },
+        {
+            "id": "default-allowed-file-types",
+            "key": "allowed_file_types",
+            "value": "jpg,jpeg,png,pdf,doc,docx,xls,xlsx",
+            "type": "string",
+            "description": "Allowed file types",
+            "isPublic": False,
+            "createdAt": None,
+            "updatedAt": None
+        },
+        {
+            "id": "default-backup-retention-days",
+            "key": "backup_retention_days",
+            "value": "30",
+            "type": "string",
+            "description": "Backup retention days",
+            "isPublic": False,
+            "createdAt": None,
+            "updatedAt": None
+        }
+    ]
 
 @app.post("/system-settings")
 def create_system_setting(system_setting: dict = Body(...), payload=Depends(require_permission("settings_edit"))):
@@ -1405,3 +2627,6 @@ def update_system_setting(setting_id: str, system_setting: dict = Body(...), pay
 def delete_system_setting(setting_id: str, payload=Depends(require_permission("settings_edit"))):
     data = supabase.table("system_settings").delete().eq("id", setting_id).execute()
     return JSONResponse(content=data.data)
+
+if __name__ == "__main__":
+    uvicorn.run(app, host="0.0.0.0", port=8000)

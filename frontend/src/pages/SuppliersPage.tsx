@@ -29,19 +29,28 @@ const SuppliersPage = () => {
 
   const handleSupplierSubmit = async (supplier: Supplier) => {
     try {
+      console.log("SuppliersPage - handleSupplierSubmit called with:", supplier);
       if (editingSupplier) {
+        console.log("Updating supplier with ID:", editingSupplier.id);
         await updateSupplier(editingSupplier.id, supplier);
         toast.success(`Supplier "${supplier.name}" updated successfully`);
       } else {
+        console.log("Creating new supplier");
         await createSupplier(supplier);
         toast.success(`Supplier "${supplier.name}" created successfully`);
       }
       setIsDialogOpen(false);
       // Refresh the table
       window.location.reload();
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error saving supplier:', error);
-      toast.error(`Failed to ${editingSupplier ? 'update' : 'create'} supplier`);
+      if (error.status === 409) {
+        toast.error(error.message || 'A supplier with this name already exists');
+      } else {
+        toast.error(`Failed to ${editingSupplier ? 'update' : 'create'} supplier`);
+      }
+      // Don't close dialog or refresh on error
+      return;
     }
   };
   

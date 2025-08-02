@@ -29,6 +29,7 @@ import { Unit } from "@/types/unit";
 import { useAuth } from "@/hooks/useAuth";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Skeleton } from '@/components/ui/skeleton';
+import { Badge } from "@/components/ui/badge";
 import { getUnits, deleteUnit } from "@/lib/api";
 
 interface UnitTableProps {
@@ -140,6 +141,7 @@ export function UnitTable({ onEdit }: UnitTableProps) {
                 <TableHead>Name</TableHead>
                 <TableHead>Abbreviation</TableHead>
                 <TableHead>Description</TableHead>
+                <TableHead>Status</TableHead>
                 <TableHead className="text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
@@ -150,6 +152,13 @@ export function UnitTable({ onEdit }: UnitTableProps) {
                     <TableCell>{unit.name}</TableCell>
                     <TableCell>{unit.abbreviation}</TableCell>
                     <TableCell>{unit.description || "-"}</TableCell>
+                    <TableCell>
+                      {unit.is_active ? (
+                        <Badge className="bg-green-100 text-green-800">Active</Badge>
+                      ) : (
+                        <Badge className="bg-red-100 text-red-800">Inactive</Badge>
+                      )}
+                    </TableCell>
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-2">
                         {canEditUnits ? (

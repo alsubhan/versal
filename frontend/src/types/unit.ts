@@ -4,6 +4,7 @@ export interface Unit {
   name: string;
   abbreviation: string;
   description?: string;
+  is_active?: boolean;
   createdAt: Date;
   updatedAt: Date;
 }

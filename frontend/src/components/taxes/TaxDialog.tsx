@@ -37,7 +37,6 @@ const formSchema = z.object({
   rate: z.coerce.number()
     .min(0, "Rate cannot be negative")
     .max(100, "Rate cannot exceed 100%"),
-  isDefault: z.boolean(),
   appliedTo: z.enum(["products", "services", "both"]),
   description: z.string().optional(),
   isActive: z.boolean(),
@@ -58,7 +57,6 @@ export function TaxDialog({ open, onOpenChange, tax, onSubmit }: TaxDialogProps)
     defaultValues: {
       name: "",
       rate: 0,
-      isDefault: false,
       appliedTo: "both",
       description: "",
       isActive: true,
@@ -70,7 +68,6 @@ export function TaxDialog({ open, onOpenChange, tax, onSubmit }: TaxDialogProps)
       form.reset({
         name: tax.name,
         rate: tax.rate,
-        isDefault: tax.isDefault,
         appliedTo: tax.appliedTo,
         description: tax.description || "",
         isActive: tax.isActive,
@@ -79,7 +76,6 @@ export function TaxDialog({ open, onOpenChange, tax, onSubmit }: TaxDialogProps)
       form.reset({
         name: "",
         rate: 0,
-        isDefault: false,
         appliedTo: "both",
         description: "",
         isActive: true,
@@ -88,24 +84,20 @@ export function TaxDialog({ open, onOpenChange, tax, onSubmit }: TaxDialogProps)
   }, [tax, form]);
 
   const handleSubmit = async (data: FormValues) => {
-    try {
-      const taxData: Tax = {
-        id: tax?.id || "",
-        name: data.name,
-        rate: data.rate,
-        isDefault: data.isDefault,
-        appliedTo: data.appliedTo,
-        description: data.description,
-        isActive: data.isActive,
-        createdAt: tax?.createdAt || new Date(),
-        updatedAt: new Date(),
-      };
-      
-      await onSubmit(taxData);
-      onOpenChange(false);
-    } catch (error) {
-      console.error('Error submitting tax:', error);
-    }
+    const taxData: Tax = {
+      id: tax?.id || "",
+      name: data.name,
+      rate: data.rate,
+      isDefault: false, // Always false since we removed the feature
+      appliedTo: data.appliedTo,
+      description: data.description,
+      isActive: data.isActive,
+      createdAt: tax?.createdAt || new Date(),
+      updatedAt: new Date(),
+    };
+    
+    await onSubmit(taxData);
+    // Let TaxesPage handle success/error toasts and dialog closure
   };
 
   return (
@@ -198,49 +190,26 @@ export function TaxDialog({ open, onOpenChange, tax, onSubmit }: TaxDialogProps)
               )}
             />
 
-            <div className="grid grid-cols-2 gap-4">
-              <FormField
-                control={form.control}
-                name="isDefault"
-                render={({ field }) => (
-                  <FormItem className="flex flex-row items-center justify-between rounded-lg border p-3">
-                    <div className="space-y-0.5">
-                      <FormLabel className="text-base">Default Rate</FormLabel>
-                      <div className="text-sm text-muted-foreground">
-                        Set as the default tax rate
-                      </div>
+            <FormField
+              control={form.control}
+              name="isActive"
+              render={({ field }) => (
+                <FormItem className="flex flex-row items-center justify-between rounded-lg border p-3">
+                  <div className="space-y-0.5">
+                    <FormLabel className="text-base">Status</FormLabel>
+                    <div className="text-sm text-muted-foreground">
+                      Enable or disable this tax rate
                     </div>
-                    <FormControl>
-                      <Switch
-                        checked={field.value}
-                        onCheckedChange={field.onChange}
-                      />
-                    </FormControl>
-                  </FormItem>
-                )}
-              />
-
-              <FormField
-                control={form.control}
-                name="isActive"
-                render={({ field }) => (
-                  <FormItem className="flex flex-row items-center justify-between rounded-lg border p-3">
-                    <div className="space-y-0.5">
-                      <FormLabel className="text-base">Status</FormLabel>
-                      <div className="text-sm text-muted-foreground">
-                        Enable or disable this tax rate
-                      </div>
-                    </div>
-                    <FormControl>
-                      <Switch
-                        checked={field.value}
-                        onCheckedChange={field.onChange}
-                      />
-                    </FormControl>
-                  </FormItem>
-                )}
-              />
-            </div>
+                  </div>
+                  <FormControl>
+                    <Switch
+                      checked={field.value}
+                      onCheckedChange={field.onChange}
+                    />
+                  </FormControl>
+                </FormItem>
+              )}
+            />
 
             <DialogFooter className="pt-4">
               <Button 

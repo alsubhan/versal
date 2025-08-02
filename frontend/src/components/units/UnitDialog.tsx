@@ -23,12 +23,14 @@ import {
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Unit } from "@/types/unit";
 
 const formSchema = z.object({
   name: z.string().min(1, "Name is required"),
   abbreviation: z.string().min(1, "Abbreviation is required"),
   description: z.string().optional(),
+  is_active: z.boolean().default(true),
 });
 
 interface UnitDialogProps {
@@ -50,6 +52,7 @@ export function UnitDialog({
       name: unit?.name || "",
       abbreviation: unit?.abbreviation || "",
       description: unit?.description || "",
+      is_active: unit?.is_active ?? true,
     },
   });
 
@@ -59,14 +62,14 @@ export function UnitDialog({
         name: unit?.name || "",
         abbreviation: unit?.abbreviation || "",
         description: unit?.description || "",
+        is_active: unit?.is_active ?? true,
       });
     }
   }, [open, unit, form]);
 
-  const handleSubmit = (data: z.infer<typeof formSchema>) => {
-    onSubmit(data);
-    toast.success(unit ? "Unit updated" : "Unit created");
-    onOpenChange(false);
+  const handleSubmit = async (data: z.infer<typeof formSchema>) => {
+    await onSubmit(data);
+    // Let UnitsPage handle success/error toasts and dialog closure
   };
 
   return (
@@ -120,8 +123,30 @@ export function UnitDialog({
                 </FormItem>
               )}
             />
+            <FormField
+              control={form.control}
+              name="is_active"
+              render={({ field }) => (
+                <FormItem className="flex flex-row items-start space-x-3 space-y-0 rounded-md border p-4">
+                  <FormControl>
+                    <Checkbox
+                      checked={field.value}
+                      onCheckedChange={field.onChange}
+                    />
+                  </FormControl>
+                  <div className="space-y-1 leading-none">
+                    <FormLabel>Active</FormLabel>
+                    <p className="text-sm text-muted-foreground">
+                      Enable this unit for use in products
+                    </p>
+                  </div>
+                </FormItem>
+              )}
+            />
             <DialogFooter>
-              <Button type="submit">Save</Button>
+              <Button type="submit">
+                {unit ? "Update Unit" : "Create Unit"}
+              </Button>
             </DialogFooter>
           </form>
         </Form>

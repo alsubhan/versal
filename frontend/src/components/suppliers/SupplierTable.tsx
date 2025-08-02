@@ -7,12 +7,23 @@ import {
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Edit, Search } from "lucide-react";
+import { Edit, Search, Trash2 } from "lucide-react";
 import { type Supplier } from "@/types/supplier";
 import { useAuth } from "@/hooks/useAuth";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Skeleton } from '@/components/ui/skeleton';
-import { getSuppliers } from "@/lib/api";
+import { getSuppliers, deleteSupplier } from "@/lib/api";
+import { toast } from "sonner";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 interface SupplierTableProps {
   onEdit: (supplier: Supplier) => void;
@@ -22,8 +33,11 @@ export function SupplierTable({ onEdit }: SupplierTableProps) {
   const [searchTerm, setSearchTerm] = useState("");
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [loading, setLoading] = useState(true);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [selectedSupplier, setSelectedSupplier] = useState<Supplier | undefined>(undefined);
   const { hasPermission } = useAuth();
   const canEditSuppliers = hasPermission('suppliers_edit');
+  const canDeleteSuppliers = hasPermission('suppliers_delete');
   
   // Fetch suppliers from backend
   useEffect(() => {
@@ -40,6 +54,25 @@ export function SupplierTable({ onEdit }: SupplierTableProps) {
 
     fetchSuppliers();
   }, []);
+
+  const handleOpenDeleteDialog = (supplier: Supplier) => {
+    setSelectedSupplier(supplier);
+    setDeleteDialogOpen(true);
+  };
+
+  const handleDeleteSupplier = async () => {
+    if (!selectedSupplier) return;
+    
+    try {
+      await deleteSupplier(selectedSupplier.id);
+      setSuppliers(suppliers.filter((supplier) => supplier.id !== selectedSupplier.id));
+      setDeleteDialogOpen(false);
+      toast.success("Supplier deleted successfully");
+    } catch (error) {
+      console.error('Error deleting supplier:', error);
+      toast.error('Failed to delete supplier');
+    }
+  };
 
   const filteredSuppliers = suppliers.filter(supplier => 
     supplier.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -114,34 +147,64 @@ export function SupplierTable({ onEdit }: SupplierTableProps) {
                     )}
                   </TableCell>
                   <TableCell>
-                    {canEditSuppliers ? (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => onEdit(supplier)}
-                    >
-                      <Edit className="h-4 w-4" />
-                    </Button>
-                    ) : (
-                      <TooltipProvider>
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <span>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                disabled
-                              >
-                                <Edit className="h-4 w-4" />
-                              </Button>
-                            </span>
-                          </TooltipTrigger>
-                          <TooltipContent>
-                            You do not have permission to edit suppliers
-                          </TooltipContent>
-                        </Tooltip>
-                      </TooltipProvider>
-                    )}
+                    <div className="flex gap-2">
+                      {canEditSuppliers ? (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => onEdit(supplier)}
+                        >
+                          <Edit className="h-4 w-4" />
+                        </Button>
+                      ) : (
+                        <TooltipProvider>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <span>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  disabled
+                                >
+                                  <Edit className="h-4 w-4" />
+                                </Button>
+                              </span>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              You do not have permission to edit suppliers
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+                      )}
+                      {canDeleteSuppliers ? (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleOpenDeleteDialog(supplier)}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      ) : (
+                        <TooltipProvider>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <span>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  disabled
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              </span>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              You do not have permission to delete suppliers
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+                      )}
+                    </div>
                   </TableCell>
                 </TableRow>
               ))
@@ -155,6 +218,22 @@ export function SupplierTable({ onEdit }: SupplierTableProps) {
           </TableBody>
         </Table>
       </div>
+      
+      {/* Delete Confirmation Dialog */}
+      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Are you sure?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This action cannot be undone. This will permanently delete the supplier "{selectedSupplier?.name}".
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={handleDeleteSupplier}>Delete</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };

@@ -29,19 +29,28 @@ const CustomersPage = () => {
 
   const handleCustomerSubmit = async (customer: Customer) => {
     try {
+      console.log("CustomersPage - handleCustomerSubmit called with:", customer);
       if (editingCustomer) {
+        console.log("Updating customer with ID:", editingCustomer.id);
         await updateCustomer(editingCustomer.id, customer);
         toast.success(`Customer "${customer.name}" updated successfully`);
       } else {
+        console.log("Creating new customer");
         await createCustomer(customer);
         toast.success(`Customer "${customer.name}" created successfully`);
       }
       setIsDialogOpen(false);
       // Refresh the table
       window.location.reload();
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error saving customer:', error);
-      toast.error(`Failed to ${editingCustomer ? 'update' : 'create'} customer`);
+      if (error.status === 409) {
+        toast.error(error.message || 'A customer with this name already exists');
+      } else {
+        toast.error(`Failed to ${editingCustomer ? 'update' : 'create'} customer`);
+      }
+      // Don't close dialog or refresh on error
+      return;
     }
   };
   

@@ -1,6 +1,6 @@
 
 import { useState, useEffect } from "react";
-import { PlusCircle, Pencil, Trash2 } from "lucide-react";
+import { Edit, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 import {
@@ -22,11 +22,11 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { CustomerDialog } from "@/components/customers/CustomerDialog";
 import { Customer } from "@/types/customer";
 import { useAuth } from "@/hooks/useAuth";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Skeleton } from '@/components/ui/skeleton';
+import { Badge } from '@/components/ui/badge';
 import { getCustomers, deleteCustomer } from "@/lib/api";
 
 interface CustomerTableProps {
@@ -36,7 +36,6 @@ interface CustomerTableProps {
 export function CustomerTable({ onEdit }: CustomerTableProps) {
   const [loading, setLoading] = useState(true);
   const [customers, setCustomers] = useState<Customer[]>([]);
-  const [dialogOpen, setDialogOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | undefined>(undefined);
   const { hasPermission } = useAuth();
@@ -69,6 +68,8 @@ export function CustomerTable({ onEdit }: CustomerTableProps) {
               <TableHead>Name</TableHead>
               <TableHead>Email</TableHead>
               <TableHead>Phone</TableHead>
+              <TableHead>City</TableHead>
+              <TableHead>Country</TableHead>
               <TableHead>Status</TableHead>
               <TableHead className="text-right">Actions</TableHead>
             </TableRow>
@@ -78,6 +79,8 @@ export function CustomerTable({ onEdit }: CustomerTableProps) {
               <TableRow key={i}>
                 <TableCell><Skeleton className="h-4 w-32" /></TableCell>
                 <TableCell><Skeleton className="h-4 w-40" /></TableCell>
+                <TableCell><Skeleton className="h-4 w-24" /></TableCell>
+                <TableCell><Skeleton className="h-4 w-20" /></TableCell>
                 <TableCell><Skeleton className="h-4 w-24" /></TableCell>
                 <TableCell><Skeleton className="h-4 w-16" /></TableCell>
                 <TableCell className="text-right"><Skeleton className="h-4 w-20 ml-auto" /></TableCell>
@@ -89,34 +92,9 @@ export function CustomerTable({ onEdit }: CustomerTableProps) {
     );
   }
 
-  const handleCreateCustomer = (data: any) => {
-    const newCustomer: Customer = {
-      id: Math.random().toString(36).substring(7),
-      ...data,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    };
-    setCustomers([...customers, newCustomer]);
-  };
-
-  const handleUpdateCustomer = (data: any) => {
-    if (!selectedCustomer) return;
-    
-    setCustomers(
-      customers.map((customer) =>
-        customer.id === selectedCustomer.id
-          ? { ...customer, ...data, updatedAt: new Date() }
-          : customer
-      )
-    );
-  };
-
   const handleOpenEditDialog = (customer: Customer) => {
     if (onEdit) {
       onEdit(customer);
-    } else {
-    setSelectedCustomer(customer);
-    setDialogOpen(true);
     }
   };
 
@@ -139,26 +117,10 @@ export function CustomerTable({ onEdit }: CustomerTableProps) {
     }
   };
 
-  const handleDialogSubmit = (data: any) => {
-    if (selectedCustomer) {
-      handleUpdateCustomer(data);
-    } else {
-      handleCreateCustomer(data);
-    }
-  };
+
 
   return (
     <>
-      <div className="flex justify-between items-center mb-4">
-        <h2 className="text-xl font-semibold">Customers</h2>
-        <Button onClick={() => {
-          setSelectedCustomer(undefined);
-          setDialogOpen(true);
-        }}>
-          <PlusCircle className="mr-2 h-4 w-4" />
-          Add Customer
-        </Button>
-      </div>
       
       <div className="rounded-md border">
         <Table>
@@ -169,6 +131,7 @@ export function CustomerTable({ onEdit }: CustomerTableProps) {
               <TableHead>Phone</TableHead>
               <TableHead>City</TableHead>
               <TableHead>Country</TableHead>
+              <TableHead>Status</TableHead>
               <TableHead className="text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
@@ -180,17 +143,23 @@ export function CustomerTable({ onEdit }: CustomerTableProps) {
                 <TableCell>{customer.phone}</TableCell>
                 <TableCell>{customer.billingAddress.city}</TableCell>
                 <TableCell>{customer.billingAddress.country}</TableCell>
+                <TableCell>
+                  {customer.isActive ? (
+                    <Badge className="bg-green-100 text-green-800">Active</Badge>
+                  ) : (
+                    <Badge className="bg-red-100 text-red-800">Inactive</Badge>
+                  )}
+                </TableCell>
                 <TableCell className="text-right">
                   <div className="flex justify-end gap-2">
                     {canEditCustomers ? (
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => handleOpenEditDialog(customer)}
-                    >
-                      <Pencil className="h-4 w-4" />
-                      <span className="sr-only">Edit</span>
-                    </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => handleOpenEditDialog(customer)}
+                      >
+                        <Edit className="h-4 w-4" />
+                      </Button>
                     ) : (
                       <TooltipProvider>
                         <Tooltip>
@@ -198,11 +167,10 @@ export function CustomerTable({ onEdit }: CustomerTableProps) {
                             <span>
                               <Button
                                 variant="ghost"
-                                size="icon"
+                                size="sm"
                                 disabled
                               >
-                                <Pencil className="h-4 w-4" />
-                                <span className="sr-only">Edit</span>
+                                <Edit className="h-4 w-4" />
                               </Button>
                             </span>
                           </TooltipTrigger>
@@ -213,14 +181,13 @@ export function CustomerTable({ onEdit }: CustomerTableProps) {
                       </TooltipProvider>
                     )}
                     {canDeleteCustomers ? (
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => handleOpenDeleteDialog(customer)}
-                    >
-                      <Trash2 className="h-4 w-4" />
-                      <span className="sr-only">Delete</span>
-                    </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => handleOpenDeleteDialog(customer)}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
                     ) : (
                       <TooltipProvider>
                         <Tooltip>
@@ -228,11 +195,10 @@ export function CustomerTable({ onEdit }: CustomerTableProps) {
                             <span>
                               <Button
                                 variant="ghost"
-                                size="icon"
+                                size="sm"
                                 disabled
                               >
                                 <Trash2 className="h-4 w-4" />
-                                <span className="sr-only">Delete</span>
                               </Button>
                             </span>
                           </TooltipTrigger>
@@ -250,12 +216,7 @@ export function CustomerTable({ onEdit }: CustomerTableProps) {
         </Table>
       </div>
 
-      <CustomerDialog
-        open={dialogOpen}
-        onOpenChange={setDialogOpen}
-        onSubmit={handleDialogSubmit}
-        customer={selectedCustomer}
-      />
+
 
       <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
         <AlertDialogContent>
