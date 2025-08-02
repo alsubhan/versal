@@ -39,9 +39,15 @@ const TaxesPage = () => {
       setIsDialogOpen(false);
       // Refresh the table
       window.location.reload();
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error saving tax:', error);
-      toast.error(`Failed to ${editingTax ? 'update' : 'create'} tax`);
+      if (error.status === 409) {
+        toast.error(error.message || 'A tax with this name already exists');
+      } else {
+        toast.error(`Failed to ${editingTax ? 'update' : 'create'} tax`);
+      }
+      // Don't close dialog or refresh on error
+      return;
     }
   };
   

@@ -16,7 +16,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "@/hooks/use-toast";
 import { type Category } from "@/types/category";
-import { apiFetch } from '@/lib/api';
+import { getCategories } from '@/lib/api';
 import { useAuth } from '@/hooks/useAuth';
 import { Trash } from 'lucide-react';
 
@@ -49,7 +49,7 @@ export const CategoryDialog: React.FC<CategoryDialogProps> = ({
   useEffect(() => {
     if (open) {
       setLoadingParents(true);
-      apiFetch('/categories')
+      getCategories()
         .then((data) => {
           setParentCategories(data.filter((cat: Category) => !category || cat.id !== category.id));
           setLoadingParents(false);
@@ -103,8 +103,7 @@ export const CategoryDialog: React.FC<CategoryDialogProps> = ({
     if (onSave) {
       await onSave(formData);
     }
-    
-    onOpenChange(false);
+    // Let CategoriesPage handle dialog closure after successful API call
   };
 
   return (

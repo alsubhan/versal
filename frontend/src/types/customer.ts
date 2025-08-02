@@ -19,6 +19,7 @@ export interface Customer {
   creditLimit?: number;
   currentCredit?: number;
   customerType?: "retail" | "wholesale" | "distributor";
+  isActive?: boolean;
   createdAt: Date;
   updatedAt: Date;
 }

@@ -27,21 +27,35 @@ const UnitsPage = () => {
     setIsDialogOpen(true);
   };
   
-  const handleUnitSubmit = async (unit: Unit) => {
+  const handleUnitSubmit = async (formData: any) => {
     try {
+      // Convert form data to the expected format
+      const unitData = {
+        name: formData.name,
+        abbreviation: formData.abbreviation,
+        description: formData.description,
+        isActive: formData.is_active
+      };
+
       if (editingUnit) {
-        await updateUnit(editingUnit.id, unit);
-        toast.success(`Unit "${unit.name}" updated successfully`);
+        await updateUnit(editingUnit.id, unitData);
+        toast.success(`Unit "${formData.name}" updated successfully`);
       } else {
-        await createUnit(unit);
-        toast.success(`Unit "${unit.name}" created successfully`);
+        await createUnit(unitData);
+        toast.success(`Unit "${formData.name}" created successfully`);
       }
       setIsDialogOpen(false);
       // Refresh the table by triggering a page reload or state update
       window.location.reload();
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error saving unit:', error);
-      toast.error(`Failed to ${editingUnit ? 'update' : 'create'} unit`);
+      if (error.status === 409) {
+        toast.error(error.message || 'A unit with this name already exists');
+      } else {
+        toast.error(`Failed to ${editingUnit ? 'update' : 'create'} unit`);
+      }
+      // Don't close dialog or refresh on error
+      return;
     }
   };
   

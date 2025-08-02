@@ -11,19 +11,26 @@ import { PermissionGuard } from "@/components/ui/permission-guard";
 // Define a more complete Product interface to match what's used in ProductTable
 export interface Product {
   id: string;
-  name?: string;
-  sku?: string;
-  category?: string;
-  price?: number;
-  quantity?: number;
-  status?: string;
-  createdAt?: Date;
-  updatedAt?: Date;
+  sku_code: string;
+  hsn_code: string;
+  name: string;
+  description?: string;
+  categories?: { name: string };
+  units?: { name: string; abbreviation: string };
+  cost_price?: number;
+  selling_price?: number;
+  sale_price?: number;
+  mrp?: number;
+  stock_levels?: Array<{ quantity_on_hand: number; quantity_available: number }> | { quantity_on_hand: number; quantity_available: number };
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
 }
 
 const ProductsPage = () => {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
+  const [refreshKey, setRefreshKey] = useState(0);
   const { hasPermission } = useAuth();
   const canCreateProducts = hasPermission('products_create');
   
@@ -35,6 +42,10 @@ const ProductsPage = () => {
   const handleEditProduct = (product: Product) => {
     setEditingProduct(product);
     setIsDialogOpen(true);
+  };
+  
+  const handleRefresh = () => {
+    setRefreshKey(prev => prev + 1);
   };
   
   return (
@@ -74,12 +85,17 @@ const ProductsPage = () => {
         </div>
         
         {/* Pass onEdit prop properly to ProductTable component */}
-        <ProductTable onEdit={handleEditProduct} />
+        <ProductTable 
+          key={refreshKey}
+          onEdit={handleEditProduct} 
+          onRefresh={handleRefresh}
+        />
         
         <ProductDialog 
           open={isDialogOpen} 
           onOpenChange={setIsDialogOpen}
           product={editingProduct}
+          onSuccess={handleRefresh}
         />
       </div>
     </PermissionGuard>

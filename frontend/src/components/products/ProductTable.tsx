@@ -10,26 +10,39 @@ import {
 } from "@/components/ui/table";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Search, Edit, Trash, ChevronLeft, ChevronRight } from "lucide-react";
+import { Search, Edit, Trash, Trash2, ChevronLeft, ChevronRight } from "lucide-react";
 import { useCurrencyStore } from "@/stores/currencyStore";
 import { formatCurrency } from "@/lib/utils";
 import { useAuth } from "@/hooks/useAuth";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from "@/components/ui/badge";
-import { useSupabaseQuery } from '@/hooks/useSupabaseQuery';
-import { supabase } from '@/integrations/supabase/client';
+import { apiFetch } from '@/lib/api';
+import { toast } from "sonner";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 type Product = {
   id: string;
   sku_code: string;
+  hsn_code: string;
   name: string;
   description?: string;
   categories?: { name: string };
   units?: { name: string; abbreviation: string };
   cost_price?: number;
   selling_price?: number;
-  stock_levels?: Array<{ quantity_on_hand: number; quantity_available: number }>;
+  sale_price?: number;
+  mrp?: number;
+  stock_levels?: Array<{ quantity_on_hand: number; quantity_available: number }> | { quantity_on_hand: number; quantity_available: number };
   is_active: boolean;
   created_at: string;
   updated_at: string;
@@ -38,13 +51,20 @@ type Product = {
 // Add props type definition for the component
 type ProductTableProps = {
   onEdit?: (product: Product) => void;
+  onRefresh?: () => void;
 };
 
 const ITEMS_PER_PAGE = 20; // Limit items per page for better performance
 
-export const ProductTable = ({ onEdit }: ProductTableProps) => {
+export const ProductTable = ({ onEdit, onRefresh }: ProductTableProps) => {
   const [searchTerm, setSearchTerm] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
+  const [products, setProducts] = useState<Product[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [totalCount, setTotalCount] = useState(0);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [selectedProduct, setSelectedProduct] = useState<Product | undefined>(undefined);
   const { currency, getCurrencySymbol } = useCurrencyStore();
   const { hasPermission } = useAuth();
   const canEditProducts = hasPermission('products_edit');
@@ -53,136 +73,106 @@ export const ProductTable = ({ onEdit }: ProductTableProps) => {
   // Calculate offset for pagination
   const offset = (currentPage - 1) * ITEMS_PER_PAGE;
 
-  // Test query to check if products table exists and has data
-  useEffect(() => {
-    const testQuery = async () => {
-      try {
-        console.log('Testing basic products query...');
-        const testResult = await supabase
-          .from('products')
-          .select('id, name, sku_code')
-          .limit(1);
-        
-        console.log('Test query result:', testResult);
-        
-        if (testResult.error) {
-          console.error('Test query failed:', testResult.error);
-        } else {
-          console.log('Test query succeeded, found products:', testResult.data?.length || 0);
-        }
-      } catch (err) {
-        console.error('Test query exception:', err);
+  // Fetch products from backend API
+  const fetchProducts = async () => {
+    try {
+      setIsLoading(true);
+      setError(null);
+      
+      const data = await apiFetch('/products');
+      
+      // Check if the response is an error
+      if (data && data.error) {
+        setError(data.detail || 'Failed to fetch products');
+        setProducts([]);
+        setTotalCount(0);
+        return;
       }
-    };
-    
-    testQuery();
-  }, []);
-
-  // Fetch products with pagination and proper error handling
-  const { data: products, isLoading, error } = useSupabaseQuery(
-    ['products', currentPage.toString(), searchTerm],
-    async () => {
-      try {
-        console.log('Attempting to fetch products with relationships...');
-        let query = supabase
-          .from('products')
-          .select(`
-            *,
-            categories(name),
-            units(name, abbreviation),
-            stock_levels(quantity_on_hand, quantity_available)
-          `);
-
+      
+      if (data && Array.isArray(data)) {
+        console.log('Products fetched:', data.length, 'products');
+        console.log('Sample product:', data[0]);
+        
+        // Process products to ensure stock_levels is always an array
+        const processedProducts = data.map(product => {
+          // Handle stock_levels - ensure it's an array
+          let stockLevels = product.stock_levels;
+          if (stockLevels && !Array.isArray(stockLevels)) {
+            stockLevels = [stockLevels];
+          } else if (!stockLevels) {
+            stockLevels = [];
+          }
+          
+          return {
+            ...product,
+            stock_levels: stockLevels
+          };
+        });
+        
         // Apply search filter if search term exists
+        let filteredProducts = processedProducts;
         if (searchTerm.trim()) {
-          query = query.or(`name.ilike.%${searchTerm}%,sku_code.ilike.%${searchTerm}%`);
+          filteredProducts = processedProducts.filter(product => 
+            product.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+            product.sku_code?.toLowerCase().includes(searchTerm.toLowerCase())
+          );
         }
-
+        
         // Apply pagination
-        const result = await query
-          .order('created_at', { ascending: false })
-          .range(offset, offset + ITEMS_PER_PAGE - 1);
+        const paginatedProducts = filteredProducts.slice(offset, offset + ITEMS_PER_PAGE);
         
-        if (result.error) {
-          console.error('Full query failed with error:', result.error);
-          console.log('Trying basic query without relationships...');
-          // Fallback to basic query without relationships
-          let basicQuery = supabase
-            .from('products')
-            .select('*');
-          
-          if (searchTerm.trim()) {
-            basicQuery = basicQuery.or(`name.ilike.%${searchTerm}%,sku_code.ilike.%${searchTerm}%`);
-          }
-          
-          const basicResult = await basicQuery
-            .order('created_at', { ascending: false })
-            .range(offset, offset + ITEMS_PER_PAGE - 1);
-          
-          if (basicResult.error) {
-            console.error('Basic query also failed with error:', basicResult.error);
-            console.log('Trying final fallback without ordering...');
-            // Final fallback - try without any ordering
-            let finalQuery = supabase.from('products').select('*');
-            
-            if (searchTerm.trim()) {
-              finalQuery = finalQuery.or(`name.ilike.%${searchTerm}%,sku_code.ilike.%${searchTerm}%`);
-            }
-            
-            const finalResult = await finalQuery.range(offset, offset + ITEMS_PER_PAGE - 1);
-            
-            if (finalResult.error) {
-              console.error('Final fallback also failed:', finalResult.error);
-              throw finalResult.error;
-            }
-            
-            console.log('Final fallback succeeded, returning basic data');
-            return finalResult;
-          }
-          
-          console.log('Basic query succeeded, returning data without relationships');
-          return basicResult;
-        }
-        
-        console.log('Full query succeeded with relationships');
-        return result;
-      } catch (err) {
-        console.error('Query error:', err);
-        throw err;
+        setProducts(paginatedProducts);
+        setTotalCount(filteredProducts.length);
+      } else {
+        setProducts([]);
+        setTotalCount(0);
       }
-    },
-    {
-      // Add caching and stale time to reduce unnecessary refetches
-      staleTime: 30000, // 30 seconds
-      gcTime: 5 * 60 * 1000, // 5 minutes (fixed from cacheTime)
+    } catch (err: any) {
+      console.error('Error fetching products:', err);
+      setError('Failed to fetch products');
+      setProducts([]);
+      setTotalCount(0);
+    } finally {
+      setIsLoading(false);
     }
-  );
+  };
 
-  // Get total count for pagination
-  const { data: totalCount } = useSupabaseQuery(
-    ['products-count', searchTerm],
-    async () => {
-      try {
-        let query = supabase
-          .from('products')
-          .select('id', { count: 'exact', head: true });
+  // Handle delete product
+  const handleOpenDeleteDialog = (product: Product) => {
+    setSelectedProduct(product);
+    setDeleteDialogOpen(true);
+  };
 
-        if (searchTerm.trim()) {
-          query = query.or(`name.ilike.%${searchTerm}%,sku_code.ilike.%${searchTerm}%`);
-        }
-
-        const result = await query;
-        return result.count || 0;
-      } catch (err) {
-        console.error('Count query error:', err);
-        return 0;
+  const handleDeleteProduct = async () => {
+    if (!selectedProduct) return;
+    
+    try {
+      const response = await apiFetch(`/products/${selectedProduct.id}`, {
+        method: 'DELETE'
+      });
+      
+      if (response && response.error) {
+        console.error('Error deleting product:', response.detail);
+        toast.error('Failed to delete product: ' + response.detail);
+      } else {
+        console.log('Product deleted successfully');
+        toast.success('Product deleted successfully');
+        // Refresh the products list
+        fetchProducts();
       }
-    },
-    {
-      staleTime: 60000, // 1 minute
-      gcTime: 5 * 60 * 1000, // 5 minutes (fixed from cacheTime)
+    } catch (err: any) {
+      console.error('Error deleting product:', err);
+      toast.error('Failed to delete product');
+    } finally {
+      setDeleteDialogOpen(false);
+      setSelectedProduct(undefined);
     }
-  );
+  };
+
+  // Fetch products when component mounts or search term changes
+  useEffect(() => {
+    fetchProducts();
+  }, [currentPage, searchTerm]);
 
   // Reset to first page when search term changes
   useEffect(() => {
@@ -190,7 +180,7 @@ export const ProductTable = ({ onEdit }: ProductTableProps) => {
   }, [searchTerm]);
 
   // Calculate pagination info
-  const totalPages = Math.ceil((totalCount || 0) / ITEMS_PER_PAGE);
+  const totalPages = Math.ceil(totalCount / ITEMS_PER_PAGE);
   const hasNextPage = currentPage < totalPages;
   const hasPrevPage = currentPage > 1;
 
@@ -201,7 +191,7 @@ export const ProductTable = ({ onEdit }: ProductTableProps) => {
         <div className="text-center">
           <p className="text-red-600 mb-2">Error loading products</p>
           <p className="text-sm text-muted-foreground">
-            {error.message || 'Unable to fetch products. Please try again.'}
+            {error || 'Unable to fetch products. Please try again.'}
           </p>
           <Button 
             variant="outline" 
@@ -223,10 +213,12 @@ export const ProductTable = ({ onEdit }: ProductTableProps) => {
             <TableRow>
               <TableHead>Product</TableHead>
               <TableHead>SKU</TableHead>
+              <TableHead>HSN</TableHead>
               <TableHead>Category</TableHead>
               <TableHead>Unit</TableHead>
-              <TableHead className="text-right">Cost Price</TableHead>
-              <TableHead className="text-right">Selling Price</TableHead>
+              <TableHead className="text-right">Cost</TableHead>
+              <TableHead className="text-right">Retail</TableHead>
+              <TableHead className="text-right">Sale</TableHead>
               <TableHead>Stock</TableHead>
               <TableHead>Status</TableHead>
               <TableHead className="text-right">Actions</TableHead>
@@ -237,8 +229,10 @@ export const ProductTable = ({ onEdit }: ProductTableProps) => {
               <TableRow key={i}>
                 <TableCell><Skeleton className="h-4 w-20" /></TableCell>
                 <TableCell><Skeleton className="h-4 w-32" /></TableCell>
+                <TableCell><Skeleton className="h-4 w-20" /></TableCell>
                 <TableCell><Skeleton className="h-4 w-24" /></TableCell>
                 <TableCell><Skeleton className="h-4 w-16" /></TableCell>
+                <TableCell className="text-right"><Skeleton className="h-4 w-16 ml-auto" /></TableCell>
                 <TableCell className="text-right"><Skeleton className="h-4 w-16 ml-auto" /></TableCell>
                 <TableCell className="text-right"><Skeleton className="h-4 w-16 ml-auto" /></TableCell>
                 <TableCell><Skeleton className="h-4 w-12" /></TableCell>
@@ -272,10 +266,12 @@ export const ProductTable = ({ onEdit }: ProductTableProps) => {
             <TableRow>
               <TableHead>Product</TableHead>
               <TableHead>SKU</TableHead>
+              <TableHead>HSN</TableHead>
               <TableHead>Category</TableHead>
               <TableHead>Unit</TableHead>
-              <TableHead className="text-right">Cost Price</TableHead>
-              <TableHead className="text-right">Selling Price</TableHead>
+              <TableHead className="text-right">Cost</TableHead>
+              <TableHead className="text-right">Retail</TableHead>
+              <TableHead className="text-right">Sale</TableHead>
               <TableHead>Stock</TableHead>
               <TableHead>Status</TableHead>
               <TableHead className="text-right">Actions</TableHead>
@@ -298,6 +294,9 @@ export const ProductTable = ({ onEdit }: ProductTableProps) => {
                   <TableCell className="font-mono text-sm">
                     {product.sku_code}
                   </TableCell>
+                  <TableCell className="font-mono text-sm">
+                    {product.hsn_code || '-'}
+                  </TableCell>
                   <TableCell>
                     {product.categories?.name || '-'}
                   </TableCell>
@@ -310,37 +309,47 @@ export const ProductTable = ({ onEdit }: ProductTableProps) => {
                   <TableCell className="text-right">
                     {formatCurrency(product.selling_price || 0, currency)}
                   </TableCell>
+                  <TableCell className="text-right">
+                    {formatCurrency(product.sale_price || 0, currency)}
+                  </TableCell>
                   <TableCell>
                     <div className="space-y-1">
                       <div className="text-sm">
-                        On Hand: {product.stock_levels?.[0]?.quantity_on_hand || 0}
+                        On Hand: {Array.isArray(product.stock_levels) ? product.stock_levels?.[0]?.quantity_on_hand : product.stock_levels?.quantity_on_hand || 0}
                       </div>
                       <div className="text-xs text-muted-foreground">
-                        Available: {product.stock_levels?.[0]?.quantity_available || 0}
+                        Available: {Array.isArray(product.stock_levels) ? product.stock_levels?.[0]?.quantity_available : product.stock_levels?.quantity_available || 0}
                       </div>
+
                     </div>
                   </TableCell>
                   <TableCell>
-                    <Badge variant={product.is_active ? "default" : "secondary"}>
-                      {product.is_active ? 'Active' : 'Inactive'}
-                    </Badge>
+                    {product.is_active ? (
+                      <Badge className="bg-green-100 text-green-800">Active</Badge>
+                    ) : (
+                      <Badge className="bg-red-100 text-red-800">Inactive</Badge>
+                    )}
                   </TableCell>
                   <TableCell className="text-right">
                     <div className="flex justify-end gap-2">
                       {canEditProducts ? (
-                      <Button 
-                        variant="ghost" 
-                        size="icon" 
-                        onClick={() => onEdit && onEdit(product)}
-                      >
-                        <Edit className="h-4 w-4" />
-                      </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => onEdit && onEdit(product)}
+                        >
+                          <Edit className="h-4 w-4" />
+                        </Button>
                       ) : (
                         <TooltipProvider>
                           <Tooltip>
                             <TooltipTrigger asChild>
                               <span>
-                                <Button variant="ghost" size="icon" disabled>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  disabled
+                                >
                                   <Edit className="h-4 w-4" />
                                 </Button>
                               </span>
@@ -352,16 +361,24 @@ export const ProductTable = ({ onEdit }: ProductTableProps) => {
                         </TooltipProvider>
                       )}
                       {canDeleteProducts ? (
-                      <Button variant="ghost" size="icon">
-                        <Trash className="h-4 w-4" />
-                      </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleOpenDeleteDialog(product)}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
                       ) : (
                         <TooltipProvider>
                           <Tooltip>
                             <TooltipTrigger asChild>
                               <span>
-                                <Button variant="ghost" size="icon" disabled>
-                                  <Trash className="h-4 w-4" />
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  disabled
+                                >
+                                  <Trash2 className="h-4 w-4" />
                                 </Button>
                               </span>
                             </TooltipTrigger>
@@ -377,7 +394,7 @@ export const ProductTable = ({ onEdit }: ProductTableProps) => {
               ))
             ) : (
               <TableRow>
-                <TableCell colSpan={9} className="text-center py-4 text-muted-foreground">
+                <TableCell colSpan={11} className="text-center py-4 text-muted-foreground">
                   No products found. Add a new product to get started.
                 </TableCell>
               </TableRow>
@@ -417,6 +434,22 @@ export const ProductTable = ({ onEdit }: ProductTableProps) => {
           </div>
         </div>
       )}
+      
+      {/* Delete Confirmation Dialog */}
+      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Are you sure?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This action cannot be undone. This will permanently delete the product "{selectedProduct?.name}".
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={handleDeleteProduct}>Delete</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };

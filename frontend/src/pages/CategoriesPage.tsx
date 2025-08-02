@@ -5,10 +5,11 @@ import { Button } from "@/components/ui/button";
 import { Plus } from "lucide-react";
 import { CategoryDialog } from "@/components/categories/CategoryDialog";
 import { type Category } from "@/types/category";
-import { apiFetch } from '@/lib/api';
+import { createCategory, updateCategory } from '@/lib/api';
 import { useAuth } from "@/hooks/useAuth";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { PermissionGuard } from "@/components/ui/permission-guard";
+import { toast } from "sonner";
 
 const CategoriesPage = () => {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
@@ -28,21 +29,29 @@ const CategoriesPage = () => {
   };
 
   const handleSaveCategory = async (category: Partial<Category>) => {
-    if (editingCategory) {
-      // Edit
-      await apiFetch(`/categories/${editingCategory.id}`, {
-        method: 'PUT',
-        body: JSON.stringify(category),
-      });
-    } else {
-      // Add
-      await apiFetch('/categories', {
-        method: 'POST',
-        body: JSON.stringify(category),
-      });
+    try {
+      console.log("CategoriesPage - handleSaveCategory called with:", category);
+      if (editingCategory) {
+        console.log("Updating category with ID:", editingCategory.id);
+        await updateCategory(editingCategory.id, category);
+        toast.success(`Category "${category.name}" updated successfully`);
+      } else {
+        console.log("Creating new category");
+        await createCategory(category);
+        toast.success(`Category "${category.name}" created successfully`);
+      }
+      setIsDialogOpen(false);
+      tableRef.current?.refetch();
+    } catch (error: any) {
+      console.error('Error saving category:', error);
+      if (error.status === 409) {
+        toast.error(error.message || 'A category with this name already exists in the same parent category');
+      } else {
+        toast.error(`Failed to ${editingCategory ? 'update' : 'create'} category`);
+      }
+      // Don't close dialog or refresh on error
+      return;
     }
-    setIsDialogOpen(false);
-    tableRef.current?.refetch();
   };
 
   return (

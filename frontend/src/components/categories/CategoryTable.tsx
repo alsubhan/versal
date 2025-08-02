@@ -9,7 +9,7 @@ import {
 } from "@/components/ui/table";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Search, Edit, Trash, ChevronRight, ChevronDown } from "lucide-react";
+import { Search, Edit, Trash, Trash2, ChevronRight, ChevronDown } from "lucide-react";
 import { type Category, type CategoryWithChildren } from "@/types/category";
 import { toast } from "@/hooks/use-toast";
 import { apiFetch } from '@/lib/api';
@@ -152,15 +152,23 @@ export const CategoryTable = forwardRef(function CategoryTable(
           <TableCell className="text-right">
             <div className="flex justify-end gap-2">
               {canEditCategories ? (
-              <Button variant="ghost" size="icon" onClick={() => onEdit(category)}>
-                <Edit className="h-4 w-4" />
-              </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => onEdit(category)}
+                >
+                  <Edit className="h-4 w-4" />
+                </Button>
               ) : (
                 <TooltipProvider>
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <span>
-                        <Button variant="ghost" size="icon" disabled>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          disabled
+                        >
                           <Edit className="h-4 w-4" />
                         </Button>
                       </span>
@@ -172,20 +180,24 @@ export const CategoryTable = forwardRef(function CategoryTable(
                 </TooltipProvider>
               )}
               {canDeleteCategories ? (
-                <Button 
-                  variant="ghost" 
-                  size="icon" 
+                <Button
+                  variant="ghost"
+                  size="sm"
                   onClick={() => confirmDelete(category)}
                 >
-                  <Trash className="h-4 w-4" />
+                  <Trash2 className="h-4 w-4" />
                 </Button>
               ) : (
                 <TooltipProvider>
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <span>
-                        <Button variant="ghost" size="icon" disabled>
-                          <Trash className="h-4 w-4" />
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          disabled
+                        >
+                          <Trash2 className="h-4 w-4" />
                         </Button>
                       </span>
                     </TooltipTrigger>
