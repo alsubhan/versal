@@ -18,8 +18,8 @@ import TaxesPage from "@/pages/TaxesPage";
 import ReportsPage from "@/pages/ReportsPage";
 import PurchaseOrdersPage from "@/pages/PurchaseOrdersPage";
 import GRNsPage from "@/pages/GRNsPage";
-import WholesaleOrdersPage from "@/pages/WholesaleOrdersPage";
-import WholesaleBillingPage from "@/pages/WholesaleBillingPage";
+import SaleOrdersPage from "@/pages/SaleOrdersPage";
+import SaleInvoicesPage from "@/pages/SaleInvoicesPage";
 import CreditNotesPage from "@/pages/CreditNotesPage";
 import BackupPage from "@/pages/BackupPage";
 import BarcodePage from "@/pages/BarcodePage";
@@ -58,8 +58,8 @@ const App = () => {
               <Route path="reports" element={<ReportsPage />} />
               <Route path="purchase-orders" element={<PurchaseOrdersPage />} />
               <Route path="grns" element={<GRNsPage />} />
-              <Route path="sale-orders" element={<WholesaleOrdersPage />} />
-              <Route path="sale-invoices" element={<WholesaleBillingPage />} />
+                      <Route path="sale-orders" element={<SaleOrdersPage />} />
+        <Route path="sale-invoices" element={<SaleInvoicesPage />} />
               <Route path="credit-notes" element={<CreditNotesPage />} />
               <Route path="backup" element={<BackupPage />} />
               <Route path="barcodes" element={<BarcodePage />} />

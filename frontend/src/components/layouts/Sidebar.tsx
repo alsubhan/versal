@@ -31,7 +31,9 @@ import {
   ClipboardCheck,
   CreditCard,
   Barcode,
-  UploadCloud
+  UploadCloud,
+  Receipt,
+  Calculator
 } from "lucide-react";
 
 // Add prop for performance dashboard toggle
@@ -62,7 +64,7 @@ const sidebarLinks = [{
 }, {
   name: "Taxes",
   href: "/taxes",
-  icon: FileText,
+  icon: Calculator,
   permission: 'taxes_view'
 }, {
   name: "Suppliers",
@@ -74,6 +76,11 @@ const sidebarLinks = [{
   href: "/customers",
   icon: Users,
   permission: 'customers_view'
+}, {
+  name: "Inventory",
+  href: "/inventory",
+  icon: Package,
+  permission: 'inventory_view'
 }, {
   name: "Purchase Orders",
   href: "/purchase-orders",
@@ -92,18 +99,13 @@ const sidebarLinks = [{
 }, {
   name: "Sale Invoices",
   href: "/sale-invoices",
-  icon: CreditCard,
+  icon: Receipt,
   permission: 'sale_invoices_view'
 }, {
   name: "Credit Notes",
   href: "/credit-notes",
   icon: CreditCard,
   permission: 'credit_notes_view'
-}, {
-  name: "Inventory",
-  href: "/inventory",
-  icon: Package,
-  permission: 'inventory_view'
 }, {
   name: "Reports",
   href: "/reports",

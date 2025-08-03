@@ -42,6 +42,7 @@ type Product = {
   selling_price?: number;
   sale_price?: number;
   mrp?: number;
+  initial_quantity?: number;
   stock_levels?: Array<{ quantity_on_hand: number; quantity_available: number }> | { quantity_on_hand: number; quantity_available: number };
   is_active: boolean;
   created_at: string;
@@ -215,11 +216,11 @@ export const ProductTable = ({ onEdit, onRefresh }: ProductTableProps) => {
               <TableHead>SKU</TableHead>
               <TableHead>HSN</TableHead>
               <TableHead>Category</TableHead>
+              <TableHead>Stock</TableHead>
               <TableHead>Unit</TableHead>
               <TableHead className="text-right">Cost</TableHead>
               <TableHead className="text-right">Retail</TableHead>
               <TableHead className="text-right">Sale</TableHead>
-              <TableHead>Stock</TableHead>
               <TableHead>Status</TableHead>
               <TableHead className="text-right">Actions</TableHead>
             </TableRow>
@@ -231,11 +232,11 @@ export const ProductTable = ({ onEdit, onRefresh }: ProductTableProps) => {
                 <TableCell><Skeleton className="h-4 w-32" /></TableCell>
                 <TableCell><Skeleton className="h-4 w-20" /></TableCell>
                 <TableCell><Skeleton className="h-4 w-24" /></TableCell>
+                <TableCell><Skeleton className="h-4 w-12" /></TableCell>
                 <TableCell><Skeleton className="h-4 w-16" /></TableCell>
                 <TableCell className="text-right"><Skeleton className="h-4 w-16 ml-auto" /></TableCell>
                 <TableCell className="text-right"><Skeleton className="h-4 w-16 ml-auto" /></TableCell>
                 <TableCell className="text-right"><Skeleton className="h-4 w-16 ml-auto" /></TableCell>
-                <TableCell><Skeleton className="h-4 w-12" /></TableCell>
                 <TableCell><Skeleton className="h-4 w-16" /></TableCell>
                 <TableCell className="text-right"><Skeleton className="h-4 w-20 ml-auto" /></TableCell>
               </TableRow>
@@ -268,11 +269,11 @@ export const ProductTable = ({ onEdit, onRefresh }: ProductTableProps) => {
               <TableHead>SKU</TableHead>
               <TableHead>HSN</TableHead>
               <TableHead>Category</TableHead>
+              <TableHead>Stock</TableHead>
               <TableHead>Unit</TableHead>
               <TableHead className="text-right">Cost</TableHead>
               <TableHead className="text-right">Retail</TableHead>
               <TableHead className="text-right">Sale</TableHead>
-              <TableHead>Stock</TableHead>
               <TableHead>Status</TableHead>
               <TableHead className="text-right">Actions</TableHead>
             </TableRow>
@@ -301,6 +302,72 @@ export const ProductTable = ({ onEdit, onRefresh }: ProductTableProps) => {
                     {product.categories?.name || '-'}
                   </TableCell>
                   <TableCell>
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <div className="cursor-help">
+                            {(() => {
+                              // Calculate consolidated stock across all locations
+                              let totalOnHand = 0;
+                              let totalAvailable = 0;
+                              
+                              if (Array.isArray(product.stock_levels)) {
+                                product.stock_levels.forEach(level => {
+                                  totalOnHand += level.quantity_on_hand || 0;
+                                  totalAvailable += level.quantity_available || 0;
+                                });
+                              } else if (product.stock_levels) {
+                                totalOnHand = product.stock_levels.quantity_on_hand || 0;
+                                totalAvailable = product.stock_levels.quantity_available || 0;
+                              }
+                              
+                              return (
+                                <span className={`font-medium ${totalOnHand > 0 && totalOnHand !== totalAvailable ? 'text-orange-600' : ''}`}>
+                                  {totalOnHand}
+                                  {totalOnHand > 0 && totalOnHand !== totalAvailable && (
+                                    <span className="ml-1 text-xs text-muted-foreground">ⓘ</span>
+                                  )}
+                                </span>
+                              );
+                            })()}
+                          </div>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          <div className="space-y-1">
+                            {(() => {
+                              // Calculate consolidated stock across all locations
+                              let totalOnHand = 0;
+                              let totalAvailable = 0;
+                              
+                              if (Array.isArray(product.stock_levels)) {
+                                product.stock_levels.forEach(level => {
+                                  totalOnHand += level.quantity_on_hand || 0;
+                                  totalAvailable += level.quantity_available || 0;
+                                });
+                              } else if (product.stock_levels) {
+                                totalOnHand = product.stock_levels.quantity_on_hand || 0;
+                                totalAvailable = product.stock_levels.quantity_available || 0;
+                              }
+                              
+                              return (
+                                <>
+                                  <div className="font-medium">Stock Details</div>
+                                  <div>Total: {totalOnHand} units</div>
+                                  <div>Available: {totalAvailable} units</div>
+                                  {totalOnHand > 0 && totalOnHand !== totalAvailable && (
+                                    <div className="text-orange-600">
+                                      Reserved: {totalOnHand - totalAvailable} units
+                                    </div>
+                                  )}
+                                </>
+                              );
+                            })()}
+                          </div>
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  </TableCell>
+                  <TableCell>
                     {product.units ? `${product.units.name} (${product.units.abbreviation})` : '-'}
                   </TableCell>
                   <TableCell className="text-right">
@@ -311,17 +378,6 @@ export const ProductTable = ({ onEdit, onRefresh }: ProductTableProps) => {
                   </TableCell>
                   <TableCell className="text-right">
                     {formatCurrency(product.sale_price || 0, currency)}
-                  </TableCell>
-                  <TableCell>
-                    <div className="space-y-1">
-                      <div className="text-sm">
-                        On Hand: {Array.isArray(product.stock_levels) ? product.stock_levels?.[0]?.quantity_on_hand : product.stock_levels?.quantity_on_hand || 0}
-                      </div>
-                      <div className="text-xs text-muted-foreground">
-                        Available: {Array.isArray(product.stock_levels) ? product.stock_levels?.[0]?.quantity_available : product.stock_levels?.quantity_available || 0}
-                      </div>
-
-                    </div>
                   </TableCell>
                   <TableCell>
                     {product.is_active ? (

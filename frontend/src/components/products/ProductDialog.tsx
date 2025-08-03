@@ -60,6 +60,7 @@ interface Product {
   maximum_stock?: number;
   reorder_point?: number;
   mrp?: number;
+  initial_quantity?: number;
   subcategory_id?: string;
   stock_levels?: Array<{ quantity_on_hand: number; quantity_available: number }> | { quantity_on_hand: number; quantity_available: number };
 }
@@ -166,7 +167,7 @@ export const ProductDialog: React.FC<ProductDialogProps> = ({ open, onOpenChange
           purchaseTaxId: product.purchase_tax_id || '',
           purchaseTaxType: product.purchase_tax_type || 'exclusive',
           unitId: product.unit_id || '',
-          initialQty: stockLevels?.[0]?.quantity_on_hand?.toString() || '',
+          initialQty: product.initial_quantity?.toString() || stockLevels?.[0]?.quantity_on_hand?.toString() || '',
           warehouseRack: product.warehouse_rack || '',
           reorderLevel: (product.reorder_point !== null && product.reorder_point !== undefined) ? product.reorder_point.toString() : (product.minimum_stock !== null && product.minimum_stock !== undefined) ? product.minimum_stock.toString() : '',
           brand: product.brand || '',

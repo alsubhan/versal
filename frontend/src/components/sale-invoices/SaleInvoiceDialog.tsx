@@ -18,7 +18,7 @@ import { type CreditNote } from "@/types/credit-note";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem } from "@/components/ui/command";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 
-interface WholesaleBillingDialogProps {
+interface SaleInvoiceDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   bill?: WholesaleBill;
@@ -34,7 +34,7 @@ interface WholesaleBillingDialogProps {
   orders?: WholesaleOrder[];
   creditNotes?: CreditNote[];
 }
-export function WholesaleBillingDialog({
+export function SaleInvoiceDialog({
   open,
   onOpenChange,
   bill,
@@ -43,7 +43,7 @@ export function WholesaleBillingDialog({
   products,
   orders = [],
   creditNotes = []
-}: WholesaleBillingDialogProps) {
+}: SaleInvoiceDialogProps) {
   const {
     currency,
     getCurrencySymbol

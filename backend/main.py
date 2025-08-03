@@ -403,6 +403,42 @@ def to_camel_case_system_setting(system_setting):
 def read_root():
     return {"message": "Hello, FastAPI!"}
 
+@app.get("/debug/roles-schema")
+def debug_roles_schema():
+    try:
+        # Test query to check roles table schema
+        data = supabase.table("roles").select("*").limit(1).execute()
+        return {"message": "Roles table accessible", "sample_data": data.data}
+    except Exception as e:
+        return {"error": str(e), "message": "Roles table error"}
+
+@app.get("/debug/profiles-schema")
+def debug_profiles_schema():
+    try:
+        # Test query to check profiles table schema
+        data = supabase.table("profiles").select("*").limit(1).execute()
+        return {"message": "Profiles table accessible", "sample_data": data.data}
+    except Exception as e:
+        return {"error": str(e), "message": "Profiles table error"}
+
+@app.get("/debug/stock-levels-schema")
+def debug_stock_levels_schema():
+    try:
+        # Test query to check stock_levels table schema
+        data = supabase.table("stock_levels").select("*").limit(1).execute()
+        return {"message": "Stock levels table accessible", "sample_data": data.data}
+    except Exception as e:
+        return {"error": str(e), "message": "Stock levels table error"}
+
+@app.get("/debug/inventory-transactions-schema")
+def debug_inventory_transactions_schema():
+    try:
+        # Test query to check inventory_transactions table schema
+        data = supabase.table("inventory_transactions").select("*").limit(1).execute()
+        return {"message": "Inventory transactions table accessible", "sample_data": data.data}
+    except Exception as e:
+        return {"error": str(e), "message": "Inventory transactions table error"}
+
 @app.get("/products")
 def get_products(payload=Depends(verify_jwt)):
     try:
@@ -535,7 +571,7 @@ def create_product(product: dict = Body(...), payload=Depends(require_permission
         created_product = data.data[0] if data.data else {}
         
         # Handle initial stock quantity
-        initial_quantity = product.get("initialQty", 0)
+        initial_quantity = product.get("initialQty", 0) or product.get("initial_quantity", 0)
         print(f"Create product: initial_quantity = {initial_quantity}, product_id = {created_product.get('id') if created_product else 'None'}")
         
         # Always create stock level record, even if initial_quantity is 0
@@ -545,7 +581,8 @@ def create_product(product: dict = Body(...), payload=Depends(require_permission
                 stock_data = {
                     "product_id": created_product["id"],
                     "quantity_on_hand": initial_quantity or 0,
-                    "quantity_reserved": 0
+                    "quantity_reserved": 0,
+                    "created_by": payload.get("sub")
                     # quantity_available is a generated column, so we don't set it
                 }
                 print(f"Creating stock level with data: {stock_data}")
@@ -1117,6 +1154,9 @@ def create_stock_level(stock_level: dict = Body(...), payload=Depends(require_pe
     if "quantity" in stock_level:
         mapped_data["quantity_on_hand"] = stock_level["quantity"]
     
+    # Add created_by field
+    mapped_data["created_by"] = payload.get("sub")
+    
     # Create the stock level
     data = supabase.table("stock_levels").insert(mapped_data).execute()
     
@@ -1143,8 +1183,46 @@ def create_stock_level(stock_level: dict = Body(...), payload=Depends(require_pe
 
 @app.put("/inventory/stock-levels/{stock_level_id}")
 def update_stock_level(stock_level_id: str, stock_level: dict = Body(...), payload=Depends(require_permission("inventory_stock_manage"))):
-    data = supabase.table("stock_levels").update(stock_level).eq("id", stock_level_id).execute()
-    return JSONResponse(content=data.data)
+    try:
+        print(f"Starting update_stock_level for ID: {stock_level_id}")
+        print(f"Received stock_level data: {stock_level}")
+        
+        # Map camelCase to snake_case for the database schema
+        mapped_data = {
+            "product_id": stock_level.get("productId"),
+            "location_id": stock_level.get("locationId"),
+            "quantity_on_hand": stock_level.get("quantity"),
+            "quantity_reserved": stock_level.get("quantityReserved", 0),
+            "quantity_available": stock_level.get("quantityAvailable"),
+            "last_updated": stock_level.get("lastUpdated")
+            # Don't update created_by for existing records
+        }
+        
+        # Remove None values to avoid overwriting with null
+        mapped_data = {k: v for k, v in mapped_data.items() if v is not None}
+        print(f"Mapped data for update: {mapped_data}")
+        
+        # Update the stock level
+        print("Executing stock level update...")
+        print(f"Final mapped_data being sent: {mapped_data}")
+        print(f"Stock level ID: {stock_level_id}")
+        
+        # Update the stock level
+        data = supabase.table("stock_levels").update(mapped_data).eq("id", stock_level_id).execute()
+        
+        if not data.data:
+            raise HTTPException(status_code=404, detail="Stock level not found")
+        
+        # The database trigger will automatically create inventory transactions
+        # No need to manually create them here to avoid conflicts
+        
+        # Return the updated stock level data directly
+        updated_stock_level = data.data[0]
+        return JSONResponse(content=updated_stock_level)
+        
+    except Exception as e:
+        print(f"Error updating stock level: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to update stock level: {str(e)}")
 
 @app.delete("/inventory/stock-levels/{stock_level_id}")
 def delete_stock_level(stock_level_id: str, payload=Depends(require_permission("inventory_stock_manage"))):
@@ -1154,15 +1232,18 @@ def delete_stock_level(stock_level_id: str, payload=Depends(require_permission("
 # Inventory Movements endpoints
 @app.get("/inventory/movements")
 def get_inventory_movements(payload=Depends(require_permission("inventory_movements_view"))):
-    # Join with products to get product names and SKU codes
+    # Join with products, locations, and profiles to get product names, SKU codes, location names, and user names
     data = supabase.table("inventory_movements").select(
-        "*, products(name, sku_code)"
+        "*, products(name, sku_code), from_location:from_location_id(name), to_location:to_location_id(name), created_by_user:created_by(full_name)"
     ).execute()
     
     movements = []
     for movement in data.data:
         # Extract product info from the joined data
         product = movement.get("products", {})
+        from_location = movement.get("from_location", {})
+        to_location = movement.get("to_location", {})
+        created_by_user = movement.get("created_by_user", {})
         
         movement_data = {
             "id": movement.get("id"),
@@ -1173,9 +1254,13 @@ def get_inventory_movements(payload=Depends(require_permission("inventory_moveme
             "quantity": int(movement.get("quantity", 0)) if movement.get("quantity") is not None else 0,
             "previousStock": int(movement.get("previous_stock", 0)) if movement.get("previous_stock") is not None else 0,
             "newStock": int(movement.get("new_stock", 0)) if movement.get("new_stock") is not None else 0,
+            "fromLocationId": movement.get("from_location_id"),
+            "fromLocationName": from_location.get("name") if from_location else None,
+            "toLocationId": movement.get("to_location_id"),
+            "toLocationName": to_location.get("name") if to_location else None,
             "reference": movement.get("reference"),
             "notes": movement.get("notes"),
-            "createdBy": movement.get("created_by"),
+            "createdBy": created_by_user.get("full_name") if created_by_user else movement.get("created_by"),
             "createdAt": movement.get("created_at")
         }
         movements.append(movement_data)
@@ -1184,6 +1269,9 @@ def get_inventory_movements(payload=Depends(require_permission("inventory_moveme
 
 @app.post("/inventory/movements")
 def create_inventory_movement(movement: dict = Body(...), payload=Depends(require_permission("inventory_movements_create"))):
+    # Add created_by field to the movement data
+    movement["created_by"] = payload.get("sub")
+    
     # Create the movement
     data = supabase.table("inventory_movements").insert(movement).execute()
     

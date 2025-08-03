@@ -21,6 +21,7 @@ export interface Product {
   selling_price?: number;
   sale_price?: number;
   mrp?: number;
+  initial_quantity?: number;
   stock_levels?: Array<{ quantity_on_hand: number; quantity_available: number }> | { quantity_on_hand: number; quantity_available: number };
   is_active: boolean;
   created_at: string;

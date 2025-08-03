@@ -36,6 +36,8 @@ export default function CreditNotesPage() {
   const canEditCreditNotes = hasPermission('credit_notes_edit');
   const canDeleteCreditNotes = hasPermission('credit_notes_delete');
 
+
+
   const handleAddNew = () => {
     setEditingCreditNote(null);
     setIsDialogOpen(true);
@@ -95,6 +97,8 @@ export default function CreditNotesPage() {
       fallbackMessage="You do not have permission to view credit notes. Please contact an administrator."
     >
       <div className="space-y-6">
+
+        
         <div className="flex items-center justify-between">
           <h1 className="text-2xl font-bold tracking-tight">Credit Notes</h1>
         {canCreateCreditNotes ? (

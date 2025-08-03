@@ -24,7 +24,12 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 
-export const LocationsTable = () => {
+interface LocationsTableProps {
+  onEdit?: (location: InventoryLocation) => void;
+  canEdit?: boolean;
+}
+
+export const LocationsTable = ({ onEdit, canEdit = true }: LocationsTableProps) => {
   const [searchTerm, setSearchTerm] = useState("");
   const [locations, setLocations] = useState<InventoryLocation[]>([]);
   const [loading, setLoading] = useState(true);
@@ -149,20 +154,25 @@ export const LocationsTable = () => {
                   <TableCell>{format(new Date(location.updatedAt), "MMM d, yyyy")}</TableCell>
                   <TableCell>
                     <div className="flex items-center gap-1">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                      >
-                        <Edit className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => handleDelete(location)}
-                        className="text-red-600 hover:text-red-700"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
+                      {canEdit && onEdit && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => onEdit(location)}
+                        >
+                          <Edit className="h-4 w-4" />
+                        </Button>
+                      )}
+                      {canEdit && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleDelete(location)}
+                          className="text-red-600 hover:text-red-700"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      )}
                     </div>
                   </TableCell>
                 </TableRow>
