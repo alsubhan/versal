@@ -2,8 +2,8 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { PlusCircle } from "lucide-react";
 import { type WholesaleOrder } from "@/types/wholesale-order";
-import { WholesaleOrderTable } from "@/components/wholesale-orders/WholesaleOrderTable";
-import { WholesaleOrderDialog } from "@/components/wholesale-orders/WholesaleOrderDialog";
+import { SaleOrderTable } from "@/components/sale-orders/SaleOrderTable";
+import { SaleOrderDialog } from "@/components/sale-orders/SaleOrderDialog";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -181,7 +181,7 @@ const sampleProducts = [
   { id: "3", name: "Product Three", skuCode: "PRD-003", price: 200, taxRate: 10 },
 ];
 
-export default function WholesaleOrdersPage() {
+export default function SaleOrdersPage() {
   const [orders, setOrders] = useState<WholesaleOrder[]>(sampleOrders);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [selectedOrder, setSelectedOrder] = useState<WholesaleOrder | undefined>(undefined);
@@ -191,6 +191,8 @@ export default function WholesaleOrdersPage() {
   const canCreateOrders = hasPermission('sale_orders_create');
   const canEditOrders = hasPermission('sale_orders_edit');
   const canDeleteOrders = hasPermission('sale_orders_delete');
+
+
 
   const handleAddNew = () => {
     setSelectedOrder(undefined);
@@ -262,10 +264,12 @@ export default function WholesaleOrdersPage() {
 
   return (
     <PermissionGuard 
-      requiredPermission="wholesale_orders_view"
+      requiredPermission="sale_orders_view"
       fallbackMessage="You do not have permission to view wholesale orders. Please contact an administrator."
     >
       <div className="space-y-6">
+
+        
         <div className="flex items-center justify-between">
           <h1 className="text-2xl font-bold tracking-tight">Sale Orders</h1>
         {canCreateOrders ? (
@@ -292,7 +296,7 @@ export default function WholesaleOrdersPage() {
         )}
       </div>
 
-      <WholesaleOrderTable
+      <SaleOrderTable
         orders={orders}
         onView={handleView}
         onEdit={canEditOrders ? handleEdit : undefined}
@@ -301,7 +305,7 @@ export default function WholesaleOrdersPage() {
         canDelete={canDeleteOrders}
       />
 
-      <WholesaleOrderDialog
+      <SaleOrderDialog
         open={dialogOpen}
         onOpenChange={setDialogOpen}
         order={selectedOrder}

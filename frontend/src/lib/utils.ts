@@ -7,8 +7,22 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
 }
 
-export function formatDate(date: Date): string {
-  return format(date, "MMM dd, yyyy");
+export function formatDate(date: Date | string | null | undefined): string {
+  if (!date) return "N/A";
+  
+  try {
+    const dateObj = typeof date === 'string' ? new Date(date) : date;
+    
+    // Check if the date is valid
+    if (isNaN(dateObj.getTime())) {
+      return "Invalid Date";
+    }
+    
+    return format(dateObj, "MMM dd, yyyy");
+  } catch (error) {
+    console.error('Error formatting date:', error, date);
+    return "Invalid Date";
+  }
 }
 
 // Currency formatter with improved support for INR

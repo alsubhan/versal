@@ -16,7 +16,7 @@ import { formatDate, formatCurrency } from "@/lib/utils";
 import { useCurrencyStore } from "@/stores/currencyStore";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
-interface WholesaleOrderTableProps {
+interface SaleOrderTableProps {
   orders: WholesaleOrder[];
   onView: (order: WholesaleOrder) => void;
   onEdit?: (order: WholesaleOrder) => void;
@@ -25,14 +25,14 @@ interface WholesaleOrderTableProps {
   canDelete?: boolean;
 }
 
-export function WholesaleOrderTable({
+export function SaleOrderTable({
   orders,
   onView,
   onEdit,
   onDelete,
   canEdit,
   canDelete
-}: WholesaleOrderTableProps) {
+}: SaleOrderTableProps) {
   // Move all hooks to the top
   const [loading, setLoading] = useState(true);
   const [sortColumn, setSortColumn] = useState<string>("orderDate");

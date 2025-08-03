@@ -3,9 +3,9 @@ import { Button } from "@/components/ui/button";
 import { PlusCircle, FileText } from "lucide-react";
 import { type WholesaleBill } from "@/types/wholesale-billing";
 import { type WholesaleOrder } from "@/types/wholesale-order";
-import { WholesaleBillingTable } from "@/components/wholesale-billing/WholesaleBillingTable";
-import { WholesaleBillingDialog } from "@/components/wholesale-billing/WholesaleBillingDialog";
-import { ReturnDialog } from "@/components/wholesale-billing/ReturnDialog";
+import { SalesInvoiceTable } from "@/components/sale-invoices/SalesInvoiceTable";
+import { SaleInvoiceDialog } from "@/components/sale-invoices/SaleInvoiceDialog";
+import { ReturnDialog } from "@/components/sale-invoices/ReturnDialog";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -234,7 +234,7 @@ const sampleOrders: WholesaleOrder[] = [
   }
 ];
 
-export default function WholesaleBillingPage() {
+export default function SaleInvoicesPage() {
   const [bills, setBills] = useState<WholesaleBill[]>(sampleBills);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [selectedBill, setSelectedBill] = useState<WholesaleBill | undefined>(undefined);
@@ -250,6 +250,8 @@ export default function WholesaleBillingPage() {
   const canCreateBilling = hasPermission('sale_invoices_create');
   const canEditBilling = hasPermission('sale_invoices_edit');
   const canDeleteBilling = hasPermission('sale_invoices_delete');
+
+
 
   const handleAddNew = () => {
     setSelectedBill(undefined);
@@ -366,10 +368,12 @@ export default function WholesaleBillingPage() {
 
   return (
     <PermissionGuard 
-      requiredPermission="wholesale_billing_view"
+      requiredPermission="sale_invoices_view"
       fallbackMessage="You do not have permission to view wholesale billing. Please contact an administrator."
     >
       <div className="space-y-6">
+
+        
         <div className="flex items-center justify-between">
           <h1 className="text-2xl font-bold tracking-tight">Sale Invoices</h1>
         {canCreateBilling ? (
@@ -396,7 +400,7 @@ export default function WholesaleBillingPage() {
         )}
       </div>
 
-      <WholesaleBillingTable
+      <SalesInvoiceTable
         bills={bills}
         onView={handleView}
         onEdit={canEditBilling ? handleEdit : undefined}
@@ -407,7 +411,7 @@ export default function WholesaleBillingPage() {
         canDelete={canDeleteBilling}
       />
 
-      <WholesaleBillingDialog
+      <SaleInvoiceDialog
         open={dialogOpen}
         onOpenChange={setDialogOpen}
         bill={selectedBill}

@@ -368,7 +368,16 @@ export async function createStockLevel(stockLevel: any) {
 }
 
 export async function updateStockLevel(id: string, stockLevel: any) {
-  return apiFetch(`/inventory/stock-levels/${id}`, { method: 'PUT', body: JSON.stringify(stockLevel) });
+  const result = await apiFetch(`/inventory/stock-levels/${id}`, { method: 'PUT', body: JSON.stringify(stockLevel) });
+  
+  // Check if the result is an error response
+  if (result && result.error) {
+    const error = new Error(result.detail);
+    (error as any).status = result.status;
+    throw error;
+  }
+  
+  return result;
 }
 
 export async function deleteStockLevel(id: string) {
@@ -390,7 +399,16 @@ export async function getInventoryMovements() {
 }
 
 export async function createInventoryMovement(movement: any) {
-  return apiFetch('/inventory/movements', { method: 'POST', body: JSON.stringify(movement) });
+  const result = await apiFetch('/inventory/movements', { method: 'POST', body: JSON.stringify(movement) });
+  
+  // Check if the result is an error response
+  if (result && result.error) {
+    const error = new Error(result.detail);
+    (error as any).status = result.status;
+    throw error;
+  }
+  
+  return result;
 }
 
 // Locations API functions

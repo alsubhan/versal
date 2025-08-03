@@ -19,7 +19,7 @@ import { formatCurrency } from "@/lib/utils";
 import { useCurrencyStore } from "@/stores/currencyStore";
 import { type Customer } from "@/types/customer";
 
-interface WholesaleOrderDialogProps {
+interface SaleOrderDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   order?: WholesaleOrder;
@@ -28,14 +28,14 @@ interface WholesaleOrderDialogProps {
   products: { id: string; name: string; skuCode: string; price: number; taxRate: number }[];
 }
 
-export function WholesaleOrderDialog({ 
+export function SaleOrderDialog({ 
   open, 
   onOpenChange, 
   order, 
   onSave,
   customers,
   products 
-}: WholesaleOrderDialogProps) {
+}: SaleOrderDialogProps) {
   const { currency } = useCurrencyStore();
   const [formData, setFormData] = useState<Partial<WholesaleOrder>>({
     orderNumber: "",

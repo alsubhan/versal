@@ -105,6 +105,7 @@ export const InventoryMovementsTable = () => {
               <TableHead>Quantity</TableHead>
               <TableHead>Previous Stock</TableHead>
               <TableHead>New Stock</TableHead>
+              <TableHead>Location</TableHead>
               <TableHead>Reference</TableHead>
               <TableHead>Created By</TableHead>
             </TableRow>
@@ -121,13 +122,19 @@ export const InventoryMovementsTable = () => {
                   </TableCell>
                   <TableCell>{movement.previousStock}</TableCell>
                   <TableCell>{movement.newStock}</TableCell>
+                  <TableCell>
+                    {movement.type === "transfer" && movement.fromLocationName && movement.toLocationName 
+                      ? `${movement.fromLocationName} → ${movement.toLocationName}`
+                      : movement.fromLocationName || movement.toLocationName || "-"
+                    }
+                  </TableCell>
                   <TableCell>{movement.reference || "-"}</TableCell>
                   <TableCell>{movement.createdBy}</TableCell>
                 </TableRow>
               ))
             ) : (
               <TableRow>
-                <TableCell colSpan={8} className="text-center py-4">
+                <TableCell colSpan={9} className="text-center py-4">
                   {searchTerm ? "No movements found matching your search" : "No movements found"}
                 </TableCell>
               </TableRow>

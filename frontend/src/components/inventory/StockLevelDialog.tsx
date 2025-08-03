@@ -29,13 +29,14 @@ import {
 } from "@/components/ui/select";
 import { toast } from "@/hooks/use-toast";
 import { type StockLevel } from "@/types/inventory";
-import { createStockLevel, updateStockLevel, getProducts, getLocations } from "@/lib/api";
+import { createStockLevel, updateStockLevel, getProducts, getLocations, getStockLevels } from "@/lib/api";
 import { Spinner } from "@/components/ui/spinner";
 
 const formSchema = z.object({
   productId: z.string().min(1, "Product is required"),
   locationId: z.string().min(1, "Location is required"),
   quantity: z.number().min(0, "Quantity must be 0 or greater"),
+  quantityReserved: z.number().min(0, "Reserved quantity must be 0 or greater"),
 });
 
 type FormValues = z.infer<typeof formSchema>;
@@ -70,6 +71,7 @@ export function StockLevelDialog({ open, onOpenChange, stockLevel, onSuccess }: 
       productId: "",
       locationId: "",
       quantity: 0,
+      quantityReserved: 0,
     },
   });
 
@@ -94,6 +96,19 @@ export function StockLevelDialog({ open, onOpenChange, stockLevel, onSuccess }: 
     }
   }, []);
 
+  // Check if a stock level already exists for the selected product and location
+  const checkExistingStockLevel = useCallback(async (productId: string, locationId: string) => {
+    try {
+      const stockLevels = await getStockLevels();
+      return stockLevels?.find(sl => 
+        sl.productId === productId && sl.locationId === locationId
+      );
+    } catch (error) {
+      console.error('Error checking existing stock level:', error);
+      return null;
+    }
+  }, []);
+
   // Fetch products and locations when dialog opens
   useEffect(() => {
     if (open) {
@@ -107,12 +122,14 @@ export function StockLevelDialog({ open, onOpenChange, stockLevel, onSuccess }: 
         productId: stockLevel.productId,
         locationId: stockLevel.locationId,
         quantity: stockLevel.quantity,
+        quantityReserved: stockLevel.quantityReserved || 0,
       });
     } else {
       form.reset({
         productId: "",
         locationId: "",
         quantity: 0,
+        quantityReserved: 0,
       });
     }
   }, [stockLevel, form, open]);
@@ -122,9 +139,10 @@ export function StockLevelDialog({ open, onOpenChange, stockLevel, onSuccess }: 
       setLoading(true);
       
       const stockLevelData = {
-        product_id: data.productId,
-        location_id: data.locationId,
+        productId: data.productId,
+        locationId: data.locationId,
         quantity: data.quantity,
+        quantityReserved: data.quantityReserved,
       };
 
       if (stockLevel) {
@@ -134,14 +152,30 @@ export function StockLevelDialog({ open, onOpenChange, stockLevel, onSuccess }: 
           description: `Updated stock level for ${products.find(p => p.id === data.productId)?.name}`,
         });
       } else {
+        // Check if a stock level already exists for this product-location combination
+        const existingStockLevel = await checkExistingStockLevel(data.productId, data.locationId);
+        
+        if (existingStockLevel) {
+          const productName = products.find(p => p.id === data.productId)?.name;
+          const locationName = locations.find(l => l.id === data.locationId)?.name;
+          
+          toast({
+            title: "Stock Level Already Exists",
+            description: `A stock level for "${productName}" at "${locationName}" already exists (Current: ${existingStockLevel.quantity} units). Use the Edit button to modify it.`,
+            variant: "destructive"
+          });
+          return; // Don't close the dialog
+        }
+
+        // Create new stock level
         await createStockLevel(stockLevelData);
-    toast({
+        toast({
           title: "Stock level created successfully",
           description: `Created stock level for ${products.find(p => p.id === data.productId)?.name}`,
-    });
+        });
       }
       
-    onOpenChange(false);
+      onOpenChange(false);
       onSuccess?.(); // Callback to refresh the table
     } catch (error) {
       console.error('Error saving stock level:', error);
@@ -171,7 +205,16 @@ export function StockLevelDialog({ open, onOpenChange, stockLevel, onSuccess }: 
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-[500px]">
         <DialogHeader>
-          <DialogTitle>{stockLevel ? "Update" : "Set"} Stock Level</DialogTitle>
+          <DialogTitle>{stockLevel ? "Edit Stock Level" : "Add Stock Level"}</DialogTitle>
+          {stockLevel ? (
+            <p className="text-sm text-muted-foreground">
+              Edit stock level details including on-hand and reserved quantities
+            </p>
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              Create a new stock level for a product at a specific location
+            </p>
+          )}
         </DialogHeader>
 
         <Form {...form}>
@@ -236,23 +279,43 @@ export function StockLevelDialog({ open, onOpenChange, stockLevel, onSuccess }: 
               />
             </div>
 
-            <FormField
-              control={form.control}
-              name="quantity"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Current Quantity</FormLabel>
-                  <FormControl>
-                    <Input
-                      type="number"
-                      {...field}
-                      onChange={e => field.onChange(parseFloat(e.target.value) || 0)}
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
+            <div className="grid grid-cols-2 gap-4">
+              <FormField
+                control={form.control}
+                name="quantity"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>On Hand Quantity</FormLabel>
+                    <FormControl>
+                      <Input
+                        type="number"
+                        {...field}
+                        onChange={e => field.onChange(parseFloat(e.target.value) || 0)}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name="quantityReserved"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Reserved Quantity</FormLabel>
+                    <FormControl>
+                      <Input
+                        type="number"
+                        {...field}
+                        onChange={e => field.onChange(parseFloat(e.target.value) || 0)}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </div>
 
             <DialogFooter className="pt-4">
               <Button 

@@ -22,9 +22,9 @@ import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { toast } from "@/hooks/use-toast";
-import { createLocation } from "@/lib/api";
+import { createLocation, updateLocation } from "@/lib/api";
 import { Spinner } from "@/components/ui/spinner";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 
 const formSchema = z.object({
   name: z.string().min(1, "Location name is required"),
@@ -38,21 +38,41 @@ type FormValues = z.infer<typeof formSchema>;
 interface LocationDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  location?: any; // For editing existing location
   onSuccess?: () => void;
 }
 
-export function LocationDialog({ open, onOpenChange, onSuccess }: LocationDialogProps) {
+export function LocationDialog({ open, onOpenChange, location, onSuccess }: LocationDialogProps) {
   const [loading, setLoading] = useState(false);
 
   const form = useForm<FormValues>({
     resolver: zodResolver(formSchema),
     defaultValues: {
-      name: "",
-      description: "",
-      address: "",
-      isActive: true,
+      name: location?.name || "",
+      description: location?.description || "",
+      address: location?.address || "",
+      isActive: location?.isActive ?? true,
     },
   });
+
+  // Reset form when location changes
+  useEffect(() => {
+    if (location) {
+      form.reset({
+        name: location.name || "",
+        description: location.description || "",
+        address: location.address || "",
+        isActive: location.isActive ?? true,
+      });
+    } else {
+      form.reset({
+        name: "",
+        description: "",
+        address: "",
+        isActive: true,
+      });
+    }
+  }, [location, form]);
 
   const onSubmit = async (data: FormValues) => {
     try {
@@ -65,21 +85,30 @@ export function LocationDialog({ open, onOpenChange, onSuccess }: LocationDialog
         is_active: data.isActive,
       };
 
-      await createLocation(locationData);
-      
-      toast({
-        title: "Location added successfully",
-        description: data.name,
-      });
+      if (location) {
+        // Update existing location
+        await updateLocation(location.id, locationData);
+        toast({
+          title: "Location updated successfully",
+          description: data.name,
+        });
+      } else {
+        // Create new location
+        await createLocation(locationData);
+        toast({
+          title: "Location added successfully",
+          description: data.name,
+        });
+      }
       
       onOpenChange(false);
       form.reset();
       onSuccess?.(); // Callback to refresh the table
     } catch (error) {
-      console.error('Error creating location:', error);
+      console.error('Error saving location:', error);
       toast({
         title: "Error",
-        description: "Failed to create location",
+        description: `Failed to ${location ? 'update' : 'create'} location`,
         variant: "destructive"
       });
     } finally {
@@ -91,7 +120,7 @@ export function LocationDialog({ open, onOpenChange, onSuccess }: LocationDialog
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-[500px]">
         <DialogHeader>
-          <DialogTitle>Add Inventory Location</DialogTitle>
+          <DialogTitle>{location ? "Edit" : "Add"} Inventory Location</DialogTitle>
         </DialogHeader>
 
         <Form {...form}>
@@ -177,7 +206,7 @@ export function LocationDialog({ open, onOpenChange, onSuccess }: LocationDialog
               </Button>
               <Button type="submit" disabled={loading}>
                 {loading ? <Spinner className="h-4 w-4" /> : null}
-                Add Location
+                {location ? "Update" : "Save"} Location
               </Button>
             </DialogFooter>
           </form>

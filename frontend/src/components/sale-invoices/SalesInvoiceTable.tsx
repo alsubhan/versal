@@ -9,7 +9,7 @@ import { useCurrencyStore } from "@/stores/currencyStore";
 import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
-interface WholesaleBillingTableProps {
+interface SalesInvoiceTableProps {
   bills: WholesaleBill[];
   onView: (bill: WholesaleBill) => void;
   onEdit?: (bill: WholesaleBill) => void;
@@ -21,7 +21,7 @@ interface WholesaleBillingTableProps {
   canPrintInvoice?: boolean;
   canProcessReturn?: boolean;
 }
-export function WholesaleBillingTable({
+export function SalesInvoiceTable({
   bills,
   onView,
   onEdit,
@@ -32,7 +32,7 @@ export function WholesaleBillingTable({
   canDelete,
   canPrintInvoice,
   canProcessReturn
-}: WholesaleBillingTableProps) {
+}: SalesInvoiceTableProps) {
   // Move all hooks to the top
   const [loading, setLoading] = useState(true);
   const [sortColumn, setSortColumn] = useState<string>("billingDate");
