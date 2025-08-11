@@ -13,3 +13,5 @@ realtime
 storage3
 uvloop
 httptools
+python-dotenv
+requests

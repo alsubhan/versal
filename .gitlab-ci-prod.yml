@@ -1,0 +1,21 @@
+stages:
+  - deploy
+
+deploy_prod:
+  stage: deploy
+  tags:
+    - ubuntu
+  script:
+    - echo "Deploying with Docker Compose on prod branch..."
+    - 'printf "SUPABASE_URL=%s\n" "$SUPABASE_URL" > .env'
+    - 'printf "SUPABASE_SERVICE_KEY=%s\n" "$SUPABASE_SERVICE_KEY" >> .env'
+    - 'printf "DEBUG=%s\n" "${DEBUG:-false}" >> .env'
+    - 'printf "VITE_API_BASE_URL=%s\n" "${VITE_API_BASE_URL:-/api}" >> .env'
+    - 'printf "FRONTEND_PORT=%s\n" "${FRONTEND_PORT:-80}" >> .env'
+    - 'printf "BACKEND_PORT=%s\n" "${BACKEND_PORT:-8000}" >> .env'
+    - docker compose pull || true
+    - docker compose up -d --build --remove-orphans
+    - echo "Deployment complete."
+  # Uncomment to restrict this job to a specific branch, e.g., 'prod'
+  # only:
+  #   - prod
