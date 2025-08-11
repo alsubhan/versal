@@ -1,9 +1,12 @@
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { GRNTable } from "@/components/grn/GRNTable";
 import { GRNDialog } from "@/components/grn/GRNDialog";
+import { GRNView } from "@/components/grn/GRNView";
+import { GRNReturnDialog } from "@/components/grn/GRNReturnDialog";
 import { Button } from "@/components/ui/button";
-import { PlusCircle } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Plus, Search } from "lucide-react";
 import { type GoodsReceiveNote } from "@/types/grn";
 import {
   AlertDialog,
@@ -15,141 +18,53 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { toast } from "@/hooks/use-toast";
+import { toast } from "sonner";
 import { useAuth } from "@/hooks/useAuth";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { PermissionGuard } from "@/components/ui/permission-guard";
-
-// Sample data for demonstration
-const sampleGrns: GoodsReceiveNote[] = [
-  {
-    id: "1",
-    grnNumber: "GRN-0001",
-    purchaseOrderId: "1",
-    purchaseOrder: {
-      id: "1",
-      orderNumber: "PO-0001",
-      supplierId: "1",
-      supplier: {
-        id: "1",
-        name: "Supplier One",
-        contactName: "John Doe",
-        email: "john@example.com",
-        phone: "1234567890",
-        address: "123 Street",
-        taxId: "TX1234",
-        paymentTerms: "Net 30",
-        isActive: true,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      },
-      orderDate: new Date(),
-      expectedDeliveryDate: new Date(),
-      status: "approved",
-      subtotal: 1000,
-      taxAmount: 100,
-      discountAmount: 0,
-      totalAmount: 1100,
-      items: [],
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    },
-    receivedDate: new Date(),
-    status: "completed",
-    receivedBy: "Store Manager",
-    subtotal: 1000,
-    taxAmount: 100,
-    totalAmount: 1100,
-    notes: "All items received in good condition",
-    items: [
-      {
-        id: "1",
-        grnId: "1",
-        purchaseOrderItemId: "1",
-        productId: "1",
-        productName: "Product One",
-        skuCode: "PRD-001",
-        quantityOrdered: 10,
-        quantityReceived: 10,
-        unitCost: 100,
-        total: 1000,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      }
-    ],
-    createdAt: new Date(),
-    updatedAt: new Date(),
-  },
-  {
-    id: "2",
-    grnNumber: "GRN-0002",
-    purchaseOrderId: "2",
-    purchaseOrder: {
-      id: "2",
-      orderNumber: "PO-0002",
-      supplierId: "1",
-      supplier: {
-        id: "1",
-        name: "Supplier One",
-        contactName: "John Doe",
-        email: "john@example.com",
-        phone: "1234567890",
-        address: "123 Street",
-        taxId: "TX1234",
-        paymentTerms: "Net 30",
-        isActive: true,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      },
-      orderDate: new Date(),
-      expectedDeliveryDate: new Date(),
-      status: "pending",
-      subtotal: 500,
-      taxAmount: 50,
-      discountAmount: 0,
-      totalAmount: 550,
-      items: [],
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    },
-    receivedDate: new Date(),
-    status: "partial",
-    receivedBy: "Warehouse Manager",
-    subtotal: 300,
-    taxAmount: 30,
-    totalAmount: 330,
-    notes: "Partial delivery, waiting for remaining items",
-    items: [
-      {
-        id: "2",
-        grnId: "2",
-        purchaseOrderItemId: "2",
-        productId: "2",
-        productName: "Product Two",
-        skuCode: "PRD-002",
-        quantityOrdered: 5,
-        quantityReceived: 3,
-        unitCost: 100,
-        total: 300,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      }
-    ],
-    createdAt: new Date(),
-    updatedAt: new Date(),
-  },
-];
+import { getGoodReceiveNotes, getGoodReceiveNote, createGoodReceiveNote, updateGoodReceiveNote, deleteGoodReceiveNote } from "@/lib/api";
+import { PrintPreviewDialog } from "@/components/print/PrintPreviewDialog";
 
 export default function GRNsPage() {
-  const [data, setData] = useState<GoodsReceiveNote[]>(sampleGrns);
+  const [data, setData] = useState<GoodsReceiveNote[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [searchTerm, setSearchTerm] = useState("");
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [viewDialogOpen, setViewDialogOpen] = useState(false);
   const [selectedGrn, setSelectedGrn] = useState<GoodsReceiveNote | undefined>(undefined);
+  const [viewingGrn, setViewingGrn] = useState<GoodsReceiveNote | null>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
-  const [itemToDeleteId, setItemToDeleteId] = useState<string | null>(null);
+  const [grnToDelete, setGrnToDelete] = useState<GoodsReceiveNote | undefined>(undefined);
+  const [printDialogOpen, setPrintDialogOpen] = useState(false);
+  const [printingGrn, setPrintingGrn] = useState<GoodsReceiveNote | null>(null);
+  
+  // For returns processing
+  const [returnDialogOpen, setReturnDialogOpen] = useState(false);
+  const [selectedReturnGrn, setSelectedReturnGrn] = useState<GoodsReceiveNote | undefined>(undefined);
+
   const { hasPermission } = useAuth();
   const canCreateGRN = hasPermission('grn_create');
   const canEditGRN = hasPermission('grn_edit');
   const canDeleteGRN = hasPermission('grn_delete');
+
+  // Load data on component mount
+  useEffect(() => {
+    loadData();
+  }, []);
+
+  const loadData = async () => {
+    try {
+      setLoading(true);
+      const data = await getGoodReceiveNotes().catch(() => []);
+      setData(data || []);
+    } catch (error) {
+      console.error('Error loading GRNs:', error);
+      toast.error("Failed to load GRNs");
+      setData([]);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleAddNew = () => {
     setSelectedGrn(undefined);
@@ -157,64 +72,101 @@ export default function GRNsPage() {
   };
 
   const handleEdit = (grn: GoodsReceiveNote) => {
+    // Check if GRN can be edited based on status
+    if (grn.status === 'completed' || grn.status === 'rejected') {
+      toast.error(`Cannot edit GRN with status "${grn.status}". Only draft and partial GRNs can be edited.`);
+      return;
+    }
+    
     setSelectedGrn(grn);
     setDialogOpen(true);
   };
 
   const handleView = (grn: GoodsReceiveNote) => {
-    // For now, view is the same as edit but we could make it read-only
-    setSelectedGrn(grn);
-    setDialogOpen(true);
+    setViewingGrn(grn);
+    setViewDialogOpen(true);
+  };
+
+  const handlePrint = async (grn: GoodsReceiveNote) => {
+    try {
+      const full = await getGoodReceiveNote(grn.id);
+      const data = full && !full.error ? full : grn;
+      setPrintingGrn(data);
+      setPrintDialogOpen(true);
+    } catch (e) {
+      console.error('Error preparing GRN for print:', e);
+      setPrintingGrn(grn);
+      setPrintDialogOpen(true);
+    }
   };
 
   const handleDeleteClick = (id: string) => {
-    setItemToDeleteId(id);
+    const grn = data.find(g => g.id === id);
+    
+    // Check if GRN can be deleted based on status
+    if (grn?.status === 'completed' || grn?.status === 'rejected') {
+      toast.error(`Cannot delete GRN with status "${grn.status}". Only draft and partial GRNs can be deleted.`);
+      return;
+    }
+    
+    setGrnToDelete(grn);
     setDeleteDialogOpen(true);
   };
 
-  const handleDelete = () => {
-    if (itemToDeleteId) {
-      setData(data.filter((item) => item.id !== itemToDeleteId));
-      toast({
-        title: "Success",
-        description: "Goods receive note deleted successfully",
-      });
+  const handleDelete = async () => {
+    if (grnToDelete) {
+      try {
+        await deleteGoodReceiveNote(grnToDelete.id);
+        toast.success("Goods receive note deleted successfully");
+        loadData();
+      } catch (error) {
+        console.error('Error deleting GRN:', error);
+        toast.error("Failed to delete goods receive note");
+      }
       setDeleteDialogOpen(false);
-      setItemToDeleteId(null);
+      setGrnToDelete(undefined);
     }
   };
 
-  const handleSave = (grn: Partial<GoodsReceiveNote>) => {
-    if (selectedGrn) {
-      // Update existing GRN
-      setData(data.map((item) => (item.id === selectedGrn.id ? { ...item, ...grn } : item)));
-      toast({
-        title: "Success",
-        description: "Goods receive note updated successfully",
-      });
-    } else {
-      // Create new GRN
-      const newGrn: GoodsReceiveNote = {
-        id: Date.now().toString(),
-        grnNumber: grn.grnNumber || "",
-        receivedDate: grn.receivedDate || new Date(),
-        status: grn.status || "pending",
-        receivedBy: grn.receivedBy || "",
-        subtotal: grn.subtotal || 0,
-        taxAmount: grn.taxAmount || 0,
-        totalAmount: grn.totalAmount || 0,
-        notes: grn.notes,
-        items: grn.items || [],
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      };
-      setData([...data, newGrn]);
-      toast({
-        title: "Success",
-        description: "Goods receive note created successfully",
-      });
+  const handleProcessReturn = (grn: GoodsReceiveNote) => {
+    setSelectedReturnGrn(grn);
+    setReturnDialogOpen(true);
+  };
+
+  const handleProcessReturnData = (returnData: any) => {
+    // Handle the return data - this could update the GRN status, create return records, etc.
+    console.log('Processing GRN return:', returnData);
+    
+    toast.success(`Return processed for GRN ${returnData.grnNumber}. Total return amount: ${returnData.returnTotal}`);
+    
+    // Reload data to reflect changes
+    loadData();
+  };
+
+  const handleSave = async (grn: Partial<GoodsReceiveNote>) => {
+    try {
+      if (selectedGrn) {
+        await updateGoodReceiveNote(selectedGrn.id, grn);
+        toast.success("Goods receive note updated successfully");
+      } else {
+        await createGoodReceiveNote(grn);
+        toast.success("Goods receive note created successfully");
+      }
+      setDialogOpen(false);
+      loadData();
+    } catch (error) {
+      console.error('Error saving GRN:', error);
+      toast.error("Failed to save GRN");
     }
   };
+
+  // Filter GRNs based on search term
+  const filteredGRNs = data.filter(grn => 
+    grn.grnNumber?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    grn.purchaseOrder?.orderNumber?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    grn.status?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    grn.receivedByUser?.fullName?.toLowerCase().includes(searchTerm.toLowerCase())
+  );
 
   return (
     <PermissionGuard 
@@ -225,18 +177,18 @@ export default function GRNsPage() {
         <div className="flex items-center justify-between">
           <h1 className="text-2xl font-bold tracking-tight">Goods Receive Notes</h1>
           {canCreateGRN ? (
-            <Button onClick={handleAddNew} className="flex items-center gap-2">
-              <PlusCircle size={18} />
-              New GRN
+            <Button onClick={handleAddNew} className="flex items-center gap-1">
+              <Plus className="h-4 w-4" />
+              Create GRN
             </Button>
           ) : (
             <TooltipProvider>
               <Tooltip>
                 <TooltipTrigger asChild>
                   <span>
-                    <Button disabled className="flex items-center gap-2">
-                      <PlusCircle size={18} />
-                      New GRN
+                    <Button disabled className="flex items-center gap-1">
+                      <Plus className="h-4 w-4" />
+                      Create GRN
                     </Button>
                   </span>
                 </TooltipTrigger>
@@ -248,13 +200,27 @@ export default function GRNsPage() {
           )}
         </div>
 
+        <div className="flex items-center gap-2">
+          <Search className="h-4 w-4 text-gray-400" />
+          <Input
+            placeholder="Search GRNs..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="max-w-sm"
+          />
+        </div>
+
         <GRNTable
-          grns={data}
+          grns={filteredGRNs}
+          loading={loading}
           onView={handleView}
           onEdit={canEditGRN ? handleEdit : undefined}
           onDelete={canDeleteGRN ? handleDeleteClick : undefined}
+          onPrint={handlePrint}
+          onProcessReturn={handleProcessReturn}
           canEdit={canEditGRN}
           canDelete={canDeleteGRN}
+          canProcessReturn={hasPermission('grn_edit')}
         />
 
         <GRNDialog
@@ -264,13 +230,34 @@ export default function GRNsPage() {
           onSave={handleSave}
         />
 
+        <GRNView
+          open={viewDialogOpen}
+          onOpenChange={setViewDialogOpen}
+          grn={viewingGrn}
+        />
+
+        <PrintPreviewDialog
+          open={printDialogOpen}
+          onOpenChange={setPrintDialogOpen}
+          documentType="grn"
+          data={printingGrn}
+        />
+
+        {selectedReturnGrn && (
+          <GRNReturnDialog
+            open={returnDialogOpen}
+            onOpenChange={setReturnDialogOpen}
+            grn={selectedReturnGrn}
+            onProcessReturn={handleProcessReturnData}
+          />
+        )}
+
         <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
           <AlertDialogContent>
             <AlertDialogHeader>
               <AlertDialogTitle>Are you sure?</AlertDialogTitle>
               <AlertDialogDescription>
-                This action cannot be undone. This will permanently delete the
-                goods receive note and all associated data.
+                This action cannot be undone. This will permanently delete the GRN "{grnToDelete?.grnNumber}".
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>

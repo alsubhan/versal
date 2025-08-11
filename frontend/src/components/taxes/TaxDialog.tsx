@@ -31,12 +31,14 @@ import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { toast } from "@/hooks/use-toast";
 import { type Tax } from "@/types/tax";
+import { roundToDecimals } from "@/lib/number-utils";
 
 const formSchema = z.object({
   name: z.string().min(1, "Name is required"),
   rate: z.coerce.number()
     .min(0, "Rate cannot be negative")
-    .max(100, "Rate cannot exceed 100%"),
+    .max(100, "Rate cannot exceed 100%")
+    .transform(val => roundToDecimals(val, 2)), // Round to 2 decimal places
   appliedTo: z.enum(["products", "services", "both"]),
   description: z.string().optional(),
   isActive: z.boolean(),
@@ -67,7 +69,7 @@ export function TaxDialog({ open, onOpenChange, tax, onSubmit }: TaxDialogProps)
     if (tax) {
       form.reset({
         name: tax.name,
-        rate: tax.rate,
+        rate: roundToDecimals(tax.rate, 2), // Ensure proper rounding
         appliedTo: tax.appliedTo,
         description: tax.description || "",
         isActive: tax.isActive,
@@ -138,6 +140,13 @@ export function TaxDialog({ open, onOpenChange, tax, onSubmit }: TaxDialogProps)
                         min={0}
                         max={100}
                         step={0.01}
+                        onBlur={(e) => {
+                          // Round the value on blur to prevent floating-point issues
+                          const value = parseFloat(e.target.value);
+                          if (!isNaN(value)) {
+                            field.onChange(roundToDecimals(value, 2));
+                          }
+                        }}
                       />
                     </FormControl>
                     <FormMessage />

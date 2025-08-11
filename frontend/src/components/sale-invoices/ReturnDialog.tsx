@@ -1,9 +1,8 @@
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -13,12 +12,12 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { type WholesaleBill, type WholesaleBillingItem } from "@/types/wholesale-billing";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { type SaleInvoice, type SaleInvoiceItem } from "@/types/sale-invoice";
 import { type CreditNote, type CreditNoteItem } from "@/types/credit-note";
 import { formatCurrency } from "@/lib/utils";
 import { useCurrencyStore } from "@/stores/currencyStore";
 import { toast } from "@/hooks/use-toast";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 // Standard return/exchange reasons
 const returnReasons = [
@@ -37,119 +36,85 @@ const returnReasons = [
 interface ReturnDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  bill: WholesaleBill;
+  invoice: SaleInvoice;
   onCreateCreditNote: (creditNote: Partial<CreditNote>) => void;
 }
 
 export function ReturnDialog({
   open,
   onOpenChange,
-  bill,
+  invoice,
   onCreateCreditNote,
 }: ReturnDialogProps) {
   const { currency } = useCurrencyStore();
-  const [returnItems, setReturnItems] = useState<{
-    itemId: string;
-    quantity: number;
-    reason: string;
-    customReason: string;
-    returnType: "return" | "exchange";
-  }[]>(
-    bill.items.map(item => ({
-      itemId: item.id,
-      quantity: 0,
-      reason: "",
-      customReason: "",
+  const [returnItems, setReturnItems] = useState<any[]>([]);
+  const [returnReason, setReturnReason] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [creditNoteNumber, setCreditNoteNumber] = useState<string>("");
+
+  useEffect(() => {
+    if (invoice && invoice.items) {
+      // Initialize return items with 0 quantities
+      const initialReturnItems = invoice.items.map(item => ({
+        ...item,
+        returnQuantity: 0,
+        returnReason: "",
       returnType: "return" as const,
-    }))
-  );
-  
-  const [creditNoteNumber, setCreditNoteNumber] = useState<string>(
-    `CN-${Date.now().toString().substring(8)}`
-  );
-  
-  const [notes, setNotes] = useState<string>("");
-  const [activeTab, setActiveTab] = useState<string>("return");
-
-  const handleQuantityChange = (itemId: string, value: number) => {
-    setReturnItems(prev => 
-      prev.map(item => 
-        item.itemId === itemId 
-          ? { ...item, quantity: value } 
-          : item
-      )
-    );
-  };
-
-  const handleReasonChange = (itemId: string, value: string) => {
-    setReturnItems(prev => 
-      prev.map(item => 
-        item.itemId === itemId 
-          ? { ...item, reason: value, customReason: value === "Other" ? item.customReason : "" } 
-          : item
-      )
-    );
-  };
-
-  const handleCustomReasonChange = (itemId: string, value: string) => {
-    setReturnItems(prev => 
-      prev.map(item => 
-        item.itemId === itemId 
-          ? { ...item, customReason: value } 
-          : item
-      )
-    );
-  };
-
-  const handleReturnTypeChange = (itemId: string, value: "return" | "exchange") => {
-    setReturnItems(prev => 
-      prev.map(item => 
-        item.itemId === itemId 
-          ? { ...item, returnType: value } 
-          : item
-      )
-    );
-  };
-
-  const handleSubmit = () => {
-    // Validate
-    const itemsToProcess = returnItems.filter(item => item.quantity > 0);
-    
-    if (itemsToProcess.length === 0) {
-      toast({
-        title: "Error",
-        description: "Please select at least one item to return or exchange",
-        variant: "destructive",
-      });
-      return;
+      }));
+      setReturnItems(initialReturnItems);
+      
+      // Generate credit note number
+      setCreditNoteNumber(`CN-${Date.now().toString().substring(8)}`);
     }
-    
-    for (const item of itemsToProcess) {
-      if (!item.reason) {
+  }, [invoice]);
+
+  const handleReturnQuantityChange = (index: number, value: number) => {
+    const newReturnItems = [...returnItems];
+    newReturnItems[index].returnQuantity = Math.max(0, Math.min(value, newReturnItems[index].quantity || 0));
+    setReturnItems(newReturnItems);
+  };
+
+  const handleReturnReasonChange = (index: number, reason: string) => {
+    const newReturnItems = [...returnItems];
+    newReturnItems[index].returnReason = reason;
+    setReturnItems(newReturnItems);
+  };
+
+  const handleReturnTypeChange = (index: number, returnType: "return" | "exchange") => {
+    const newReturnItems = [...returnItems];
+    newReturnItems[index].returnType = returnType;
+    setReturnItems(newReturnItems);
+  };
+
+  const calculateReturnTotal = () => {
+    return returnItems.reduce((total, item) => {
+      const itemTotal = (item.returnQuantity || 0) * (item.unitPrice || 0);
+      return total + itemTotal;
+    }, 0);
+  };
+
+  const handleProcessReturn = async () => {
+    try {
+      setLoading(true);
+      
+      // Filter items that have return quantities
+      const itemsToReturn = returnItems.filter(item => (item.returnQuantity || 0) > 0);
+      
+      if (itemsToReturn.length === 0) {
         toast({
           title: "Error",
-          description: "Please provide a reason for all returns/exchanges",
+          description: "Please specify quantities to return for at least one item.",
           variant: "destructive",
         });
         return;
       }
       
-      // Check if a custom reason is needed
-      if (item.reason === "Other" && !item.customReason) {
+      // Validate return reasons
+      for (const item of itemsToReturn) {
+        if (!item.returnReason) {
         toast({
           title: "Error",
-          description: "Please provide a custom reason when 'Other' is selected",
-          variant: "destructive",
-        });
-        return;
-      }
-      
-      // Check if return quantity exceeds original quantity
-      const originalItem = bill.items.find(billItem => billItem.id === item.itemId);
-      if (originalItem && item.quantity > (originalItem.quantity || 0)) {
-        toast({
-          title: "Error",
-          description: `Return quantity cannot exceed original quantity for ${originalItem.productName}`,
+            description: `Please provide a return reason for ${item.productName}`,
           variant: "destructive",
         });
         return;
@@ -157,143 +122,147 @@ export function ReturnDialog({
     }
     
     // Create credit note items
-    const creditNoteItems: Partial<CreditNoteItem>[] = itemsToProcess.map(returnItem => {
-      const originalItem = bill.items.find(item => item.id === returnItem.itemId);
-      if (!originalItem) return null;
-      
-      const finalReason = returnItem.reason === "Other" && returnItem.customReason 
-        ? returnItem.customReason 
-        : returnItem.reason;
-      
+      const creditNoteItems: Partial<CreditNoteItem>[] = itemsToReturn.map(returnItem => {
       return {
-        billItemId: originalItem.id,
-        productId: originalItem.productId,
-        productName: originalItem.productName,
-        skuCode: originalItem.skuCode,
-        quantity: returnItem.quantity,
-        unitPrice: originalItem.unitPrice,
-        amount: originalItem.unitPrice * returnItem.quantity,
-        reason: `${returnItem.returnType.toUpperCase()}: ${finalReason}`,
-        discount: originalItem.discount,
-        tax: originalItem.tax,
-        total: (originalItem.unitPrice * returnItem.quantity) * 
-               (1 - (originalItem.discount / 100)) * 
-               (1 + (originalItem.tax / 100)),
-      };
-    }).filter(item => item !== null) as Partial<CreditNoteItem>[];
-    
-    // Calculate totals
-    const subtotal = creditNoteItems.reduce((sum, item) => sum + (item.amount || 0), 0);
-    const taxAmount = creditNoteItems.reduce((sum, item) => {
-      const itemSubtotal = item.amount || 0;
-      const itemDiscount = itemSubtotal * ((item.discount || 0) / 100);
-      return sum + ((itemSubtotal - itemDiscount) * ((item.tax || 0) / 100));
-    }, 0);
-    const discountAmount = creditNoteItems.reduce((sum, item) => {
-      return sum + ((item.amount || 0) * ((item.discount || 0) / 100));
-    }, 0);
-    const totalAmount = subtotal - discountAmount + taxAmount;
-    
-    // Create credit note
+          productId: returnItem.productId,
+          productName: returnItem.productName,
+          skuCode: returnItem.skuCode,
+          hsnCode: returnItem.hsnCode,
+          quantity: returnItem.returnQuantity,
+          unitPrice: returnItem.unitPrice,
+          discount: returnItem.discount,
+          tax: returnItem.tax,
+          total: returnItem.returnQuantity * returnItem.unitPrice,
+          saleTaxType: returnItem.saleTaxType,
+          unitAbbreviation: returnItem.unitAbbreviation,
+        };
+      });
+
     const creditNote: Partial<CreditNote> = {
       creditNoteNumber,
-      billId: bill.id,
-      customerId: bill.customerId,
-      customerName: bill.customer.name,
-      issueDate: new Date(),
-      status: "issued",
-      totalAmount,
-      notes,
-      subtotal,
-      taxAmount,
-      discountAmount,
+        salesOrderId: invoice.salesOrderId,
+        customerId: invoice.customerId,
+        creditDate: new Date(),
+        reason: "return",
+        reasonDescription: returnReason,
+        status: "draft",
+        subtotal: calculateReturnTotal(),
+        taxAmount: 0,
+        discountAmount: 0,
+        totalAmount: calculateReturnTotal(),
+        notes: `Return/Exchange for Invoice #${invoice.invoiceNumber}`,
       items: creditNoteItems as CreditNoteItem[],
     };
     
     onCreateCreditNote(creditNote);
     onOpenChange(false);
     
+      // Reset form
+      setReturnItems([]);
+      setReturnReason("");
+      setCreditNoteNumber("");
+      
+      toast({
+        title: "Credit Note Created",
+        description: `Credit note ${creditNoteNumber} has been created successfully.`,
+      });
+    } catch (error) {
+      console.error('Error processing return:', error);
     toast({
-      title: "Success",
-      description: `Credit note ${creditNoteNumber} created successfully`,
-    });
+        title: "Error",
+        description: "Failed to process return",
+        variant: "destructive",
+      });
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const getTotalReturnAmount = () => {
-    return returnItems
-      .filter(ri => ri.quantity > 0)
-      .reduce((sum, ri) => {
-        const originalItem = bill.items.find(item => item.id === ri.itemId);
-        if (!originalItem) return sum;
-        const itemSubtotal = originalItem.unitPrice * ri.quantity;
-        const itemDiscount = itemSubtotal * (originalItem.discount / 100);
-        const itemTax = (itemSubtotal - itemDiscount) * (originalItem.tax / 100);
-        return sum + (itemSubtotal - itemDiscount + itemTax);
-      }, 0);
-  };
+  if (!invoice) return null;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>Process Return/Exchange</DialogTitle>
-          <DialogDescription>
-            Select items from bill #{bill.billNumber} to return or exchange
-          </DialogDescription>
+          <DialogTitle>Process Sale Return - {invoice.invoiceNumber}</DialogTitle>
         </DialogHeader>
         
-        <Tabs value={activeTab} onValueChange={setActiveTab} className="mt-4">
-          <TabsList className="grid grid-cols-2 w-full">
-            <TabsTrigger value="return">Return/Exchange</TabsTrigger>
-            <TabsTrigger value="summary">Summary</TabsTrigger>
-          </TabsList>
-          
-          <TabsContent value="return" className="space-y-6 py-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="creditNoteNumber">Credit Note Number</Label>
+        <div className="space-y-6">
+          {/* Invoice Summary */}
+          <div className="bg-gray-50 p-4 rounded-lg">
+            <h3 className="font-semibold mb-2">Invoice Summary</h3>
+            <div className="grid grid-cols-2 gap-4 text-sm">
+              <div>
+                <span className="font-medium">Invoice Number:</span> {invoice.invoiceNumber}
+              </div>
+              <div>
+                <span className="font-medium">Invoice Date:</span> {invoice.invoiceDate ? new Date(invoice.invoiceDate).toLocaleDateString() : 'N/A'}
+              </div>
+              <div>
+                <span className="font-medium">Customer:</span> {invoice.customer?.name || 'N/A'}
+              </div>
+              <div>
+                <span className="font-medium">Total Amount:</span> {formatCurrency(invoice.totalAmount || 0, currency)}
+              </div>
+            </div>
+          </div>
+
+          {/* Credit Note Number */}
+          <div>
+            <Label htmlFor="creditNoteNumber" className="text-sm font-medium text-gray-700">
+              Credit Note Number
+            </Label>
                 <Input
                   id="creditNoteNumber"
                   value={creditNoteNumber}
                   onChange={(e) => setCreditNoteNumber(e.target.value)}
-                  required
+              className="mt-1"
+              placeholder="Enter credit note number"
                 />
-              </div>
             </div>
             
-            <div className="border rounded-md">
-              <div className="grid grid-cols-12 gap-2 bg-gray-100 p-2 border-b font-medium">
-                <div className="col-span-3">Product</div>
-                <div className="col-span-1">Orig Qty</div>
-                <div className="col-span-1">Return</div>
-                <div className="col-span-2">Type</div>
-                <div className="col-span-3">Reason</div>
-                <div className="col-span-2">Unit Price</div>
+          {/* Return Items */}
+          <div>
+            <h3 className="font-semibold mb-4">Select Items to Return</h3>
+            <div className="border rounded-lg overflow-hidden">
+              <Table>
+                <TableHeader>
+                  <TableRow className="bg-gray-50">
+                    <TableHead>Product</TableHead>
+                    <TableHead>Original Qty</TableHead>
+                    <TableHead>Return Qty</TableHead>
+                    <TableHead>Type</TableHead>
+                    <TableHead>Unit Price</TableHead>
+                    <TableHead>Return Total</TableHead>
+                    <TableHead>Return Reason</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {returnItems.map((item, index) => (
+                    <TableRow key={item.id || index}>
+                      <TableCell>
+                        <div>
+                          <div className="font-medium">{item.productName}</div>
+                          <div className="text-sm text-gray-500">{item.skuCode}</div>
               </div>
-              
-              {bill.items.map((item) => (
-                <div key={item.id} className="grid grid-cols-12 gap-2 p-2 border-b">
-                  <div className="col-span-3">{item.productName}</div>
-                  <div className="col-span-1">{item.quantity}</div>
-                  <div className="col-span-1">
+                      </TableCell>
+                      <TableCell>{item.quantity || 0}</TableCell>
+                      <TableCell>
                     <Input
                       type="number"
                       min="0"
-                      max={item.quantity}
-                      value={returnItems.find(ri => ri.itemId === item.id)?.quantity || 0}
-                      onChange={(e) => handleQuantityChange(item.id, parseInt(e.target.value) || 0)}
-                      className="w-full"
-                    />
-                  </div>
-                  <div className="col-span-2">
+                          max={item.quantity || 0}
+                          value={item.returnQuantity || 0}
+                          onChange={(e) => handleReturnQuantityChange(index, parseInt(e.target.value) || 0)}
+                          className="w-20"
+                        />
+                      </TableCell>
+                      <TableCell>
                     <Select
-                      value={returnItems.find(ri => ri.itemId === item.id)?.returnType || "return"}
-                      onValueChange={(value) => handleReturnTypeChange(
-                        item.id, 
-                        value as "return" | "exchange"
-                      )}
-                    >
-                      <SelectTrigger className="h-9">
+                          value={item.returnType || "return"}
+                          onValueChange={(value) => handleReturnTypeChange(index, value as "return" | "exchange")}
+                        >
+                          <SelectTrigger className="w-24">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
@@ -301,14 +270,18 @@ export function ReturnDialog({
                         <SelectItem value="exchange">Exchange</SelectItem>
                       </SelectContent>
                     </Select>
-                  </div>
-                  <div className="col-span-3">
+                      </TableCell>
+                      <TableCell>{formatCurrency(item.unitPrice || 0, currency)}</TableCell>
+                      <TableCell>
+                        {formatCurrency((item.returnQuantity || 0) * (item.unitPrice || 0), currency)}
+                      </TableCell>
+                      <TableCell>
                     <Select
-                      value={returnItems.find(ri => ri.itemId === item.id)?.reason || ""}
-                      onValueChange={(value) => handleReasonChange(item.id, value)}
-                      disabled={!returnItems.find(ri => ri.itemId === item.id)?.quantity}
-                    >
-                      <SelectTrigger className="h-9">
+                          value={item.returnReason || ""}
+                          onValueChange={(value) => handleReturnReasonChange(index, value)}
+                          disabled={!item.returnQuantity}
+                        >
+                          <SelectTrigger className="w-32">
                         <SelectValue placeholder="Select reason" />
                       </SelectTrigger>
                       <SelectContent>
@@ -317,81 +290,48 @@ export function ReturnDialog({
                         ))}
                       </SelectContent>
                     </Select>
-                    
-                    {returnItems.find(ri => ri.itemId === item.id)?.reason === "Other" && (
-                      <Input
-                        placeholder="Custom reason"
-                        value={returnItems.find(ri => ri.itemId === item.id)?.customReason || ""}
-                        onChange={(e) => handleCustomReasonChange(item.id, e.target.value)}
-                        className="mt-2"
-                      />
-                    )}
-                  </div>
-                  <div className="col-span-2 flex items-center">
-                    {formatCurrency(item.unitPrice, currency)}
-                  </div>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
                 </div>
-              ))}
             </div>
             
-            <div className="space-y-2">
-              <Label htmlFor="notes">Additional Notes</Label>
+          {/* General Return Reason */}
+          <div>
+            <Label htmlFor="returnReason" className="text-sm font-medium text-gray-700">
+              General Return Reason
+            </Label>
               <Textarea
-                id="notes"
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
+              id="returnReason"
+              value={returnReason}
+              onChange={(e) => setReturnReason(e.target.value)}
+              placeholder="Enter general reason for return..."
+              className="mt-1"
                 rows={3}
               />
             </div>
-          </TabsContent>
-          
-          <TabsContent value="summary" className="space-y-6 py-4">
-            <div className="border rounded-md p-4">
-              <h3 className="font-medium text-lg mb-4">Return Summary</h3>
-              
-              <div className="space-y-4">
-                <div className="grid grid-cols-3 gap-2 font-medium border-b pb-2">
-                  <div>Product</div>
-                  <div>Quantity</div>
-                  <div>Amount</div>
-                </div>
-                
-                {returnItems.filter(ri => ri.quantity > 0).map(ri => {
-                  const originalItem = bill.items.find(item => item.id === ri.itemId);
-                  if (!originalItem || ri.quantity <= 0) return null;
-                  
-                  const itemAmount = originalItem.unitPrice * ri.quantity;
-                  return (
-                    <div key={ri.itemId} className="grid grid-cols-3 gap-2 border-b pb-2">
-                      <div>{originalItem.productName}</div>
-                      <div>{ri.quantity} {ri.returnType === "exchange" ? "(Exchange)" : "(Return)"}</div>
-                      <div>{formatCurrency(itemAmount, currency)}</div>
-                    </div>
-                  );
-                })}
-                
-                <div className="flex justify-between font-medium pt-2">
-                  <span>Total Return Amount:</span>
-                  <span>{formatCurrency(getTotalReturnAmount(), currency)}</span>
+
+          {/* Return Summary */}
+          <div className="bg-blue-50 p-4 rounded-lg">
+            <h3 className="font-semibold mb-2">Return Summary</h3>
+            <div className="flex justify-between items-center">
+              <span className="text-lg font-medium">Total Return Amount:</span>
+              <span className="text-lg font-bold text-blue-600">
+                {formatCurrency(calculateReturnTotal(), currency)}
+              </span>
                 </div>
               </div>
             </div>
-            
-            <div className="border rounded-md p-4">
-              <h3 className="font-medium text-lg mb-2">Credit Note Details</h3>
-              <p>Credit Note Number: {creditNoteNumber}</p>
-              <p>Issue Date: {new Date().toLocaleDateString()}</p>
-              <p>Customer: {bill.customer.name}</p>
-              <p>Original Bill #: {bill.billNumber}</p>
-            </div>
-          </TabsContent>
-        </Tabs>
         
         <DialogFooter>
-          <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button onClick={handleSubmit}>Process & Create Credit Note</Button>
+          <Button onClick={handleProcessReturn} disabled={loading}>
+            {loading ? "Processing..." : "Process Return & Create Credit Note"}
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

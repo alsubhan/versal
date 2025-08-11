@@ -1,0 +1,49 @@
+-- Live Database Schema Summary
+-- Generated at: 2025-08-07T22:37:06.579829
+-- Project ID: bmyaefeddtcbnmpzvxmf
+-- Source: Live Supabase Database (API Access)
+
+-- Tables Found:
+--   profiles
+--     Columns: 7
+--   roles
+--     Columns: 6
+--   customers
+--     Columns: 14
+--   suppliers
+--     Columns: 14
+--   products
+--     Columns: 37
+--   categories
+--     Columns: 7
+--   units
+--     Columns: 7
+--   sales_orders
+--     Columns: 15
+--   sales_order_items
+--     Columns: 16
+--   sale_invoices
+--     Columns: 25
+--   sale_invoice_items
+--     Columns: 17
+--   purchase_orders
+--     Columns: 15
+--   purchase_order_items
+--     Columns: 16
+--   good_receive_notes
+--     Columns: 19
+--   good_receive_note_items
+--     Columns: 25
+--   credit_notes
+--     Columns: 27
+--   credit_note_items
+--     Columns: 25
+--   inventory_transactions
+--     Columns: 9
+--   system_settings
+--     Columns: 9
+
+-- Note: Complete object extraction requires:
+-- 1. Supabase CLI: supabase db pull
+-- 2. Direct PostgreSQL connection
+-- 3. Database admin privileges

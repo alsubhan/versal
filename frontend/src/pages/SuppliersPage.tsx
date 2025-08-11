@@ -1,7 +1,8 @@
 
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Plus } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Plus, Search } from "lucide-react";
 import { SupplierDialog } from "@/components/suppliers/SupplierDialog";
 import { SupplierTable } from "@/components/suppliers/SupplierTable";
 import { type Supplier } from "@/types/supplier";
@@ -14,6 +15,8 @@ import { PermissionGuard } from "@/components/ui/permission-guard";
 const SuppliersPage = () => {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingSupplier, setEditingSupplier] = useState<Supplier | null>(null);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [refreshKey, setRefreshKey] = useState(0);
   const { hasPermission } = useAuth();
   const canCreateSuppliers = hasPermission('suppliers_create');
   
@@ -25,6 +28,10 @@ const SuppliersPage = () => {
   const handleEditSupplier = (supplier: Supplier) => {
     setEditingSupplier(supplier);
     setIsDialogOpen(true);
+  };
+
+  const handleRefresh = () => {
+    setRefreshKey(prev => prev + 1);
   };
 
   const handleSupplierSubmit = async (supplier: Supplier) => {
@@ -41,7 +48,7 @@ const SuppliersPage = () => {
       }
       setIsDialogOpen(false);
       // Refresh the table
-      window.location.reload();
+      handleRefresh();
     } catch (error: any) {
       console.error('Error saving supplier:', error);
       if (error.status === 409) {
@@ -90,7 +97,22 @@ const SuppliersPage = () => {
         )}
       </div>
       
-      <SupplierTable onEdit={handleEditSupplier} />
+      <div className="flex items-center gap-2">
+        <Search className="h-4 w-4 text-gray-400" />
+        <Input
+          placeholder="Search suppliers..."
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+          className="max-w-sm"
+        />
+      </div>
+      
+      <SupplierTable 
+        key={refreshKey}
+        onEdit={handleEditSupplier} 
+        searchTerm={searchTerm} 
+        onRefresh={handleRefresh}
+      />
       
       <SupplierDialog 
         open={isDialogOpen} 

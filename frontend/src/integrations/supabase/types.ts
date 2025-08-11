@@ -163,7 +163,7 @@ export type Database = {
           refund_processed: boolean | null
           refund_reference: string | null
           sales_order_id: string | null
-          status: string | null
+          status: Database["public"]["Enums"]["credit_note_status"] | null
           subtotal: number | null
           tax_amount: number | null
           total_amount: number | null
@@ -191,7 +191,7 @@ export type Database = {
           refund_processed?: boolean | null
           refund_reference?: string | null
           sales_order_id?: string | null
-          status?: string | null
+          status?: Database["public"]["Enums"]["credit_note_status"] | null
           subtotal?: number | null
           tax_amount?: number | null
           total_amount?: number | null
@@ -219,7 +219,7 @@ export type Database = {
           refund_processed?: boolean | null
           refund_reference?: string | null
           sales_order_id?: string | null
-          status?: string | null
+          status?: Database["public"]["Enums"]["credit_note_status"] | null
           subtotal?: number | null
           tax_amount?: number | null
           total_amount?: number | null
@@ -268,8 +268,8 @@ export type Database = {
           expiry_date: string | null
           id: string
           reference_number: string | null
-          sales_order_id: string | null
-          transaction_type: string
+          sale_invoice_id: string | null
+          transaction_type: Database["public"]["Enums"]["credit_transaction_type"]
         }
         Insert: {
           amount: number
@@ -282,8 +282,8 @@ export type Database = {
           expiry_date?: string | null
           id?: string
           reference_number?: string | null
-          sales_order_id?: string | null
-          transaction_type: string
+          sale_invoice_id?: string | null
+          transaction_type: Database["public"]["Enums"]["credit_transaction_type"]
         }
         Update: {
           amount?: number
@@ -296,8 +296,8 @@ export type Database = {
           expiry_date?: string | null
           id?: string
           reference_number?: string | null
-          sales_order_id?: string | null
-          transaction_type?: string
+          sale_invoice_id?: string | null
+          transaction_type?: Database["public"]["Enums"]["credit_transaction_type"]
         }
         Relationships: [
           {
@@ -322,10 +322,10 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
-            foreignKeyName: "credit_transactions_sales_order_id_fkey"
-            columns: ["sales_order_id"]
+            foreignKeyName: "credit_transactions_sale_invoice_id_fkey"
+            columns: ["sale_invoice_id"]
             isOneToOne: false
-            referencedRelation: "sales_orders"
+            referencedRelation: "sale_invoices"
             referencedColumns: ["id"]
           },
         ]
@@ -505,7 +505,7 @@ export type Database = {
           quality_check_status: string | null
           received_by: string
           received_date: string
-          status: string | null
+          status: Database["public"]["Enums"]["grn_status"] | null
           supplier_id: string
           total_received_items: number | null
           updated_at: string | null
@@ -520,7 +520,7 @@ export type Database = {
           quality_check_status?: string | null
           received_by: string
           received_date?: string
-          status?: string | null
+          status?: Database["public"]["Enums"]["grn_status"] | null
           supplier_id: string
           total_received_items?: number | null
           updated_at?: string | null
@@ -535,7 +535,7 @@ export type Database = {
           quality_check_status?: string | null
           received_by?: string
           received_date?: string
-          status?: string | null
+          status?: Database["public"]["Enums"]["grn_status"] | null
           supplier_id?: string
           total_received_items?: number | null
           updated_at?: string | null
@@ -900,7 +900,7 @@ export type Database = {
           notes: string | null
           order_date: string
           order_number: string
-          status: Database["public"]["Enums"]["invoice_status"] | null
+          status: Database["public"]["Enums"]["so_status"] | null
           subtotal: number | null
           tax_amount: number | null
           total_amount: number | null
@@ -916,7 +916,7 @@ export type Database = {
           notes?: string | null
           order_date?: string
           order_number: string
-          status?: Database["public"]["Enums"]["invoice_status"] | null
+          status?: Database["public"]["Enums"]["so_status"] | null
           subtotal?: number | null
           tax_amount?: number | null
           total_amount?: number | null
@@ -932,7 +932,7 @@ export type Database = {
           notes?: string | null
           order_date?: string
           order_number?: string
-          status?: Database["public"]["Enums"]["invoice_status"] | null
+          status?: Database["public"]["Enums"]["so_status"] | null
           subtotal?: number | null
           tax_amount?: number | null
           total_amount?: number | null
@@ -951,6 +951,163 @@ export type Database = {
             columns: ["customer_id"]
             isOneToOne: false
             referencedRelation: "customers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      sale_invoices: {
+        Row: {
+          affects_inventory: boolean | null
+          amount_due: number | null
+          amount_paid: number | null
+          created_at: string | null
+          created_by: string | null
+          credit_note_id: string | null
+          customer_id: string
+          discount_amount: number | null
+          due_date: string | null
+          id: string
+          inventory_processed: boolean | null
+          invoice_date: string
+          invoice_number: string
+          is_direct: boolean | null
+          notes: string | null
+          payment_date: string | null
+          payment_method: string | null
+          payment_reference: string | null
+          sales_order_id: string | null
+          status: Database["public"]["Enums"]["invoice_status"] | null
+          subtotal: number | null
+          tax_amount: number | null
+          total_amount: number | null
+          updated_at: string | null
+        }
+        Insert: {
+          affects_inventory?: boolean | null
+          amount_due?: number | null
+          amount_paid?: number | null
+          created_at?: string | null
+          created_by?: string | null
+          credit_note_id?: string | null
+          customer_id: string
+          discount_amount?: number | null
+          due_date?: string | null
+          id?: string
+          inventory_processed?: boolean | null
+          invoice_date?: string
+          invoice_number: string
+          is_direct?: boolean | null
+          notes?: string | null
+          payment_date?: string | null
+          payment_method?: string | null
+          payment_reference?: string | null
+          sales_order_id?: string | null
+          status?: Database["public"]["Enums"]["invoice_status"] | null
+          subtotal?: number | null
+          tax_amount?: number | null
+          total_amount?: number | null
+          updated_at?: string | null
+        }
+        Update: {
+          affects_inventory?: boolean | null
+          amount_due?: number | null
+          amount_paid?: number | null
+          created_at?: string | null
+          created_by?: string | null
+          credit_note_id?: string | null
+          customer_id?: string
+          discount_amount?: number | null
+          due_date?: string | null
+          id?: string
+          inventory_processed?: boolean | null
+          invoice_date?: string
+          invoice_number?: string
+          is_direct?: boolean | null
+          notes?: string | null
+          payment_date?: string | null
+          payment_method?: string | null
+          payment_reference?: string | null
+          sales_order_id?: string | null
+          status?: Database["public"]["Enums"]["invoice_status"] | null
+          subtotal?: number | null
+          tax_amount?: number | null
+          total_amount?: number | null
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "sale_invoices_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sale_invoices_customer_id_fkey"
+            columns: ["customer_id"]
+            isOneToOne: false
+            referencedRelation: "customers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sale_invoices_sales_order_id_fkey"
+            columns: ["sales_order_id"]
+            isOneToOne: false
+            referencedRelation: "sales_orders"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      sale_invoice_items: {
+        Row: {
+          created_at: string | null
+          discount: number | null
+          id: string
+          invoice_id: string | null
+          product_id: string | null
+          quantity: number
+          tax: number | null
+          total: number | null
+          unit_price: number
+          updated_at: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          discount?: number | null
+          id?: string
+          invoice_id?: string | null
+          product_id?: string | null
+          quantity: number
+          tax?: number | null
+          total?: number | null
+          unit_price: number
+          updated_at?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          discount?: number | null
+          id?: string
+          invoice_id?: string | null
+          product_id?: string | null
+          quantity?: number
+          tax?: number | null
+          total?: number | null
+          unit_price?: number
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "sale_invoice_items_invoice_id_fkey"
+            columns: ["invoice_id"]
+            isOneToOne: false
+            referencedRelation: "sale_invoices"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sale_invoice_items_product_id_fkey"
+            columns: ["product_id"]
+            isOneToOne: false
+            referencedRelation: "products"
             referencedColumns: ["id"]
           },
         ]
@@ -1268,9 +1425,13 @@ export type Database = {
     }
     Enums: {
       customer_type: "retail" | "wholesale" | "distributor"
-      invoice_status: "draft" | "sent" | "paid" | "overdue" | "cancelled"
+      grn_status: "draft" | "partial" | "completed" | "rejected"
+      credit_note_status: "draft" | "pending" | "approved" | "processed" | "cancelled"
+      invoice_status: "draft" | "sent" | "partial" | "paid" | "overdue" | "cancelled"
       order_status: "draft" | "pending" | "approved" | "received" | "cancelled"
-      transaction_type: "purchase" | "sale" | "adjustment" | "transfer"
+      so_status: "draft" | "pending" | "approved" | "sent" | "partial" | "fulfilled" | "overdue" | "cancelled"
+                      transaction_type: "purchase" | "sale" | "adjustment" | "transfer"
+                credit_transaction_type: "credit_issued" | "credit_used" | "credit_expired" | "credit_adjusted" | "invoice_credit_used" | "invoice_credit_adjusted"
       user_role: "admin" | "manager" | "staff"
     }
     CompositeTypes: {

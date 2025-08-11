@@ -25,6 +25,42 @@ export function formatDate(date: Date | string | null | undefined): string {
   }
 }
 
+// Rounding utility function that applies system settings
+export function applyRounding(
+  value: number, 
+  roundingMethod: string = 'no_rounding', 
+  roundingPrecision: string = '0.01'
+): number {
+  const precision = parseFloat(roundingPrecision);
+  
+  if (roundingMethod === 'no_rounding') {
+    return value;
+  }
+  
+  // Convert to precision units (e.g., if precision is 0.01, multiply by 100)
+  const precisionUnits = 1 / precision;
+  const valueInUnits = value * precisionUnits;
+  
+  let roundedUnits: number;
+  
+  switch (roundingMethod) {
+    case 'nearest':
+      roundedUnits = Math.round(valueInUnits);
+      break;
+    case 'up':
+      roundedUnits = Math.ceil(valueInUnits);
+      break;
+    case 'down':
+      roundedUnits = Math.floor(valueInUnits);
+      break;
+    default:
+      return value; // No rounding
+  }
+  
+  // Convert back to original scale
+  return roundedUnits / precisionUnits;
+}
+
 // Currency formatter with improved support for INR
 export function formatCurrency(amount: number, currency: string = "INR"): string {
   const currencyConfig = currencies.find(c => c.code === currency) || currencies[0];

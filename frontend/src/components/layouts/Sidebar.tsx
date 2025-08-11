@@ -92,12 +92,12 @@ const sidebarLinks = [{
   icon: ClipboardCheck,
   permission: 'grn_view'
 }, {
-  name: "Sale Orders",
+  name: "Sales Orders",
   href: "/sale-orders",
   icon: FileText,
   permission: 'sale_orders_view'
 }, {
-  name: "Sale Invoices",
+  name: "Sales Invoices",
   href: "/sale-invoices",
   icon: Receipt,
   permission: 'sale_invoices_view'

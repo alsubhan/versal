@@ -1,9 +1,11 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
-import { PlusCircle } from "lucide-react";
-import { type WholesaleOrder } from "@/types/wholesale-order";
+import { Input } from "@/components/ui/input";
+import { PlusCircle, Search } from "lucide-react";
+import { type SalesOrder } from "@/types/sales-order";
 import { SaleOrderTable } from "@/components/sale-orders/SaleOrderTable";
 import { SaleOrderDialog } from "@/components/sale-orders/SaleOrderDialog";
+import { SaleOrderView } from "@/components/sale-orders/SaleOrderView";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -14,258 +16,142 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { toast } from "@/hooks/use-toast";
+import { toast } from "sonner";
 import { type Customer } from "@/types/customer";
 import { useAuth } from "@/hooks/useAuth";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Lock } from "lucide-react";
 import { PermissionGuard } from "@/components/ui/permission-guard";
-
-// Sample data for demonstration
-const sampleOrders: WholesaleOrder[] = [
-  {
-    id: "1",
-    orderNumber: "WS-0001",
-    customerId: "1",
-    customer: {
-      id: "1",
-      name: "ABC Corporation",
-      email: "info@abccorp.com",
-      phone: "555-1234",
-      billingAddress: {
-        street: "123 Main St",
-        city: "New York",
-        state: "NY",
-        zipCode: "10001",
-        country: "USA"
-      },
-      taxId: "TAX123456",
-      notes: "Premium customer",
-      creditLimit: 10000,
-      createdAt: new Date(),
-      updatedAt: new Date()
-    },
-    orderDate: new Date(),
-    deliveryDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 days from now
-    status: "confirmed",
-    subtotal: 1500,
-    taxAmount: 150,
-    discountAmount: 50,
-    shippingAmount: 25,
-    totalAmount: 1625,
-    notes: "Please deliver during business hours",
-    items: [
-      {
-        id: "1",
-        orderId: "1",
-        productId: "1",
-        productName: "Product One",
-        skuCode: "PRD-001",
-        quantity: 10,
-        unitPrice: 150,
-        discount: 5,
-        tax: 10,
-        total: 1625,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      }
-    ],
-    createdAt: new Date(),
-    updatedAt: new Date(),
-  },
-  {
-    id: "2",
-    orderNumber: "WS-0002",
-    customerId: "2",
-    customer: {
-      id: "2",
-      name: "XYZ Limited",
-      email: "info@xyzlimited.com",
-      phone: "555-5678",
-      billingAddress: {
-        street: "456 Market St",
-        city: "San Francisco",
-        state: "CA",
-        zipCode: "94103",
-        country: "USA"
-      },
-      taxId: "TAX789012",
-      notes: "New customer",
-      creditLimit: 5000,
-      createdAt: new Date(),
-      updatedAt: new Date()
-    },
-    orderDate: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000), // 3 days ago
-    status: "processing",
-    subtotal: 750,
-    taxAmount: 75,
-    discountAmount: 0,
-    shippingAmount: 15,
-    totalAmount: 840,
-    notes: "",
-    items: [
-      {
-        id: "2",
-        orderId: "2",
-        productId: "2",
-        productName: "Product Two",
-        skuCode: "PRD-002",
-        quantity: 5,
-        unitPrice: 150,
-        discount: 0,
-        tax: 10,
-        total: 825,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      }
-    ],
-    createdAt: new Date(),
-    updatedAt: new Date(),
-  },
-];
-
-// Sample customers for demonstration
-const sampleCustomers = [
-  { 
-    id: "1", 
-    name: "ABC Corporation",
-    email: "info@abccorp.com",
-    phone: "555-1234",
-    billingAddress: {
-      street: "123 Main St",
-      city: "New York",
-      state: "NY",
-      zipCode: "10001",
-      country: "USA"
-    },
-    createdAt: new Date(),
-    updatedAt: new Date()
-  },
-  { 
-    id: "2", 
-    name: "XYZ Limited",
-    email: "info@xyzlimited.com",
-    phone: "555-5678",
-    billingAddress: {
-      street: "456 Market St",
-      city: "San Francisco",
-      state: "CA",
-      zipCode: "94103",
-      country: "USA"
-    },
-    createdAt: new Date(),
-    updatedAt: new Date()
-  },
-  { 
-    id: "3", 
-    name: "123 Industries",
-    email: "info@123industries.com",
-    phone: "555-9012",
-    billingAddress: {
-      street: "789 Broadway",
-      city: "Chicago",
-      state: "IL",
-      zipCode: "60601",
-      country: "USA"
-    },
-    createdAt: new Date(),
-    updatedAt: new Date()
-  },
-];
-
-// Sample products for demonstration
-const sampleProducts = [
-  { id: "1", name: "Product One", skuCode: "PRD-001", price: 150, taxRate: 10 },
-  { id: "2", name: "Product Two", skuCode: "PRD-002", price: 150, taxRate: 10 },
-  { id: "3", name: "Product Three", skuCode: "PRD-003", price: 200, taxRate: 10 },
-];
+import { getSalesOrders, createSalesOrder, updateSalesOrder, deleteSalesOrder, getSalesOrder } from "@/lib/api";
+import { PrintPreviewDialog } from "@/components/print/PrintPreviewDialog";
 
 export default function SaleOrdersPage() {
-  const [orders, setOrders] = useState<WholesaleOrder[]>(sampleOrders);
+  const [orders, setOrders] = useState<SalesOrder[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [searchTerm, setSearchTerm] = useState("");
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [selectedOrder, setSelectedOrder] = useState<WholesaleOrder | undefined>(undefined);
+  const [viewDialogOpen, setViewDialogOpen] = useState(false);
+  const [selectedOrder, setSelectedOrder] = useState<SalesOrder | undefined>(undefined);
+  const [viewingOrder, setViewingOrder] = useState<SalesOrder | null>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
-  const [itemToDeleteId, setItemToDeleteId] = useState<string | null>(null);
+  const [orderToDelete, setOrderToDelete] = useState<SalesOrder | undefined>(undefined);
+  const [printDialogOpen, setPrintDialogOpen] = useState(false);
+  const [printingOrder, setPrintingOrder] = useState<SalesOrder | null>(null);
   const { hasPermission } = useAuth();
   const canCreateOrders = hasPermission('sale_orders_create');
   const canEditOrders = hasPermission('sale_orders_edit');
   const canDeleteOrders = hasPermission('sale_orders_delete');
 
+  // Load data on component mount
+  useEffect(() => {
+    loadData();
+  }, []);
 
+  const loadData = async () => {
+    try {
+      setLoading(true);
+      const data = await getSalesOrders().catch(() => []);
+      setOrders(data || []);
+    } catch (error) {
+      console.error('Error loading sales orders:', error);
+      toast.error('Failed to load sales orders');
+      setOrders([]);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleAddNew = () => {
     setSelectedOrder(undefined);
     setDialogOpen(true);
   };
 
-  const handleEdit = (order: WholesaleOrder) => {
+  const handleEdit = (order: SalesOrder) => {
+    // Check if order can be edited based on status
+            if (order.status === 'fulfilled' || order.status === 'cancelled') {
+              toast.error(`Cannot edit sale order with status "${order.status}". Only draft, pending, approved, sent, partial, and overdue orders can be edited.`);
+      return;
+    }
+    
     setSelectedOrder(order);
     setDialogOpen(true);
   };
 
-  const handleView = (order: WholesaleOrder) => {
-    setSelectedOrder(order);
-    setDialogOpen(true);
+  const handleView = (order: SalesOrder) => {
+    setViewingOrder(order);
+    setViewDialogOpen(true);
+  };
+
+  const handlePrint = async (order: SalesOrder) => {
+    try {
+      const full = await getSalesOrder(order.id);
+      const data = full && !full.error ? full : order;
+      setPrintingOrder(data);
+      setPrintDialogOpen(true);
+    } catch (e) {
+      console.error('Error preparing SO for print:', e);
+      setPrintingOrder(order);
+      setPrintDialogOpen(true);
+    }
   };
 
   const handleDeleteClick = (id: string) => {
-    setItemToDeleteId(id);
+    const order = orders.find(o => o.id === id);
+    
+    // Check if order can be deleted based on status
+            if (order?.status === 'fulfilled' || order?.status === 'cancelled') {
+              toast.error(`Cannot delete sale order with status "${order.status}". Only draft, pending, approved, sent, partial, and overdue orders can be deleted.`);
+      return;
+    }
+    
+    setOrderToDelete(order);
     setDeleteDialogOpen(true);
   };
 
-  const handleDelete = () => {
-    if (itemToDeleteId) {
-      setOrders(orders.filter((item) => item.id !== itemToDeleteId));
-      toast({
-        title: "Success",
-        description: "Sale order deleted successfully",
-      });
+  const handleDelete = async () => {
+    if (orderToDelete) {
+      try {
+        await deleteSalesOrder(orderToDelete.id);
+      toast.success("Sale order deleted successfully");
+        loadData();
+      } catch (error) {
+        console.error('Error deleting sale order:', error);
+        toast.error("Failed to delete sale order");
+      }
       setDeleteDialogOpen(false);
-      setItemToDeleteId(null);
+      setOrderToDelete(undefined);
     }
   };
 
-  const handleSave = (order: Partial<WholesaleOrder>) => {
+  const handleSave = async (order: Partial<SalesOrder>) => {
+    try {
     if (selectedOrder) {
-      // Update existing order
-      setOrders(orders.map((item) => (item.id === selectedOrder.id ? { ...item, ...order } : item)));
-      toast({
-        title: "Success",
-        description: "Sale order updated successfully",
-      });
+        await updateSalesOrder(selectedOrder.id, order);
+      toast.success("Sale order updated successfully");
     } else {
-      // Create new order
-      const newOrder: WholesaleOrder = {
-        id: Date.now().toString(),
-        orderNumber: order.orderNumber || "",
-        customerId: order.customerId || "",
-        customer: order.customer || sampleCustomers[0],
-        orderDate: order.orderDate || new Date(),
-        deliveryDate: order.deliveryDate,
-        status: order.status || "draft",
-        subtotal: order.subtotal || 0,
-        taxAmount: order.taxAmount || 0,
-        discountAmount: order.discountAmount || 0,
-        shippingAmount: order.shippingAmount || 0,
-        totalAmount: order.totalAmount || 0,
-        notes: order.notes,
-        items: order.items || [],
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      };
-      setOrders([...orders, newOrder]);
-      toast({
-        title: "Success",
-        description: "Sale order created successfully",
-      });
+        await createSalesOrder(order);
+      toast.success("Sale order created successfully");
+      }
+      setDialogOpen(false);
+      loadData();
+    } catch (error) {
+      console.error('Error saving sale order:', error);
+      toast.error("Failed to save sale order");
     }
   };
+
+  // Filter sale orders based on search term
+  const filteredOrders = orders.filter(order => 
+    order.orderNumber?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    order.customer?.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    order.status?.toLowerCase().includes(searchTerm.toLowerCase())
+  );
 
   return (
     <PermissionGuard 
       requiredPermission="sale_orders_view"
-      fallbackMessage="You do not have permission to view wholesale orders. Please contact an administrator."
+      fallbackMessage="You do not have permission to view sale orders. Please contact an administrator."
     >
       <div className="space-y-6">
 
@@ -273,18 +159,18 @@ export default function SaleOrdersPage() {
         <div className="flex items-center justify-between">
           <h1 className="text-2xl font-bold tracking-tight">Sale Orders</h1>
         {canCreateOrders ? (
-        <Button onClick={handleAddNew} className="flex items-center gap-2">
-          <PlusCircle size={18} />
-          New Order
+        <Button onClick={handleAddNew} className="flex items-center gap-1">
+          <PlusCircle className="h-4 w-4" />
+          Create Sale Order
         </Button>
         ) : (
           <TooltipProvider>
             <Tooltip>
               <TooltipTrigger asChild>
                 <span>
-                  <Button disabled className="flex items-center gap-2">
-                    <PlusCircle size={18} />
-                    New Order
+                  <Button disabled className="flex items-center gap-1">
+                    <PlusCircle className="h-4 w-4" />
+                    Create Sale Order
                   </Button>
                 </span>
               </TooltipTrigger>
@@ -296,11 +182,23 @@ export default function SaleOrdersPage() {
         )}
       </div>
 
+      <div className="flex items-center gap-2">
+        <Search className="h-4 w-4 text-gray-400" />
+        <Input
+          placeholder="Search sale orders..."
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+          className="max-w-sm"
+        />
+      </div>
+
       <SaleOrderTable
-        orders={orders}
+        orders={filteredOrders}
+        loading={loading}
         onView={handleView}
         onEdit={canEditOrders ? handleEdit : undefined}
         onDelete={canDeleteOrders ? handleDeleteClick : undefined}
+        onPrint={handlePrint}
         canEdit={canEditOrders}
         canDelete={canDeleteOrders}
       />
@@ -308,10 +206,21 @@ export default function SaleOrdersPage() {
       <SaleOrderDialog
         open={dialogOpen}
         onOpenChange={setDialogOpen}
-        order={selectedOrder}
+        salesOrder={selectedOrder}
         onSave={handleSave}
-        customers={sampleCustomers}
-        products={sampleProducts}
+      />
+
+      <SaleOrderView
+        open={viewDialogOpen}
+        onOpenChange={setViewDialogOpen}
+        salesOrder={viewingOrder}
+      />
+
+      <PrintPreviewDialog
+        open={printDialogOpen}
+        onOpenChange={setPrintDialogOpen}
+        documentType="salesOrder"
+        data={printingOrder}
       />
 
       <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
@@ -319,8 +228,7 @@ export default function SaleOrdersPage() {
           <AlertDialogHeader>
             <AlertDialogTitle>Are you sure?</AlertDialogTitle>
             <AlertDialogDescription>
-              This action cannot be undone. This will permanently delete the
-              wholesale order and all associated data.
+              This action cannot be undone. This will permanently delete the sale order "{orderToDelete?.orderNumber}".
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

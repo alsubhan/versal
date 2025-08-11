@@ -10,38 +10,41 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
-import { Edit, Eye, Trash2 } from "lucide-react";
-import { type WholesaleOrder } from "@/types/wholesale-order";
+import { Edit, Eye, Trash2, FileText } from "lucide-react";
+import { type SalesOrder } from "@/types/sales-order";
 import { formatDate, formatCurrency } from "@/lib/utils";
 import { useCurrencyStore } from "@/stores/currencyStore";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 interface SaleOrderTableProps {
-  orders: WholesaleOrder[];
-  onView: (order: WholesaleOrder) => void;
-  onEdit?: (order: WholesaleOrder) => void;
+  orders: SalesOrder[];
+  loading: boolean;
+  onView: (order: SalesOrder) => void;
+  onEdit?: (order: SalesOrder) => void;
   onDelete?: (id: string) => void;
+  onPrint?: (order: SalesOrder) => void;
   canEdit?: boolean;
   canDelete?: boolean;
 }
 
-export function SaleOrderTable({
-  orders,
-  onView,
-  onEdit,
-  onDelete,
-  canEdit,
-  canDelete
+export function SaleOrderTable({ 
+  orders, 
+  loading,
+  onView, 
+  onEdit, 
+  onDelete, 
+  onPrint,
+  canEdit, 
+  canDelete 
 }: SaleOrderTableProps) {
-  // Move all hooks to the top
-  const [loading, setLoading] = useState(true);
+  // Ensure orders is always an array
+  const safeOrders = Array.isArray(orders) ? orders : [];
+  
   const [sortColumn, setSortColumn] = useState<string>("orderDate");
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
   const { currency } = useCurrencyStore();
 
-  useEffect(() => {
-    setTimeout(() => setLoading(false), 1000);
-  }, []);
+
 
   // Now do the conditional render
   if (loading) {
@@ -82,7 +85,7 @@ export function SaleOrderTable({
     }
   };
 
-  const sortedOrders = [...orders].sort((a: any, b: any) => {
+  const sortedOrders = [...safeOrders].sort((a: any, b: any) => {
     const aValue = a[sortColumn];
     const bValue = b[sortColumn];
 
@@ -130,30 +133,32 @@ export function SaleOrderTable({
             >
               Total
             </TableHead>
-            <TableHead>Actions</TableHead>
+            <TableHead className="text-center">Actions</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
           {sortedOrders.length === 0 ? (
             <TableRow>
               <TableCell colSpan={6} className="text-center">
-                No wholesale orders found.
+                No sale orders found.
               </TableCell>
             </TableRow>
           ) : (
             sortedOrders.map((order) => (
               <TableRow key={order.id}>
-                <TableCell>{order.orderNumber}</TableCell>
-                <TableCell>{order.customer.name}</TableCell>
-                <TableCell>{formatDate(order.orderDate)}</TableCell>
+                <TableCell>{order.orderNumber || 'N/A'}</TableCell>
+                <TableCell>{order.customer?.name || 'N/A'}</TableCell>
+                <TableCell>{order.orderDate ? formatDate(order.orderDate) : 'N/A'}</TableCell>
                 <TableCell>
                   <span className={`capitalize px-2 py-1 rounded-full text-xs ${
-                    order.status === "delivered" ? "bg-green-100 text-green-800" :
-                    order.status === "confirmed" ? "bg-blue-100 text-blue-800" : 
-                    order.status === "processing" ? "bg-purple-100 text-purple-800" :
-                    order.status === "shipped" ? "bg-indigo-100 text-indigo-800" :
-                    order.status === "cancelled" ? "bg-red-100 text-red-800" :
-                    "bg-yellow-100 text-yellow-800"
+                    order.status === "fulfilled" ? "bg-green-100 text-green-800" :
+                    order.status === "partial" ? "bg-orange-100 text-orange-800" :
+                    order.status === "sent" ? "bg-blue-100 text-blue-800" : 
+                    order.status === "overdue" ? "bg-red-100 text-red-800" :
+                    order.status === "cancelled" ? "bg-gray-100 text-gray-800" :
+                    order.status === "approved" ? "bg-purple-100 text-purple-800" :
+                    order.status === "pending" ? "bg-yellow-100 text-yellow-800" :
+                    "bg-gray-100 text-gray-800"
                   }`}>
                     {order.status}
                   </span>
@@ -162,58 +167,91 @@ export function SaleOrderTable({
                   {formatCurrency(order.totalAmount, currency)}
                 </TableCell>
                 <TableCell>
-                  <div className="flex space-x-2">
+                  <div className="flex justify-center space-x-2">
                     <Button
                       variant="ghost"
                       size="icon"
                       onClick={() => onView(order)}
+                      disabled={order.status === 'draft'}
+                      title={order.status === 'draft' 
+                        ? `Cannot view ${order.status} sale order` 
+                        : "View Sale Order"}
+                      className={order.status === 'draft' 
+                        ? 'opacity-50 cursor-not-allowed' : ''}
                     >
                       <Eye className="h-4 w-4" />
                     </Button>
                     {canEdit ? (
-                    <Button
-                      variant="ghost"
-                      size="icon"
+                      <Button
+                        variant="ghost"
+                        size="icon"
                         onClick={() => onEdit && onEdit(order)}
-                    >
-                      <Edit className="h-4 w-4" />
-                    </Button>
+                        disabled={order.status === 'fulfilled' || order.status === 'cancelled'}
+                        title={order.status === 'fulfilled' || order.status === 'cancelled' 
+                          ? `Cannot edit ${order.status} sale order` 
+                          : "Edit Sale Order"}
+                        className={order.status === 'fulfilled' || order.status === 'cancelled' 
+                          ? 'opacity-50 cursor-not-allowed' : ''}
+                      >
+                        <Edit className="h-4 w-4" />
+                      </Button>
                     ) : (
                       <TooltipProvider>
                         <Tooltip>
                           <TooltipTrigger asChild>
                             <span>
-                              <Button variant="ghost" size="icon" disabled>
+                              <Button variant="ghost" size="icon" disabled title="Edit Sale Order">
                                 <Edit className="h-4 w-4" />
                               </Button>
                             </span>
                           </TooltipTrigger>
                           <TooltipContent>
-                            You do not have permission to edit wholesale orders
+                            You do not have permission to edit sale orders
                           </TooltipContent>
                         </Tooltip>
                       </TooltipProvider>
                     )}
+                    {onPrint && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => onPrint(order)}
+                        disabled={order.status === 'draft'}
+                        title={order.status === 'draft' 
+                          ? `Cannot print ${order.status} sale order` 
+                          : "Print Sale Order"}
+                        className={order.status === 'draft' 
+                          ? 'opacity-50 cursor-not-allowed' : ''}
+                      >
+                        <FileText className="h-4 w-4" />
+                      </Button>
+                    )}
                     {canDelete ? (
-                    <Button
-                      variant="ghost"
-                      size="icon"
+                      <Button
+                        variant="ghost"
+                        size="icon"
                         onClick={() => onDelete && onDelete(order.id)}
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
+                        disabled={order.status === 'sent' || order.status === 'fulfilled' || order.status === 'partial' || order.status === 'overdue' || order.status === 'cancelled'}
+                        title={order.status === 'sent' || order.status === 'fulfilled' || order.status === 'partial' || order.status === 'overdue' || order.status === 'cancelled' 
+                          ? `Cannot delete ${order.status} sale order` 
+                          : "Delete Sale Order"}
+                        className={order.status === 'sent' || order.status === 'fulfilled' || order.status === 'partial' || order.status === 'overdue' || order.status === 'cancelled' 
+                          ? 'opacity-50 cursor-not-allowed' : ''}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
                     ) : (
                       <TooltipProvider>
                         <Tooltip>
                           <TooltipTrigger asChild>
                             <span>
-                              <Button variant="ghost" size="icon" disabled>
+                              <Button variant="ghost" size="icon" disabled title="Delete Sale Order">
                                 <Trash2 className="h-4 w-4" />
                               </Button>
                             </span>
                           </TooltipTrigger>
                           <TooltipContent>
-                            You do not have permission to delete wholesale orders
+                            You do not have permission to delete sale orders
                           </TooltipContent>
                         </Tooltip>
                       </TooltipProvider>

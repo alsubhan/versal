@@ -90,9 +90,12 @@ versal/
 ├── backend/                 # FastAPI Python backend
 │   ├── main.py             # Main API application
 │   ├── requirements.txt    # Python dependencies
+│   ├── tests/              # Backend tests
 │   └── venv/               # Python virtual environment
 └── supabase/               # Database migrations and config
     ├── migrations/         # SQL migration files
+    ├── scripts/           # Development and maintenance scripts
+    ├── docs/              # Database documentation and guides
     └── config.toml         # Supabase configuration
 ```
 

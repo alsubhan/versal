@@ -1,0 +1,409 @@
+-- Complete Database Schema Dump
+-- Generated at: 2025-08-07T19:00:25.485818
+-- Project ID: bmyaefeddtcbnmpzvxmf
+
+-- Table: profiles
+-- Status: EXISTS
+-- Columns:
+--   id: str
+--   username: str
+--   full_name: str
+--   is_active: bool
+--   created_at: str
+--   updated_at: str
+--   role_id: str
+-- Sample data available
+
+-- Table: roles
+-- Status: EXISTS
+-- Columns:
+--   id: str
+--   name: str
+--   description: str
+--   permissions: list
+--   created_at: str
+--   updated_at: str
+-- Sample data available
+
+-- Table: customers
+-- Status: EXISTS
+-- Columns:
+--   id: str
+--   name: str
+--   email: str
+--   phone: str
+--   billing_address: dict
+--   shipping_address: dict
+--   tax_id: str
+--   notes: str
+--   credit_limit: float
+--   current_credit: float
+--   customer_type: str
+--   created_at: str
+--   updated_at: str
+--   is_active: bool
+-- Sample data available
+
+-- Table: suppliers
+-- Status: EXISTS
+-- Columns:
+--   id: str
+--   name: str
+--   contact_name: str
+--   email: str
+--   phone: str
+--   address: str
+--   payment_terms: str
+--   tax_id: str
+--   notes: str
+--   is_active: bool
+--   created_at: str
+--   updated_at: str
+--   billing_address: dict
+--   shipping_address: NoneType
+-- Sample data available
+
+-- Table: products
+-- Status: EXISTS
+-- Columns:
+--   id: str
+--   name: str
+--   description: str
+--   sku_code: str
+--   barcode: str
+--   category_id: str
+--   unit_id: str
+--   cost_price: float
+--   selling_price: float
+--   minimum_stock: int
+--   maximum_stock: NoneType
+--   reorder_point: int
+--   is_active: bool
+--   created_at: str
+--   updated_at: str
+--   hsn_code: str
+--   manufacturer_part_number: str
+--   supplier_id: str
+--   sale_tax_id: str
+--   purchase_tax_id: str
+--   manufacturer: str
+--   brand: str
+--   warranty_period: int
+--   warranty_unit: str
+--   product_tags: list
+--   is_serialized: bool
+--   track_inventory: bool
+--   allow_override_price: bool
+--   discount_percentage: float
+--   warehouse_rack: str
+--   unit_conversions: dict
+--   mrp: float
+--   sale_price: float
+--   subcategory_id: str
+--   sale_tax_type: str
+--   purchase_tax_type: str
+--   initial_quantity: int
+-- Sample data available
+
+-- Table: categories
+-- Status: EXISTS
+-- Columns:
+--   id: str
+--   name: str
+--   description: str
+--   parent_id: NoneType
+--   is_active: bool
+--   created_at: str
+--   updated_at: str
+-- Sample data available
+
+-- Table: units
+-- Status: EXISTS
+-- Columns:
+--   id: str
+--   name: str
+--   abbreviation: str
+--   description: str
+--   created_at: str
+--   updated_at: str
+--   is_active: bool
+-- Sample data available
+
+-- Table: sales_orders
+-- Status: EXISTS
+-- Columns:
+--   id: str
+--   order_number: str
+--   customer_id: str
+--   order_date: str
+--   due_date: str
+--   subtotal: float
+--   tax_amount: float
+--   discount_amount: float
+--   total_amount: float
+--   notes: str
+--   created_by: str
+--   created_at: str
+--   updated_at: str
+--   rounding_adjustment: float
+--   status: str
+-- Sample data available
+
+-- Table: sales_order_items
+-- Status: EXISTS
+-- Columns:
+--   id: str
+--   sales_order_id: str
+--   product_id: str
+--   quantity: int
+--   unit_price: float
+--   discount: float
+--   tax: float
+--   total: float
+--   created_at: str
+--   updated_at: str
+--   product_name: NoneType
+--   sku_code: NoneType
+--   hsn_code: NoneType
+--   sale_tax_type: str
+--   unit_abbreviation: NoneType
+--   created_by: NoneType
+-- Sample data available
+
+-- Table: sale_invoices
+-- Status: EXISTS
+-- Columns:
+--   id: str
+--   invoice_number: str
+--   customer_id: str
+--   invoice_date: str
+--   due_date: str
+--   payment_method: str
+--   payment_reference: str
+--   payment_date: str
+--   credit_note_id: str
+--   subtotal: float
+--   tax_amount: float
+--   discount_amount: float
+--   total_amount: float
+--   amount_paid: float
+--   amount_due: float
+--   notes: str
+--   affects_inventory: bool
+--   inventory_processed: bool
+--   created_by: str
+--   created_at: str
+--   updated_at: str
+--   rounding_adjustment: float
+--   sales_order_id: NoneType
+--   is_direct: bool
+--   status: str
+-- Sample data available
+
+-- Table: sale_invoice_items
+-- Status: EXISTS
+-- Columns:
+--   id: str
+--   invoice_id: str
+--   product_id: str
+--   quantity: int
+--   unit_price: float
+--   discount: float
+--   tax: float
+--   total: float
+--   created_at: str
+--   updated_at: str
+--   sales_order_item_id: NoneType
+--   product_name: NoneType
+--   sku_code: NoneType
+--   hsn_code: NoneType
+--   sale_tax_type: str
+--   unit_abbreviation: NoneType
+--   created_by: NoneType
+-- Sample data available
+
+-- Table: purchase_orders
+-- Status: EXISTS
+-- Columns:
+--   id: str
+--   order_number: str
+--   supplier_id: str
+--   order_date: str
+--   expected_delivery_date: str
+--   status: str
+--   subtotal: float
+--   tax_amount: float
+--   discount_amount: float
+--   total_amount: float
+--   notes: str
+--   created_by: str
+--   created_at: str
+--   updated_at: str
+--   rounding_adjustment: float
+-- Sample data available
+
+-- Table: purchase_order_items
+-- Status: EXISTS
+-- Columns:
+--   id: str
+--   purchase_order_id: str
+--   product_id: str
+--   quantity: int
+--   cost_price: float
+--   discount: float
+--   tax: float
+--   total: float
+--   created_at: str
+--   updated_at: str
+--   product_name: NoneType
+--   sku_code: NoneType
+--   hsn_code: NoneType
+--   purchase_tax_type: str
+--   unit_abbreviation: NoneType
+--   created_by: NoneType
+-- Sample data available
+
+-- Table: good_receive_notes
+-- Status: EXISTS
+-- Columns:
+--   id: str
+--   grn_number: str
+--   purchase_order_id: str
+--   supplier_id: str
+--   received_date: str
+--   received_by: str
+--   status: str
+--   total_received_items: int
+--   notes: str
+--   quality_check_status: str
+--   warehouse_location: str
+--   created_at: str
+--   updated_at: str
+--   rounding_adjustment: float
+--   subtotal: float
+--   tax_amount: float
+--   discount_amount: float
+--   total_amount: float
+--   is_direct: bool
+-- Sample data available
+
+-- Table: good_receive_note_items
+-- Status: EXISTS
+-- Columns:
+--   id: str
+--   grn_id: str
+--   purchase_order_item_id: str
+--   product_id: str
+--   ordered_quantity: int
+--   received_quantity: int
+--   rejected_quantity: int
+--   accepted_quantity: int
+--   unit_cost: float
+--   batch_number: str
+--   expiry_date: str
+--   manufacturing_date: str
+--   quality_notes: str
+--   storage_location: str
+--   created_at: str
+--   updated_at: str
+--   product_name: NoneType
+--   sku_code: NoneType
+--   hsn_code: NoneType
+--   purchase_tax_type: str
+--   unit_abbreviation: NoneType
+--   discount: float
+--   tax: float
+--   total: float
+--   created_by: NoneType
+-- Sample data available
+
+-- Table: credit_notes
+-- Status: EXISTS
+-- Columns:
+--   id: str
+--   credit_note_number: str
+--   sales_order_id: str
+--   customer_id: str
+--   credit_date: str
+--   reason: str
+--   reason_description: str
+--   status: str
+--   approval_required: bool
+--   approved_by: str
+--   approved_date: str
+--   subtotal: float
+--   tax_amount: float
+--   discount_amount: float
+--   total_amount: float
+--   refund_method: str
+--   refund_processed: bool
+--   refund_date: str
+--   refund_reference: str
+--   affects_inventory: bool
+--   inventory_processed: bool
+--   notes: str
+--   internal_notes: str
+--   created_by: str
+--   created_at: str
+--   updated_at: str
+--   rounding_adjustment: float
+-- Sample data available
+
+-- Table: credit_note_items
+-- Status: EXISTS
+-- Columns:
+--   id: str
+--   credit_note_id: str
+--   product_id: str
+--   sales_order_item_id: str
+--   original_quantity: int
+--   credit_quantity: int
+--   unit_price: float
+--   discount: float
+--   tax: float
+--   total: float
+--   returned_quantity: int
+--   condition_on_return: str
+--   return_to_stock: bool
+--   batch_number: str
+--   expiry_date: str
+--   storage_location: str
+--   quality_notes: str
+--   created_at: str
+--   updated_at: str
+--   product_name: NoneType
+--   sku_code: NoneType
+--   hsn_code: NoneType
+--   sale_tax_type: str
+--   unit_abbreviation: NoneType
+--   created_by: NoneType
+-- Sample data available
+
+-- Table: inventory_transactions
+-- Status: EXISTS
+-- Columns:
+--   id: str
+--   product_id: str
+--   transaction_type: str
+--   quantity_change: int
+--   reference_type: str
+--   reference_id: str
+--   notes: str
+--   created_by: str
+--   created_at: str
+-- Sample data available
+
+-- Table: system_settings
+-- Status: EXISTS
+-- Columns:
+--   id: str
+--   setting_key: str
+--   setting_value: str
+--   setting_type: str
+--   description: str
+--   is_public: bool
+--   created_by: NoneType
+--   created_at: str
+--   updated_at: str
+-- Sample data available
+

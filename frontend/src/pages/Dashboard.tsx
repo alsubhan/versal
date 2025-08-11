@@ -1,25 +1,143 @@
+import { useEffect, useMemo, useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { 
-  Package, 
-  TrendingUp, 
-  TrendingDown, 
+import {
+  Package,
+  TrendingUp,
+  TrendingDown,
   AlertTriangle,
   DollarSign,
   ShoppingCart,
   Users,
-  Truck
+  Truck,
 } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
-import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Lock } from 'lucide-react';
 import { Spinner } from '@/components/ui/spinner';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { PermissionGuard } from "@/components/ui/permission-guard";
+import { PermissionGuard } from '@/components/ui/permission-guard';
+import {
+  getProducts,
+  getPurchaseOrders,
+  getSalesOrders,
+  getSaleInvoices,
+  getCreditNotes,
+  getCustomers,
+  getSuppliers,
+} from '@/lib/api';
+import { useCurrencyStore } from '@/stores/currencyStore';
+import { formatCurrency } from '@/lib/utils';
 
 export default function Dashboard() {
   const { hasPermission, loading } = useAuth();
   const canViewDashboard = hasPermission('dashboard_view');
+  const { currency } = useCurrencyStore();
+
+  const [isLoadingData, setIsLoadingData] = useState(true);
+  const [totalProducts, setTotalProducts] = useState(0);
+  const [totalInventoryValue, setTotalInventoryValue] = useState(0);
+  const [activeSalesOrders, setActiveSalesOrders] = useState(0);
+  const [recentPurchaseOrders, setRecentPurchaseOrders] = useState<any[]>([]);
+  const [lowStockList, setLowStockList] = useState<{ name: string; current: number; minimum: number }[]>([]);
+  const [activeCustomers, setActiveCustomers] = useState(0);
+  const [activeSuppliers, setActiveSuppliers] = useState(0);
+  const [salesThisMonth, setSalesThisMonth] = useState(0);
+  const [returnsThisMonth, setReturnsThisMonth] = useState(0);
+
+  useEffect(() => {
+    const load = async () => {
+      try {
+        setIsLoadingData(true);
+        const [productsRes, soRes, poRes, siRes, cnRes, customersRes, suppliersRes] = await Promise.all([
+          getProducts().catch(() => []),
+          getSalesOrders().catch(() => []),
+          getPurchaseOrders().catch(() => []),
+          getSaleInvoices().catch(() => []),
+          getCreditNotes().catch(() => []),
+          getCustomers().catch(() => []),
+          getSuppliers().catch(() => []),
+        ]);
+
+        const products = Array.isArray(productsRes) ? productsRes : [];
+        setTotalProducts(products.length);
+
+        // Inventory valuation: sum(quantity_on_hand or quantity_available) * cost_price
+        const inventoryValue = products.reduce((sum: number, p: any) => {
+          const stockLevels = Array.isArray(p.stock_levels) ? p.stock_levels : [];
+          const quantity = stockLevels.reduce((q: number, lvl: any) => {
+            const qa = Number(lvl.quantity_available ?? 0);
+            const qh = Number(lvl.quantity_on_hand ?? 0);
+            return q + (Number.isFinite(qa) && qa > 0 ? qa : qh);
+          }, 0);
+          const cost = Number(p.cost_price ?? 0) || 0;
+          return sum + quantity * cost;
+        }, 0);
+        setTotalInventoryValue(inventoryValue);
+
+        const activeStatuses = new Set(['draft', 'pending', 'approved', 'sent', 'partial']);
+        const salesOrders = Array.isArray(soRes) ? soRes : [];
+        setActiveSalesOrders(salesOrders.filter((so: any) => activeStatuses.has(String(so.status || ''))).length);
+
+        const purchaseOrders = Array.isArray(poRes) ? poRes : [];
+        const recentPOs = [...purchaseOrders]
+          .sort((a: any, b: any) => new Date(b.orderDate || 0).getTime() - new Date(a.orderDate || 0).getTime())
+          .slice(0, 3)
+          .map((po: any) => ({
+            id: po.orderNumber,
+            supplier: po.supplier?.name || '—',
+            amount: formatCurrency(Number(po.totalAmount || 0), currency),
+            status: po.status || '—',
+          }));
+        setRecentPurchaseOrders(recentPOs);
+
+        // Low stock detection from product minimums/reorder points
+        const lowStock = products
+          .map((p: any) => {
+            const stockLevels = Array.isArray(p.stock_levels) ? p.stock_levels : [];
+            const qty = stockLevels.reduce((q: number, lvl: any) => {
+              const qa = Number(lvl.quantity_available ?? 0);
+              const qh = Number(lvl.quantity_on_hand ?? 0);
+              return q + (Number.isFinite(qa) && qa > 0 ? qa : qh);
+            }, 0);
+            const threshold = Number(p.reorder_point ?? p.minimum_stock ?? 0) || 0;
+            return { name: p.name || 'Unnamed', current: qty, minimum: threshold };
+          })
+          .filter((i: any) => i.minimum > 0 && i.current <= i.minimum)
+          .sort((a: any, b: any) => a.current - b.current)
+          .slice(0, 6);
+        setLowStockList(lowStock);
+
+        setActiveCustomers(Array.isArray(customersRes) ? customersRes.filter((c: any) => c.isActive !== false).length : 0);
+        setActiveSuppliers(Array.isArray(suppliersRes) ? suppliersRes.filter((s: any) => s.isActive !== false).length : 0);
+
+        // This month sales and returns
+        const now = new Date();
+        const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+        const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+        const salesInvoices = Array.isArray(siRes) ? siRes : [];
+        const monthlySales = salesInvoices
+          .filter((si: any) => {
+            const d = new Date(si.invoiceDate || si.createdAt || 0);
+            return d >= monthStart && d <= monthEnd && ['sent', 'partial', 'paid'].includes(String(si.status || ''));
+          })
+          .reduce((sum: number, si: any) => sum + Number(si.totalAmount || 0), 0);
+        setSalesThisMonth(monthlySales);
+
+        const creditNotes = Array.isArray(cnRes) ? cnRes : [];
+        const monthlyReturns = creditNotes
+          .filter((cn: any) => {
+            const d = new Date(cn.creditDate || cn.createdAt || 0);
+            return d >= monthStart && d <= monthEnd && String(cn.status || '') !== 'cancelled';
+          })
+          .reduce((sum: number, cn: any) => sum + Number(cn.totalAmount || 0), 0);
+        setReturnsThisMonth(monthlyReturns);
+      } catch (e) {
+        // Fail silently; UI will show zeros/empty
+      } finally {
+        setIsLoadingData(false);
+      }
+    };
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   if (loading) {
     return (
@@ -55,10 +173,8 @@ export default function Dashboard() {
             <Package className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">1,234</div>
-            <p className="text-xs text-muted-foreground">
-              <span className="text-green-600">+12%</span> from last month
-            </p>
+            <div className="text-2xl font-bold">{isLoadingData ? '—' : totalProducts.toLocaleString()}</div>
+            <p className="text-xs text-muted-foreground">Products in catalog</p>
           </CardContent>
         </Card>
 
@@ -70,10 +186,8 @@ export default function Dashboard() {
             <DollarSign className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">$45,678</div>
-            <p className="text-xs text-muted-foreground">
-              <span className="text-green-600">+8%</span> from last month
-            </p>
+            <div className="text-2xl font-bold">{isLoadingData ? '—' : formatCurrency(totalInventoryValue, currency)}</div>
+            <p className="text-xs text-muted-foreground">Based on cost price</p>
           </CardContent>
         </Card>
 
@@ -85,10 +199,8 @@ export default function Dashboard() {
             <ShoppingCart className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">89</div>
-            <p className="text-xs text-muted-foreground">
-              <span className="text-red-600">-3%</span> from last month
-            </p>
+            <div className="text-2xl font-bold">{isLoadingData ? '—' : activeSalesOrders.toLocaleString()}</div>
+            <p className="text-xs text-muted-foreground">Open sales orders</p>
           </CardContent>
         </Card>
 
@@ -100,10 +212,8 @@ export default function Dashboard() {
             <AlertTriangle className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">23</div>
-            <p className="text-xs text-muted-foreground">
-              Requires immediate attention
-            </p>
+            <div className="text-2xl font-bold">{isLoadingData ? '—' : lowStockList.length}</div>
+            <p className="text-xs text-muted-foreground">Requires attention</p>
           </CardContent>
         </Card>
       </div>
@@ -120,24 +230,19 @@ export default function Dashboard() {
           </CardHeader>
           <CardContent>
             <div className="space-y-4">
-              {[
-                { id: 'PO-001', supplier: 'ABC Electronics', amount: '$2,500', status: 'pending' },
-                { id: 'PO-002', supplier: 'XYZ Components', amount: '$1,800', status: 'approved' },
-                { id: 'PO-003', supplier: 'Tech Supplies Co', amount: '$3,200', status: 'received' },
-              ].map((order) => (
-                <div key={order.id} className="flex items-center justify-between p-3 border rounded-lg">
+              {(isLoadingData ? Array.from({ length: 3 }) : recentPurchaseOrders).map((order: any, idx: number) => (
+                <div key={order?.id || idx} className="flex items-center justify-between p-3 border rounded-lg">
                   <div className="space-y-1">
-                    <p className="text-sm font-medium">{order.id}</p>
-                    <p className="text-xs text-muted-foreground">{order.supplier}</p>
+                    <p className="text-sm font-medium">{order?.id || '—'}</p>
+                    <p className="text-xs text-muted-foreground">{order?.supplier || '—'}</p>
                   </div>
                   <div className="text-right space-y-1">
-                    <p className="text-sm font-medium">{order.amount}</p>
-                    <Badge variant={
-                      order.status === 'pending' ? 'default' :
-                      order.status === 'approved' ? 'secondary' : 'outline'
-                    }>
-                      {order.status}
-                    </Badge>
+                    <p className="text-sm font-medium">{order?.amount || '—'}</p>
+                    {order && (
+                      <Badge variant={order.status === 'pending' ? 'default' : order.status === 'approved' ? 'secondary' : 'outline'}>
+                        {String(order.status || '—')}
+                      </Badge>
+                    )}
                   </div>
                 </div>
               ))}
@@ -159,7 +264,7 @@ export default function Dashboard() {
                 <Users className="h-4 w-4 text-muted-foreground" />
                 <span className="text-sm">Active Customers</span>
               </div>
-              <span className="text-sm font-medium">156</span>
+              <span className="text-sm font-medium">{isLoadingData ? '—' : activeCustomers}</span>
             </div>
             
             <div className="flex items-center justify-between">
@@ -167,7 +272,7 @@ export default function Dashboard() {
                 <Truck className="h-4 w-4 text-muted-foreground" />
                 <span className="text-sm">Active Suppliers</span>
               </div>
-              <span className="text-sm font-medium">28</span>
+              <span className="text-sm font-medium">{isLoadingData ? '—' : activeSuppliers}</span>
             </div>
             
             <div className="flex items-center justify-between">
@@ -175,7 +280,7 @@ export default function Dashboard() {
                 <TrendingUp className="h-4 w-4 text-green-600" />
                 <span className="text-sm">Sales This Month</span>
               </div>
-              <span className="text-sm font-medium text-green-600">$23,456</span>
+              <span className="text-sm font-medium text-green-600">{isLoadingData ? '—' : formatCurrency(salesThisMonth, currency)}</span>
             </div>
             
             <div className="flex items-center justify-between">
@@ -183,7 +288,7 @@ export default function Dashboard() {
                 <TrendingDown className="h-4 w-4 text-red-600" />
                 <span className="text-sm">Returns This Month</span>
               </div>
-              <span className="text-sm font-medium text-red-600">$1,234</span>
+              <span className="text-sm font-medium text-red-600">{isLoadingData ? '—' : formatCurrency(returnsThisMonth, currency)}</span>
             </div>
           </CardContent>
         </Card>
@@ -202,18 +307,15 @@ export default function Dashboard() {
         </CardHeader>
         <CardContent>
           <div className="grid gap-2 md:grid-cols-2 lg:grid-cols-3">
-            {[
-              { name: 'Wireless Mouse', current: 5, minimum: 10 },
-              { name: 'USB Cables', current: 8, minimum: 15 },
-              { name: 'Power Adapters', current: 3, minimum: 12 },
-            ].map((item) => (
+            {(isLoadingData ? [] : lowStockList).map((item) => (
               <div key={item.name} className="flex items-center justify-between p-2 bg-white dark:bg-gray-800 rounded">
                 <span className="text-sm font-medium">{item.name}</span>
-                <span className="text-xs text-muted-foreground">
-                  {item.current}/{item.minimum}
-                </span>
+                <span className="text-xs text-muted-foreground">{item.current}/{item.minimum}</span>
               </div>
             ))}
+            {!isLoadingData && lowStockList.length === 0 && (
+              <div className="text-sm text-muted-foreground">No low stock items</div>
+            )}
           </div>
         </CardContent>
       </Card>

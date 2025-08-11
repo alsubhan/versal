@@ -9,7 +9,7 @@ import {
 } from "@/components/ui/table";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Search, Edit, Trash, Trash2, ChevronRight, ChevronDown } from "lucide-react";
+import { Search, Edit, Trash, Trash2, ChevronRight, ChevronDown, ChevronUp } from "lucide-react";
 import { type Category, type CategoryWithChildren } from "@/types/category";
 import { toast } from "@/hooks/use-toast";
 import { apiFetch } from '@/lib/api';
@@ -21,17 +21,19 @@ import { Badge } from '@/components/ui/badge';
 
 interface CategoryTableProps {
   onEdit: (category: Category) => void;
+  searchTerm?: string;
 }
 
 export const CategoryTable = forwardRef(function CategoryTable(
-  { onEdit }: CategoryTableProps,
+  { onEdit, searchTerm: externalSearchTerm = "" }: CategoryTableProps,
   ref: React.Ref<{ refetch: () => void }>
 ) {
-  const [searchTerm, setSearchTerm] = useState("");
   const [categories, setCategories] = useState<CategoryWithChildren[]>([]);
   const [expandedCategories, setExpandedCategories] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [sortField, setSortField] = useState<string>("name");
+  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
   const { hasPermission } = useAuth();
   const canEditCategories = hasPermission('categories_edit');
   const canDeleteCategories = hasPermission('categories_delete');
@@ -112,7 +114,74 @@ export const CategoryTable = forwardRef(function CategoryTable(
     }, []);
   };
 
-  const filteredCategories = filterCategories(categories, searchTerm);
+  // Handle column sorting
+  const handleSort = (field: string) => {
+    if (sortField === field) {
+      setSortDirection(sortDirection === "asc" ? "desc" : "asc");
+    } else {
+      setSortField(field);
+      setSortDirection("asc");
+    }
+  };
+
+  // Sortable header component
+  const SortableHeader = ({ 
+    field, 
+    children, 
+    className = "" 
+  }: {
+    field: string;
+    children: React.ReactNode;
+    className?: string;
+  }) => {
+    const isActive = sortField === field;
+    
+    return (
+      <TableHead 
+        className={`cursor-pointer select-none hover:bg-gray-50 ${className}`}
+        onClick={() => handleSort(field)}
+      >
+        <div className="flex items-center gap-1">
+          {children}
+          <div className="flex flex-col">
+            <ChevronUp 
+              className={`h-3 w-3 ${isActive && sortDirection === "asc" ? "text-blue-600" : "text-gray-400"}`} 
+            />
+            <ChevronDown 
+              className={`h-3 w-3 -mt-1 ${isActive && sortDirection === "desc" ? "text-blue-600" : "text-gray-400"}`} 
+            />
+          </div>
+        </div>
+      </TableHead>
+    );
+  };
+
+  // Sort categories
+  const sortCategories = (categories: CategoryWithChildren[]): CategoryWithChildren[] => {
+    return categories
+      .map(category => ({
+        ...category,
+        children: category.children ? sortCategories(category.children) : []
+      }))
+      .sort((a, b) => {
+        let aValue = "";
+        let bValue = "";
+        
+        switch (sortField) {
+          case "name":
+            aValue = a.name || "";
+            bValue = b.name || "";
+            break;
+          default:
+            return 0;
+        }
+        
+        const comparison = aValue.localeCompare(bValue);
+        return sortDirection === "asc" ? comparison : -comparison;
+      });
+  };
+
+  const filteredAndSortedCategories = sortCategories(filterCategories(categories, externalSearchTerm));
 
   const renderCategoryRows = (categories: CategoryWithChildren[], level = 0) => {
     return categories.flatMap(category => {
@@ -249,22 +318,11 @@ export const CategoryTable = forwardRef(function CategoryTable(
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-2">
-        <div className="relative w-full max-w-sm">
-          <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-          <Input
-            placeholder="Search categories..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="pl-8"
-          />
-        </div>
-      </div>
       <div className="rounded-md border">
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead className="w-[40%]">Name</TableHead>
+              <SortableHeader field="name" className="w-[40%]">Name</SortableHeader>
               <TableHead className="w-[30%]">Description</TableHead>
               <TableHead>Type</TableHead>
               <TableHead>Status</TableHead>
@@ -272,8 +330,8 @@ export const CategoryTable = forwardRef(function CategoryTable(
             </TableRow>
           </TableHeader>
           <TableBody>
-            {filteredCategories.length > 0 ? (
-              renderCategoryRows(filteredCategories)
+            {filteredAndSortedCategories.length > 0 ? (
+              renderCategoryRows(filteredAndSortedCategories)
             ) : (
               <TableRow>
                 <TableCell colSpan={5} className="text-center py-4 text-muted-foreground">

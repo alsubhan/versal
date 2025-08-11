@@ -1,7 +1,8 @@
 
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Plus } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Plus, Search } from "lucide-react";
 import { TaxDialog } from "@/components/taxes/TaxDialog";
 import { TaxTable } from "@/components/taxes/TaxTable";
 import { type Tax } from "@/types/tax";
@@ -14,6 +15,8 @@ import { PermissionGuard } from "@/components/ui/permission-guard";
 const TaxesPage = () => {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingTax, setEditingTax] = useState<Tax | null>(null);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [refreshKey, setRefreshKey] = useState(0);
   const { hasPermission } = useAuth();
   const canCreateTaxes = hasPermission('taxes_create');
   
@@ -27,6 +30,10 @@ const TaxesPage = () => {
     setIsDialogOpen(true);
   };
 
+  const handleRefresh = () => {
+    setRefreshKey(prev => prev + 1);
+  };
+
   const handleTaxSubmit = async (tax: Tax) => {
     try {
       if (editingTax) {
@@ -38,7 +45,7 @@ const TaxesPage = () => {
       }
       setIsDialogOpen(false);
       // Refresh the table
-      window.location.reload();
+      handleRefresh();
     } catch (error: any) {
       console.error('Error saving tax:', error);
       if (error.status === 409) {
@@ -87,7 +94,22 @@ const TaxesPage = () => {
         )}
       </div>
       
-      <TaxTable onEdit={handleEditTax} />
+      <div className="flex items-center gap-2">
+        <Search className="h-4 w-4 text-gray-400" />
+        <Input
+          placeholder="Search taxes..."
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+          className="max-w-sm"
+        />
+      </div>
+      
+      <TaxTable 
+        key={refreshKey}
+        onEdit={handleEditTax} 
+        searchTerm={searchTerm} 
+        onRefresh={handleRefresh}
+      />
       
       <TaxDialog 
         open={isDialogOpen} 

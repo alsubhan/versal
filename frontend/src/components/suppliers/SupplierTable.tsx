@@ -7,7 +7,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Edit, Search, Trash2 } from "lucide-react";
+import { Edit, Search, Trash2, ChevronUp, ChevronDown } from "lucide-react";
 import { type Supplier } from "@/types/supplier";
 import { useAuth } from "@/hooks/useAuth";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
@@ -27,14 +27,17 @@ import {
 
 interface SupplierTableProps {
   onEdit: (supplier: Supplier) => void;
+  searchTerm?: string;
+  onRefresh?: () => void;
 }
 
-export function SupplierTable({ onEdit }: SupplierTableProps) {
-  const [searchTerm, setSearchTerm] = useState("");
+export function SupplierTable({ onEdit, searchTerm = "", onRefresh }: SupplierTableProps) {
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [loading, setLoading] = useState(true);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [selectedSupplier, setSelectedSupplier] = useState<Supplier | undefined>(undefined);
+  const [sortField, setSortField] = useState<string>("name");
+  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
   const { hasPermission } = useAuth();
   const canEditSuppliers = hasPermission('suppliers_edit');
   const canDeleteSuppliers = hasPermission('suppliers_delete');
@@ -55,6 +58,48 @@ export function SupplierTable({ onEdit }: SupplierTableProps) {
     fetchSuppliers();
   }, []);
 
+  // Handle column sorting
+  const handleSort = (field: string) => {
+    if (sortField === field) {
+      setSortDirection(sortDirection === "asc" ? "desc" : "asc");
+    } else {
+      setSortField(field);
+      setSortDirection("asc");
+    }
+  };
+
+  // Sortable header component
+  const SortableHeader = ({ 
+    field, 
+    children, 
+    className = "" 
+  }: {
+    field: string;
+    children: React.ReactNode;
+    className?: string;
+  }) => {
+    const isActive = sortField === field;
+    
+    return (
+      <TableHead 
+        className={`cursor-pointer select-none hover:bg-gray-50 ${className}`}
+        onClick={() => handleSort(field)}
+      >
+        <div className="flex items-center gap-1">
+          {children}
+          <div className="flex flex-col">
+            <ChevronUp 
+              className={`h-3 w-3 ${isActive && sortDirection === "asc" ? "text-blue-600" : "text-gray-400"}`} 
+            />
+            <ChevronDown 
+              className={`h-3 w-3 -mt-1 ${isActive && sortDirection === "desc" ? "text-blue-600" : "text-gray-400"}`} 
+            />
+          </div>
+        </div>
+      </TableHead>
+    );
+  };
+
   const handleOpenDeleteDialog = (supplier: Supplier) => {
     setSelectedSupplier(supplier);
     setDeleteDialogOpen(true);
@@ -68,17 +113,46 @@ export function SupplierTable({ onEdit }: SupplierTableProps) {
       setSuppliers(suppliers.filter((supplier) => supplier.id !== selectedSupplier.id));
       setDeleteDialogOpen(false);
       toast.success("Supplier deleted successfully");
+      if (onRefresh) {
+        onRefresh();
+      }
     } catch (error) {
       console.error('Error deleting supplier:', error);
       toast.error('Failed to delete supplier');
     }
   };
 
-  const filteredSuppliers = suppliers.filter(supplier => 
-    supplier.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    supplier.contactName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    supplier.email.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  // Filter and sort suppliers
+  const filteredAndSortedSuppliers = suppliers
+    .filter(supplier => 
+      supplier.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      supplier.contactName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      supplier.email.toLowerCase().includes(searchTerm.toLowerCase())
+    )
+    .sort((a, b) => {
+      let aValue = "";
+      let bValue = "";
+      
+      switch (sortField) {
+        case "name":
+          aValue = a.name || "";
+          bValue = b.name || "";
+          break;
+        case "contactName":
+          aValue = a.contactName || "";
+          bValue = b.contactName || "";
+          break;
+        case "email":
+          aValue = a.email || "";
+          bValue = b.email || "";
+          break;
+        default:
+          return 0;
+      }
+      
+      const comparison = aValue.localeCompare(bValue);
+      return sortDirection === "asc" ? comparison : -comparison;
+    });
   
   if (loading) {
     return (
@@ -109,31 +183,21 @@ export function SupplierTable({ onEdit }: SupplierTableProps) {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-2">
-        <Search className="h-4 w-4 text-gray-400" />
-        <Input
-          placeholder="Search suppliers..."
-          value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
-          className="max-w-sm"
-        />
-      </div>
-      
       <div className="rounded-md border">
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>Name</TableHead>
-              <TableHead>Contact</TableHead>
-              <TableHead>Email</TableHead>
+              <SortableHeader field="name">Name</SortableHeader>
+              <SortableHeader field="contactName">Contact</SortableHeader>
+              <SortableHeader field="email">Email</SortableHeader>
               <TableHead>Payment Terms</TableHead>
               <TableHead>Status</TableHead>
               <TableHead className="w-[100px]">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
-            {filteredSuppliers.length > 0 ? (
-              filteredSuppliers.map((supplier) => (
+            {filteredAndSortedSuppliers.length > 0 ? (
+              filteredAndSortedSuppliers.map((supplier) => (
                 <TableRow key={supplier.id}>
                   <TableCell className="font-medium">{supplier.name}</TableCell>
                   <TableCell>{supplier.contactName}</TableCell>

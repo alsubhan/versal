@@ -10,52 +10,42 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
-import { Edit, Eye, Trash2 } from "lucide-react";
+import { Edit, Eye, Trash2, FileText } from "lucide-react";
 import { type CreditNote } from "@/types/credit-note";
 import { formatDate, formatCurrency } from "@/lib/utils";
 import { useCurrencyStore } from "@/stores/currencyStore";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { getCreditNotes } from "@/lib/api";
-import { toast } from "sonner";
+
 
 interface CreditNoteTableProps {
+  creditNotes: CreditNote[];
+  loading: boolean;
   onView: (creditNote: CreditNote) => void;
   onEdit?: (creditNote: CreditNote) => void;
   onDelete?: (id: string) => void;
+  onPrint?: (creditNote: CreditNote) => void;
   canEdit?: boolean;
   canDelete?: boolean;
 }
 
 export function CreditNoteTable({ 
-  onView,
-  onEdit,
-  onDelete,
-  canEdit,
-  canDelete
+  creditNotes,
+  loading,
+  onView, 
+  onEdit, 
+  onDelete, 
+  onPrint,
+  canEdit, 
+  canDelete 
 }: CreditNoteTableProps) {
-  // Move all hooks to the top
-  const [loading, setLoading] = useState(true);
-  const [creditNotes, setCreditNotes] = useState<CreditNote[]>([]);
+  // Ensure creditNotes is always an array
+  const safeCreditNotes = Array.isArray(creditNotes) ? creditNotes : [];
+  
   const [sortColumn, setSortColumn] = useState<string>("creditDate");
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
   const { currency } = useCurrencyStore();
 
-  // Fetch credit notes from backend
-  useEffect(() => {
-    const fetchCreditNotes = async () => {
-      try {
-        const data = await getCreditNotes();
-        setCreditNotes(data);
-      } catch (error) {
-        console.error('Error fetching credit notes:', error);
-        toast.error('Failed to fetch credit notes');
-      } finally {
-        setLoading(false);
-      }
-    };
 
-    fetchCreditNotes();
-  }, []);
 
   // Now do the conditional render
   if (loading) {
@@ -98,7 +88,7 @@ export function CreditNoteTable({
     }
   };
 
-  const sortedCreditNotes = [...creditNotes].sort((a: CreditNote, b: CreditNote) => {
+  const sortedCreditNotes = [...safeCreditNotes].sort((a: CreditNote, b: CreditNote) => {
     const aValue = a[sortColumn as keyof CreditNote];
     const bValue = b[sortColumn as keyof CreditNote];
 
@@ -122,11 +112,14 @@ export function CreditNoteTable({
             >
               Credit Note #
             </TableHead>
-            <TableHead
-              className="cursor-pointer"
-              onClick={() => handleSort("customerName")}
+            <TableHead 
+              className="cursor-pointer hover:bg-gray-50"
+              onClick={() => handleSort("customer")}
             >
               Customer
+              {sortColumn === "customer" && (
+                <span className="ml-1">{sortDirection === "asc" ? "↑" : "↓"}</span>
+              )}
             </TableHead>
             <TableHead
               className="cursor-pointer"
@@ -146,7 +139,7 @@ export function CreditNoteTable({
             >
               Total
             </TableHead>
-            <TableHead>Actions</TableHead>
+            <TableHead className="text-center">Actions</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -160,7 +153,7 @@ export function CreditNoteTable({
             sortedCreditNotes.map((creditNote) => (
               <TableRow key={creditNote.id}>
                 <TableCell>{creditNote.creditNoteNumber}</TableCell>
-                <TableCell>{creditNote.customerName}</TableCell>
+                <TableCell>{creditNote.customer?.name || 'N/A'}</TableCell>
                 <TableCell>{formatDate(creditNote.creditDate)}</TableCell>
                 <TableCell>
                   <span className={`capitalize px-2 py-1 rounded-full text-xs ${
@@ -177,28 +170,40 @@ export function CreditNoteTable({
                   {formatCurrency(creditNote.totalAmount, currency)}
                 </TableCell>
                 <TableCell>
-                  <div className="flex space-x-2">
+                  <div className="flex justify-center space-x-2">
                     <Button
                       variant="ghost"
                       size="icon"
                       onClick={() => onView(creditNote)}
+                      disabled={creditNote.status === 'draft'}
+                      title={creditNote.status === 'draft' 
+                        ? `Cannot view ${creditNote.status} credit note` 
+                        : "View Credit Note"}
+                      className={creditNote.status === 'draft' 
+                        ? 'opacity-50 cursor-not-allowed' : ''}
                     >
                       <Eye className="h-4 w-4" />
                     </Button>
                     {canEdit ? (
-                    <Button
-                      variant="ghost"
-                      size="icon"
+                      <Button
+                        variant="ghost"
+                        size="icon"
                         onClick={() => onEdit && onEdit(creditNote)}
-                    >
-                      <Edit className="h-4 w-4" />
-                    </Button>
+                        disabled={creditNote.status === 'approved' || creditNote.status === 'processed' || creditNote.status === 'cancelled'}
+                        title={creditNote.status === 'approved' || creditNote.status === 'processed' || creditNote.status === 'cancelled' 
+                          ? `Cannot edit ${creditNote.status} credit note` 
+                          : "Edit Credit Note"}
+                        className={creditNote.status === 'approved' || creditNote.status === 'processed' || creditNote.status === 'cancelled' 
+                          ? 'opacity-50 cursor-not-allowed' : ''}
+                      >
+                        <Edit className="h-4 w-4" />
+                      </Button>
                     ) : (
                       <TooltipProvider>
                         <Tooltip>
                           <TooltipTrigger asChild>
                             <span>
-                              <Button variant="ghost" size="icon" disabled>
+                              <Button variant="ghost" size="icon" disabled title="Edit Credit Note">
                                 <Edit className="h-4 w-4" />
                               </Button>
                             </span>
@@ -209,20 +214,41 @@ export function CreditNoteTable({
                         </Tooltip>
                       </TooltipProvider>
                     )}
+                    {onPrint && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => onPrint(creditNote)}
+                        disabled={creditNote.status === 'draft'}
+                        title={creditNote.status === 'draft' 
+                          ? `Cannot print ${creditNote.status} credit note` 
+                          : "Print Credit Note"}
+                        className={creditNote.status === 'draft' 
+                          ? 'opacity-50 cursor-not-allowed' : ''}
+                      >
+                        <FileText className="h-4 w-4" />
+                      </Button>
+                    )}
                     {canDelete ? (
-                    <Button
-                      variant="ghost"
-                      size="icon"
+                      <Button
+                        variant="ghost"
+                        size="icon"
                         onClick={() => onDelete && onDelete(creditNote.id)}
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
+                        disabled={creditNote.status === 'pending' || creditNote.status === 'approved' || creditNote.status === 'processed' || creditNote.status === 'cancelled'}
+                        title={creditNote.status === 'pending' || creditNote.status === 'approved' || creditNote.status === 'processed' || creditNote.status === 'cancelled' 
+                          ? `Cannot delete ${creditNote.status} credit note` 
+                          : "Delete Credit Note"}
+                        className={creditNote.status === 'pending' || creditNote.status === 'approved' || creditNote.status === 'processed' || creditNote.status === 'cancelled' 
+                          ? 'opacity-50 cursor-not-allowed' : ''}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
                     ) : (
                       <TooltipProvider>
                         <Tooltip>
                           <TooltipTrigger asChild>
                             <span>
-                              <Button variant="ghost" size="icon" disabled>
+                              <Button variant="ghost" size="icon" disabled title="Delete Credit Note">
                                 <Trash2 className="h-4 w-4" />
                               </Button>
                             </span>

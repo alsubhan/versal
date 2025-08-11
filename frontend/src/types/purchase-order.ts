@@ -7,27 +7,29 @@ export interface PurchaseOrderItem {
   productId: string;
   productName: string;
   skuCode: string;
+  hsnCode: string;
   quantity: number;
   costPrice: number;
   discount: number;
   tax: number;
   total: number;
-  createdAt: Date;
-  updatedAt: Date;
+  purchaseTaxType?: 'inclusive' | 'exclusive';
+  unitAbbreviation?: string;
 }
 
 export interface PurchaseOrder {
   id: string;
   orderNumber: string;
   supplierId: string;
-  supplier: Supplier;
+  supplier?: Supplier;
   orderDate: Date;
-  expectedDeliveryDate?: Date;
+  expectedDeliveryDate: Date;
   status: "draft" | "pending" | "approved" | "received" | "cancelled";
   subtotal: number;
   taxAmount: number;
   discountAmount: number;
   totalAmount: number;
+  roundingAdjustment?: number;
   notes?: string;
   items: PurchaseOrderItem[];
   createdAt: Date;

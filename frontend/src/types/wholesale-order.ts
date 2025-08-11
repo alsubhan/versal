@@ -7,6 +7,7 @@ export interface WholesaleOrderItem {
   productId: string;
   productName: string;
   skuCode: string;
+  hsnCode?: string;
   eanCode?: string;
   quantity: number;
   unitPrice: number;
@@ -31,7 +32,7 @@ export interface WholesaleOrder {
   customer: Customer;
   orderDate: Date;
   deliveryDate?: Date;
-  status: "draft" | "confirmed" | "processing" | "shipped" | "delivered" | "cancelled" | "returned" | "exchanged" | "partially_returned";
+  status: "draft" | "sent" | "paid" | "overdue" | "cancelled";
   subtotal: number;
   taxAmount: number;
   sgstAmount?: number;

@@ -1,0 +1,176 @@
+-- Comprehensive Database Schema Summary
+-- Generated at: 2025-08-07T22:02:07.376761
+-- Project ID: bmyaefeddtcbnmpzvxmf
+
+-- Sources:
+-- migrations: Analyzed from supabase/migrations/
+-- scripts: Analyzed from supabase/scripts/
+-- live_database: Connected via Supabase API
+
+-- Summary:
+-- Total Tables: 19
+-- Total Triggers: 37
+-- Total Functions: 3
+-- Total Indexes: 40
+-- Total Enums: 1
+-- Total Extensions: 1
+-- Total Constraints: 6
+-- Total Views: 0
+-- Total Schema Updates: 14
+
+-- Database Objects Found:
+
+-- TABLES:
+-- Live tables: 20
+--   profiles
+--   roles
+--   customers
+--   suppliers
+--   products
+--   categories
+--   units
+--   tax_rates
+--   sales_orders
+--   sales_order_items
+--   sale_invoices
+--   sale_invoice_items
+--   purchase_orders
+--   purchase_order_items
+--   good_receive_notes
+--   good_receive_note_items
+--   credit_notes
+--   credit_note_items
+--   inventory_transactions
+--   system_settings
+
+-- TRIGGERS:
+-- Migration triggers: 34
+--   update_system_settings_updated_at
+--   on_credit_note_approval
+--   update_user_settings_updated_at
+--   update_purchase_orders_updated_at
+--   on_grn_item_change
+--   on_credit_note_item_change
+--   update_locations_updated_at
+--   update_taxes_updated_at
+--   update_sales_order_items_updated_at
+--   on_new_product_created
+--   update_credit_note_items_updated_at
+--   on_sale_invoice_status_change
+--   update_good_receive_note_items_updated_at
+--   update_credit_notes_updated_at
+--   update_purchase_order_items_updated_at
+--   update_categories_updated_at
+--   on_inventory_transaction
+--   update_sales_orders_updated_at
+--   update_customers_updated_at
+--   update_roles_updated_at
+--   on_credit_transaction
+--   update_good_receive_notes_updated_at
+--   update_suppliers_updated_at
+--   on_purchase_order_status_change
+--   for
+--   update_profiles_updated_at
+--   update_units_updated_at
+--   on_stock_level_change
+--   to
+--   on_auth_user_created
+--   update_inventory_movements_updated_at
+--   update_products_updated_at
+--   on_profile_created
+--   on_sales_order_status_change
+-- Script triggers: 3
+--   fix_purchase_order_trigger.sql
+--   fix_triggers.sql
+--   fix_trigger_conflict.sql
+
+-- FUNCTIONS:
+-- Total functions: 3
+--   public
+--   to
+--   update_updated_at_column
+
+-- INDEXES:
+-- Total indexes: 40
+--   idx_stock_levels_product_id
+--   idx_grn_items_product_id
+--   idx_products_purchase_tax_type
+--   idx_credit_notes_customer_id
+--   idx_inventory_movements_created_at
+--   idx_products_sale_price
+--   idx_products_subcategory_id
+--   idx_products_sale_tax_type
+--   idx_grn_purchase_order_id
+--   idx_categories_parent_id
+--   idx_user_settings_user_id
+--   idx_system_settings_key
+--   idx_credit_note_items_credit_note_id
+--   idx_inventory_transactions_product_id
+--   idx_credit_transactions_customer_id
+--   idx_products_mrp
+--   idx_locations_is_active
+--   idx_products_sku_code
+--   idx_products_manufacturer
+--   idx_locations_name
+--   idx_inventory_movements_type
+--   idx_credit_notes_status
+--   idx_credit_transactions_type
+--   idx_products_category_id
+--   idx_products_brand
+--   idx_grn_supplier_id
+--   idx_credit_note_items_product_id
+--   idx_grn_received_date
+--   idx_stock_levels_location_id
+--   idx_credit_notes_credit_date
+--   idx_purchase_orders_supplier_id
+--   idx_products_hsn_code
+--   idx_credit_notes_sales_order_id
+--   idx_grn_items_grn_id
+--   idx_products_purchase_tax_id
+--   IF
+--   idx_inventory_movements_product_id
+--   idx_products_supplier_id
+--   idx_products_sale_tax_id
+--   idx_sales_orders_customer_id
+
+-- ENUMS:
+-- Total enums: 1
+--   public
+
+-- EXTENSIONS:
+-- Total extensions: 1
+--   IF
+
+-- CONSTRAINTS:
+-- Total constraints: 6
+--   is
+--   from
+--   valid_quantities
+--   products_hsn_code_unique
+--   valid_credit_quantity
+--   IF
+
+-- VIEWS:
+-- Total views: 0
+
+-- SCHEMA UPDATES:
+-- Total schema updates: 14
+--   add_sales_order_id_and_is_direct_columns.sql
+--   fix_sales_order_status_enum.sql
+--   fix_stock_levels_schema.sql
+--   add_missing_status_columns.sql
+--   standardize_all_status_columns_to_enums_safe.sql
+--   enhance_grn_items_schema.sql
+--   standardize_status_columns.sql
+--   add_rounding_adjustment_column.sql
+--   add_is_direct_columns.sql
+--   enhance_credit_notes_schema.sql
+--   enhance_sale_invoice_items_schema.sql
+--   standardize_all_status_columns_to_enums.sql
+--   add_missing_grn_columns.sql
+--   fix_enum_conflicts.sql
+
+-- For complete schema including all objects:
+-- 1. Check supabase/migrations/ for official migrations
+-- 2. Check supabase/scripts/ for development scripts
+-- 3. Use Supabase CLI: supabase db pull

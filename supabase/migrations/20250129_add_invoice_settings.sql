@@ -19,3 +19,8 @@ INSERT INTO system_settings (setting_key, setting_value, setting_type, descripti
 ('include_company_logo', 'true', 'boolean', 'Whether to include company logo on invoices', false, NOW(), NOW())
 
 ON CONFLICT (setting_key) DO NOTHING; 
+
+-- Ensure public company logo URL setting exists
+INSERT INTO system_settings (setting_key, setting_value, setting_type, description, is_public, created_at, updated_at)
+VALUES ('company_logo_url', '"/placeholder.svg"', 'string', 'Public URL for company logo', true, NOW(), NOW())
+ON CONFLICT (setting_key) DO NOTHING;

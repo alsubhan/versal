@@ -2,7 +2,8 @@
 import { useState, useRef } from "react";
 import { CategoryTable } from "@/components/categories/CategoryTable";
 import { Button } from "@/components/ui/button";
-import { Plus } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Plus, Search } from "lucide-react";
 import { CategoryDialog } from "@/components/categories/CategoryDialog";
 import { type Category } from "@/types/category";
 import { createCategory, updateCategory } from '@/lib/api';
@@ -14,6 +15,7 @@ import { toast } from "sonner";
 const CategoriesPage = () => {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingCategory, setEditingCategory] = useState<Category | null>(null);
+  const [searchTerm, setSearchTerm] = useState("");
   const tableRef = useRef<{ refetch: () => void }>(null);
   const { hasPermission } = useAuth();
   const canCreateCategories = hasPermission('categories_create');
@@ -89,7 +91,18 @@ const CategoriesPage = () => {
           </TooltipProvider>
         )}
       </div>
-      <CategoryTable onEdit={handleEditCategory} ref={tableRef} />
+      
+      <div className="flex items-center gap-2">
+        <Search className="h-4 w-4 text-gray-400" />
+        <Input
+          placeholder="Search categories..."
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+          className="max-w-sm"
+        />
+      </div>
+      
+      <CategoryTable onEdit={handleEditCategory} ref={tableRef} searchTerm={searchTerm} />
       <CategoryDialog 
         open={isDialogOpen} 
         onOpenChange={setIsDialogOpen}

@@ -10,15 +10,16 @@ import {
 } from "@/components/ui/table";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Search, Edit, Trash, Trash2, ChevronLeft, ChevronRight } from "lucide-react";
+import { Search, Edit, Trash2, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, FileText } from "lucide-react";
 import { useCurrencyStore } from "@/stores/currencyStore";
 import { formatCurrency } from "@/lib/utils";
 import { useAuth } from "@/hooks/useAuth";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from "@/components/ui/badge";
-import { apiFetch } from '@/lib/api';
-import { toast } from "sonner";
+import { useSupabaseQuery } from '@/hooks/useSupabaseQuery';
+import { supabase } from '@/integrations/supabase/client';
+import { performanceMonitor } from '@/lib/performance';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -29,6 +30,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { PrintPreviewDialog } from '@/components/print/PrintPreviewDialog';
 
 type Product = {
   id: string;
@@ -36,6 +38,10 @@ type Product = {
   hsn_code: string;
   name: string;
   description?: string;
+  barcode?: string;
+  category_id?: string;
+  subcategory_id?: string;
+  unit_id?: string;
   categories?: { name: string };
   units?: { name: string; abbreviation: string };
   cost_price?: number;
@@ -43,6 +49,26 @@ type Product = {
   sale_price?: number;
   mrp?: number;
   initial_quantity?: number;
+  minimum_stock?: number;
+  maximum_stock?: number;
+  reorder_point?: number;
+  supplier_id?: string;
+  sale_tax_id?: string;
+  sale_tax_type?: string;
+  purchase_tax_id?: string;
+  purchase_tax_type?: string;
+  discount_percentage?: number;
+  manufacturer?: string;
+  brand?: string;
+  manufacturer_part_number?: string;
+  warranty_period?: number;
+  warranty_unit?: string;
+  product_tags?: string[];
+  is_serialized?: boolean;
+  track_inventory?: boolean;
+  allow_override_price?: boolean;
+  warehouse_rack?: string;
+  unit_conversions?: any;
   stock_levels?: Array<{ quantity_on_hand: number; quantity_available: number }> | { quantity_on_hand: number; quantity_available: number };
   is_active: boolean;
   created_at: string;
@@ -53,19 +79,57 @@ type Product = {
 type ProductTableProps = {
   onEdit?: (product: Product) => void;
   onRefresh?: () => void;
+  searchTerm?: string;
 };
 
 const ITEMS_PER_PAGE = 20; // Limit items per page for better performance
 
-export const ProductTable = ({ onEdit, onRefresh }: ProductTableProps) => {
-  const [searchTerm, setSearchTerm] = useState("");
+// Sortable header component
+const SortableHeader = ({ 
+  field, 
+  children, 
+  sortField, 
+  sortDirection, 
+  onSort, 
+  className = "" 
+}: {
+  field: string;
+  children: React.ReactNode;
+  sortField: string;
+  sortDirection: "asc" | "desc";
+  onSort: (field: string) => void;
+  className?: string;
+}) => {
+  const isActive = sortField === field;
+  
+  return (
+    <TableHead 
+      className={`cursor-pointer select-none hover:bg-gray-50 ${className}`}
+      onClick={() => onSort(field)}
+    >
+      <div className="flex items-center gap-1">
+        {children}
+        <div className="flex flex-col">
+          <ChevronUp 
+            className={`h-3 w-3 ${isActive && sortDirection === "asc" ? "text-blue-600" : "text-gray-400"}`} 
+          />
+          <ChevronDown 
+            className={`h-3 w-3 -mt-1 ${isActive && sortDirection === "desc" ? "text-blue-600" : "text-gray-400"}`} 
+          />
+        </div>
+      </div>
+    </TableHead>
+  );
+};
+
+export const ProductTable = ({ onEdit, onRefresh, searchTerm = "" }: ProductTableProps) => {
   const [currentPage, setCurrentPage] = useState(1);
-  const [products, setProducts] = useState<Product[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [totalCount, setTotalCount] = useState(0);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
-  const [selectedProduct, setSelectedProduct] = useState<Product | undefined>(undefined);
+  const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
+  const [printDialogOpen, setPrintDialogOpen] = useState(false);
+  const [printingProduct, setPrintingProduct] = useState<Product | null>(null);
+  const [sortField, setSortField] = useState<string>("created_at");
+  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
   const { currency, getCurrencySymbol } = useCurrencyStore();
   const { hasPermission } = useAuth();
   const canEditProducts = hasPermission('products_edit');
@@ -74,116 +138,324 @@ export const ProductTable = ({ onEdit, onRefresh }: ProductTableProps) => {
   // Calculate offset for pagination
   const offset = (currentPage - 1) * ITEMS_PER_PAGE;
 
-  // Fetch products from backend API
-  const fetchProducts = async () => {
-    try {
-      setIsLoading(true);
-      setError(null);
-      
-      const data = await apiFetch('/products');
-      
-      // Check if the response is an error
-      if (data && data.error) {
-        setError(data.detail || 'Failed to fetch products');
-        setProducts([]);
-        setTotalCount(0);
-        return;
-      }
-      
-      if (data && Array.isArray(data)) {
-        console.log('Products fetched:', data.length, 'products');
-        console.log('Sample product:', data[0]);
+  // Test query to check if products table exists and has data
+  useEffect(() => {
+    const testQuery = async () => {
+      performanceMonitor.startTimer('product-table-test-query');
+      try {
+        console.log('Testing basic products query...');
+        const testResult = await supabase
+          .from('products')
+          .select('id, name')
+          .limit(1);
         
-        // Process products to ensure stock_levels is always an array
-        const processedProducts = data.map(product => {
-          // Handle stock_levels - ensure it's an array
-          let stockLevels = product.stock_levels;
-          if (stockLevels && !Array.isArray(stockLevels)) {
-            stockLevels = [stockLevels];
-          } else if (!stockLevels) {
-            stockLevels = [];
+        console.log('Test query result:', testResult);
+        
+        if (testResult.error) {
+          console.error('Test query failed:', testResult.error);
+        } else {
+          console.log('Test query succeeded, found products:', testResult.data?.length || 0);
+        }
+      } catch (err) {
+        console.error('Test query exception:', err);
+      } finally {
+        performanceMonitor.endTimer('product-table-test-query');
+      }
+    };
+    
+    testQuery();
+  }, []);
+
+  // Fetch products with pagination and proper error handling
+  const { data: products, isLoading, error, refetch } = useSupabaseQuery(
+    ['products', currentPage.toString(), searchTerm, sortField, sortDirection],
+    async () => {
+      performanceMonitor.startTimer('product-table-main-query');
+      try {
+        console.log('Attempting to fetch products with relationships...');
+        let query = supabase
+          .from('products')
+          .select(`
+            id,
+            name,
+            description,
+            sku_code,
+            barcode,
+            category_id,
+            subcategory_id,
+            unit_id,
+            cost_price,
+            selling_price,
+            minimum_stock,
+            maximum_stock,
+            reorder_point,
+            is_active,
+            created_at,
+            updated_at,
+            hsn_code,
+            mrp,
+            sale_price,
+            initial_quantity,
+            supplier_id,
+            sale_tax_id,
+            sale_tax_type,
+            purchase_tax_id,
+            purchase_tax_type,
+            discount_percentage,
+            manufacturer,
+            brand,
+            manufacturer_part_number,
+            warranty_period,
+            warranty_unit,
+            product_tags,
+            is_serialized,
+            track_inventory,
+            allow_override_price,
+            warehouse_rack,
+            unit_conversions,
+            categories:category_id(name),
+            units:unit_id(name, abbreviation),
+            stock_levels(quantity_on_hand, quantity_available)
+          `);
+
+        // Apply search filter if search term exists
+        if (searchTerm.trim()) {
+          query = query.or(`name.ilike.%${searchTerm}%,sku_code.ilike.%${searchTerm}%`);
+        }
+
+        // Apply pagination with sorting
+        const result = await query
+          .order(sortField, { ascending: sortDirection === "asc" })
+          .range(offset, offset + ITEMS_PER_PAGE - 1);
+        
+        if (result.error) {
+          console.error('Full query failed with error:', result.error);
+          console.log('Trying basic query without relationships...');
+          // Fallback to basic query without relationships
+          let basicQuery = supabase
+            .from('products')
+            .select(`
+              id,
+              name,
+              description,
+              sku_code,
+              barcode,
+              category_id,
+              subcategory_id,
+              unit_id,
+              cost_price,
+              selling_price,
+              minimum_stock,
+              maximum_stock,
+              reorder_point,
+              is_active,
+              created_at,
+              updated_at,
+              hsn_code,
+              mrp,
+              sale_price,
+              initial_quantity,
+              supplier_id,
+              sale_tax_id,
+              sale_tax_type,
+              purchase_tax_id,
+              purchase_tax_type,
+              discount_percentage,
+              manufacturer,
+              brand,
+              manufacturer_part_number,
+              warranty_period,
+              warranty_unit,
+              product_tags,
+              is_serialized,
+              track_inventory,
+              allow_override_price,
+              warehouse_rack,
+              unit_conversions
+            `);
+          
+          if (searchTerm.trim()) {
+            basicQuery = basicQuery.or(`name.ilike.%${searchTerm}%,sku_code.ilike.%${searchTerm}%`);
           }
           
-          return {
-            ...product,
-            stock_levels: stockLevels
-          };
-        });
-        
-        // Apply search filter if search term exists
-        let filteredProducts = processedProducts;
-        if (searchTerm.trim()) {
-          filteredProducts = processedProducts.filter(product => 
-            product.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-            product.sku_code?.toLowerCase().includes(searchTerm.toLowerCase())
-          );
+          const basicResult = await basicQuery
+            .order(sortField, { ascending: sortDirection === "asc" })
+            .range(offset, offset + ITEMS_PER_PAGE - 1);
+          
+          if (basicResult.error) {
+            console.error('Basic query also failed with error:', basicResult.error);
+            console.log('Trying final fallback without ordering...');
+            // Final fallback - try without any ordering
+            let finalQuery = supabase.from('products').select(`
+              id,
+              name,
+              description,
+              sku_code,
+              barcode,
+              category_id,
+              subcategory_id,
+              unit_id,
+              cost_price,
+              selling_price,
+              minimum_stock,
+              maximum_stock,
+              reorder_point,
+              is_active,
+              created_at,
+              updated_at,
+              hsn_code,
+              mrp,
+              sale_price,
+              initial_quantity,
+              supplier_id,
+              sale_tax_id,
+              sale_tax_type,
+              purchase_tax_id,
+              purchase_tax_type,
+              discount_percentage,
+              manufacturer,
+              brand,
+              manufacturer_part_number,
+              warranty_period,
+              warranty_unit,
+              product_tags,
+              is_serialized,
+              track_inventory,
+              allow_override_price,
+              warehouse_rack,
+              unit_conversions
+            `);
+            
+            if (searchTerm.trim()) {
+              finalQuery = finalQuery.or(`name.ilike.%${searchTerm}%,sku_code.ilike.%${searchTerm}%`);
+            }
+            
+            const finalResult = await finalQuery.range(offset, offset + ITEMS_PER_PAGE - 1);
+            
+            if (finalResult.error) {
+              console.error('Final fallback also failed:', finalResult.error);
+              throw finalResult.error;
+            }
+            
+            console.log('Final fallback succeeded, returning basic data');
+            return finalResult;
+          }
+          
+          console.log('Basic query succeeded, returning data without relationships');
+          return basicResult;
         }
         
-        // Apply pagination
-        const paginatedProducts = filteredProducts.slice(offset, offset + ITEMS_PER_PAGE);
-        
-        setProducts(paginatedProducts);
-        setTotalCount(filteredProducts.length);
-      } else {
-        setProducts([]);
-        setTotalCount(0);
+        console.log('Full query succeeded with relationships');
+        return result;
+      } catch (err) {
+        console.error('Query error:', err);
+        throw err;
+      } finally {
+        performanceMonitor.endTimer('product-table-main-query');
       }
-    } catch (err: any) {
-      console.error('Error fetching products:', err);
-      setError('Failed to fetch products');
-      setProducts([]);
-      setTotalCount(0);
-    } finally {
-      setIsLoading(false);
+    },
+    {
+      // Add caching and stale time to reduce unnecessary refetches
+      staleTime: 30000, // 30 seconds
+      gcTime: 5 * 60 * 1000, // 5 minutes (fixed from cacheTime)
+    }
+  );
+
+  // Get total count for pagination
+  const { data: totalCount } = useSupabaseQuery(
+    ['products-count', searchTerm],
+    async () => {
+      performanceMonitor.startTimer('product-table-count-query');
+      try {
+        let query = supabase
+          .from('products')
+          .select('id', { count: 'exact', head: true });
+
+        if (searchTerm.trim()) {
+          query = query.or(`name.ilike.%${searchTerm}%,sku_code.ilike.%${searchTerm}%`);
+        }
+
+        const result = await query;
+        return result.count || 0;
+      } catch (err) {
+        console.error('Count query error:', err);
+        return 0;
+      } finally {
+        performanceMonitor.endTimer('product-table-count-query');
+      }
+    },
+    {
+      staleTime: 60000, // 1 minute
+      gcTime: 5 * 60 * 1000, // 5 minutes (fixed from cacheTime)
+    }
+  );
+
+  // Reset to first page when search term or sorting changes
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchTerm, sortField, sortDirection]);
+
+  // Handle column sorting
+  const handleSort = (field: string) => {
+    if (sortField === field) {
+      setSortDirection(sortDirection === "asc" ? "desc" : "asc");
+    } else {
+      setSortField(field);
+      setSortDirection("asc");
     }
   };
 
-  // Handle delete product
+  // Handler to open delete confirmation dialog
   const handleOpenDeleteDialog = (product: Product) => {
     setSelectedProduct(product);
     setDeleteDialogOpen(true);
   };
 
+  // Handler to delete a product
   const handleDeleteProduct = async () => {
     if (!selectedProduct) return;
-    
+
     try {
-      const response = await apiFetch(`/products/${selectedProduct.id}`, {
-        method: 'DELETE'
-      });
-      
-      if (response && response.error) {
-        console.error('Error deleting product:', response.detail);
-        toast.error('Failed to delete product: ' + response.detail);
-      } else {
-        console.log('Product deleted successfully');
-        toast.success('Product deleted successfully');
-        // Refresh the products list
-        fetchProducts();
+      const { error } = await supabase
+        .from('products')
+        .delete()
+        .eq('id', selectedProduct.id);
+
+      if (error) {
+        console.error('Error deleting product:', error);
+        // You might want to show a toast notification here
+        return;
       }
-    } catch (err: any) {
-      console.error('Error deleting product:', err);
-      toast.error('Failed to delete product');
-    } finally {
+
+      // Close dialog and refresh data
       setDeleteDialogOpen(false);
-      setSelectedProduct(undefined);
+      setSelectedProduct(null);
+      if (onRefresh) {
+        onRefresh();
+      }
+    } catch (err) {
+      console.error('Error deleting product:', err);
+      // You might want to show a toast notification here
     }
   };
 
-  // Fetch products when component mounts or search term changes
-  useEffect(() => {
-    fetchProducts();
-  }, [currentPage, searchTerm]);
-
-  // Reset to first page when search term changes
-  useEffect(() => {
-    setCurrentPage(1);
-  }, [searchTerm]);
+  const handlePrintProduct = (product: Product) => {
+    setPrintingProduct(product);
+    setPrintDialogOpen(true);
+  };
 
   // Calculate pagination info
-  const totalPages = Math.ceil(totalCount / ITEMS_PER_PAGE);
+  const totalPages = Math.ceil((totalCount || 0) / ITEMS_PER_PAGE);
   const hasNextPage = currentPage < totalPages;
   const hasPrevPage = currentPage > 1;
+
+  // Monitor component render performance
+  useEffect(() => {
+    performanceMonitor.startTimer('product-table-render');
+    return () => {
+      performanceMonitor.endTimer('product-table-render');
+    };
+  });
 
   // Handle error state
   if (error) {
@@ -192,15 +464,22 @@ export const ProductTable = ({ onEdit, onRefresh }: ProductTableProps) => {
         <div className="text-center">
           <p className="text-red-600 mb-2">Error loading products</p>
           <p className="text-sm text-muted-foreground">
-            {error || 'Unable to fetch products. Please try again.'}
+            {error.message || 'Unable to fetch products. Please try again.'}
           </p>
-          <Button 
-            variant="outline" 
-            className="mt-4"
-            onClick={() => window.location.reload()}
-          >
-            Retry
-          </Button>
+          <div className="flex gap-2 mt-4 justify-center">
+            <Button 
+              variant="outline" 
+              onClick={() => refetch()}
+            >
+              Retry Query
+            </Button>
+            <Button 
+              variant="outline" 
+              onClick={() => window.location.reload()}
+            >
+              Reload Page
+            </Button>
+          </div>
         </div>
       </div>
     );
@@ -214,13 +493,11 @@ export const ProductTable = ({ onEdit, onRefresh }: ProductTableProps) => {
             <TableRow>
               <TableHead>Product</TableHead>
               <TableHead>SKU</TableHead>
-              <TableHead>HSN</TableHead>
               <TableHead>Category</TableHead>
               <TableHead>Stock</TableHead>
               <TableHead>Unit</TableHead>
-              <TableHead className="text-right">Cost</TableHead>
-              <TableHead className="text-right">Retail</TableHead>
-              <TableHead className="text-right">Sale</TableHead>
+              <TableHead className="text-right">Cost Price</TableHead>
+              <TableHead className="text-right">Sale Price</TableHead>
               <TableHead>Status</TableHead>
               <TableHead className="text-right">Actions</TableHead>
             </TableRow>
@@ -230,11 +507,9 @@ export const ProductTable = ({ onEdit, onRefresh }: ProductTableProps) => {
               <TableRow key={i}>
                 <TableCell><Skeleton className="h-4 w-20" /></TableCell>
                 <TableCell><Skeleton className="h-4 w-32" /></TableCell>
-                <TableCell><Skeleton className="h-4 w-20" /></TableCell>
                 <TableCell><Skeleton className="h-4 w-24" /></TableCell>
                 <TableCell><Skeleton className="h-4 w-12" /></TableCell>
                 <TableCell><Skeleton className="h-4 w-16" /></TableCell>
-                <TableCell className="text-right"><Skeleton className="h-4 w-16 ml-auto" /></TableCell>
                 <TableCell className="text-right"><Skeleton className="h-4 w-16 ml-auto" /></TableCell>
                 <TableCell className="text-right"><Skeleton className="h-4 w-16 ml-auto" /></TableCell>
                 <TableCell><Skeleton className="h-4 w-16" /></TableCell>
@@ -249,32 +524,34 @@ export const ProductTable = ({ onEdit, onRefresh }: ProductTableProps) => {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-2">
-        <div className="relative flex-1">
-          <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-gray-500" />
-          <Input
-            placeholder="Search products..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="pl-8"
-          />
-        </div>
-      </div>
-      
       <div className="rounded-md border">
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>Product</TableHead>
-              <TableHead>SKU</TableHead>
-              <TableHead>HSN</TableHead>
-              <TableHead>Category</TableHead>
-              <TableHead>Stock</TableHead>
-              <TableHead>Unit</TableHead>
-              <TableHead className="text-right">Cost</TableHead>
-              <TableHead className="text-right">Retail</TableHead>
-              <TableHead className="text-right">Sale</TableHead>
-              <TableHead>Status</TableHead>
+              <SortableHeader field="name" sortField={sortField} sortDirection={sortDirection} onSort={handleSort}>
+                Product
+              </SortableHeader>
+              <SortableHeader field="sku_code" sortField={sortField} sortDirection={sortDirection} onSort={handleSort}>
+                SKU
+              </SortableHeader>
+              <SortableHeader field="category_id" sortField={sortField} sortDirection={sortDirection} onSort={handleSort}>
+                Category
+              </SortableHeader>
+              <SortableHeader field="quantity_on_hand" sortField={sortField} sortDirection={sortDirection} onSort={handleSort}>
+                Stock
+              </SortableHeader>
+              <SortableHeader field="unit_id" sortField={sortField} sortDirection={sortDirection} onSort={handleSort}>
+                Unit
+              </SortableHeader>
+              <SortableHeader field="cost_price" sortField={sortField} sortDirection={sortDirection} onSort={handleSort} className="text-right">
+                Cost Price
+              </SortableHeader>
+              <SortableHeader field="sale_price" sortField={sortField} sortDirection={sortDirection} onSort={handleSort} className="text-right">
+                Sale Price
+              </SortableHeader>
+              <SortableHeader field="is_active" sortField={sortField} sortDirection={sortDirection} onSort={handleSort}>
+                Status
+              </SortableHeader>
               <TableHead className="text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
@@ -295,11 +572,8 @@ export const ProductTable = ({ onEdit, onRefresh }: ProductTableProps) => {
                   <TableCell className="font-mono text-sm">
                     {product.sku_code}
                   </TableCell>
-                  <TableCell className="font-mono text-sm">
-                    {product.hsn_code || '-'}
-                  </TableCell>
                   <TableCell>
-                    {product.categories?.name || '-'}
+                    {product.categories?.name || product.category_id || '-'}
                   </TableCell>
                   <TableCell>
                     <TooltipProvider>
@@ -368,13 +642,10 @@ export const ProductTable = ({ onEdit, onRefresh }: ProductTableProps) => {
                     </TooltipProvider>
                   </TableCell>
                   <TableCell>
-                    {product.units ? `${product.units.name} (${product.units.abbreviation})` : '-'}
+                    {product.units ? `${product.units.name} (${product.units.abbreviation})` : (product.unit_id || '-')}
                   </TableCell>
                   <TableCell className="text-right">
                     {formatCurrency(product.cost_price || 0, currency)}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    {formatCurrency(product.selling_price || 0, currency)}
                   </TableCell>
                   <TableCell className="text-right">
                     {formatCurrency(product.sale_price || 0, currency)}
@@ -444,13 +715,21 @@ export const ProductTable = ({ onEdit, onRefresh }: ProductTableProps) => {
                           </Tooltip>
                         </TooltipProvider>
                       )}
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => handlePrintProduct(product)}
+                        title="Print Product"
+                      >
+                        <FileText className="h-4 w-4" />
+                      </Button>
                     </div>
                   </TableCell>
                 </TableRow>
               ))
             ) : (
               <TableRow>
-                <TableCell colSpan={11} className="text-center py-4 text-muted-foreground">
+                <TableCell colSpan={9} className="text-center py-4 text-muted-foreground">
                   No products found. Add a new product to get started.
                 </TableCell>
               </TableRow>
@@ -506,6 +785,13 @@ export const ProductTable = ({ onEdit, onRefresh }: ProductTableProps) => {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <PrintPreviewDialog
+        open={printDialogOpen}
+        onOpenChange={setPrintDialogOpen}
+        documentType="product"
+        data={printingProduct}
+      />
     </div>
   );
 };

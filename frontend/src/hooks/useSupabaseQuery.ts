@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
+import { performanceMonitor } from '@/lib/performance';
 
 // Generic hook for Supabase queries with better caching
 export function useSupabaseQuery<T = any>(
@@ -25,6 +26,8 @@ export function useSupabaseQuery<T = any>(
   return useQuery({
     queryKey: key,
     queryFn: async () => {
+      const queryName = key.join('-');
+      performanceMonitor.startTimer(`query-${queryName}`);
       try {
         const result = await queryFn();
         const { data, error } = result;
@@ -36,6 +39,8 @@ export function useSupabaseQuery<T = any>(
       } catch (err) {
         console.error(`Unexpected error in query ${key.join('-')}:`, err);
         throw err;
+      } finally {
+        performanceMonitor.endTimer(`query-${queryName}`);
       }
     },
     staleTime,
@@ -66,6 +71,7 @@ export function useSupabaseMutation<T>(
   
   return useMutation({
     mutationFn: async (data: T) => {
+      performanceMonitor.startTimer('mutation-execution');
       try {
         const { data: result, error } = await mutationFn(data);
         if (error) {
@@ -76,6 +82,8 @@ export function useSupabaseMutation<T>(
       } catch (err) {
         console.error('Unexpected mutation error:', err);
         throw err;
+      } finally {
+        performanceMonitor.endTimer('mutation-execution');
       }
     },
     retry,
@@ -121,6 +129,8 @@ export function usePaginatedSupabaseQuery<T = any>(
   return useQuery({
     queryKey: [...key, page, limit],
     queryFn: async () => {
+      const queryName = [...key, page, limit].join('-');
+      performanceMonitor.startTimer(`paginated-query-${queryName}`);
       try {
         const result = await queryFn(page, limit);
         const { data, error } = result;
@@ -132,6 +142,8 @@ export function usePaginatedSupabaseQuery<T = any>(
       } catch (err) {
         console.error(`Unexpected error in paginated query ${key.join('-')}:`, err);
         throw err;
+      } finally {
+        performanceMonitor.endTimer(`paginated-query-${queryName}`);
       }
     },
     staleTime,
@@ -165,6 +177,8 @@ export function useSearchSupabaseQuery<T = any>(
   return useQuery({
     queryKey: [...key, searchTerm],
     queryFn: async () => {
+      const queryName = [...key, searchTerm].join('-');
+      performanceMonitor.startTimer(`search-query-${queryName}`);
       try {
         const result = await queryFn(searchTerm);
         const { data, error } = result;
@@ -176,6 +190,8 @@ export function useSearchSupabaseQuery<T = any>(
       } catch (err) {
         console.error(`Unexpected error in search query ${key.join('-')}:`, err);
         throw err;
+      } finally {
+        performanceMonitor.endTimer(`search-query-${queryName}`);
       }
     },
     staleTime,
