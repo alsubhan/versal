@@ -1,7 +1,8 @@
 
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Plus } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Plus, Search } from "lucide-react";
 import { ProductTable } from "@/components/products/ProductTable";
 import { ProductDialog } from "@/components/products/ProductDialog";
 import { useAuth } from "@/hooks/useAuth";
@@ -32,6 +33,7 @@ const ProductsPage = () => {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [searchTerm, setSearchTerm] = useState("");
   const { hasPermission } = useAuth();
   const canCreateProducts = hasPermission('products_create');
   
@@ -85,11 +87,22 @@ const ProductsPage = () => {
           )}
         </div>
         
+        <div className="flex items-center gap-2">
+          <Search className="h-4 w-4 text-gray-400" />
+          <Input
+            placeholder="Search products..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="max-w-sm"
+          />
+        </div>
+        
         {/* Pass onEdit prop properly to ProductTable component */}
         <ProductTable 
           key={refreshKey}
           onEdit={handleEditProduct} 
           onRefresh={handleRefresh}
+          searchTerm={searchTerm}
         />
         
         <ProductDialog 

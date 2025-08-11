@@ -1,7 +1,8 @@
 
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Plus } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Plus, Search } from "lucide-react";
 import { CustomerTable } from "@/components/customers/CustomerTable";
 import { CustomerDialog } from "@/components/customers/CustomerDialog";
 import { type Customer } from "@/types/customer";
@@ -14,6 +15,8 @@ import { PermissionGuard } from "@/components/ui/permission-guard";
 const CustomersPage = () => {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [refreshKey, setRefreshKey] = useState(0);
   const { hasPermission } = useAuth();
   const canCreateCustomers = hasPermission('customers_create');
   
@@ -25,6 +28,10 @@ const CustomersPage = () => {
   const handleEditCustomer = (customer: Customer) => {
     setEditingCustomer(customer);
     setIsDialogOpen(true);
+  };
+
+  const handleRefresh = () => {
+    setRefreshKey(prev => prev + 1);
   };
 
   const handleCustomerSubmit = async (customer: Customer) => {
@@ -41,7 +48,7 @@ const CustomersPage = () => {
       }
       setIsDialogOpen(false);
       // Refresh the table
-      window.location.reload();
+      handleRefresh();
     } catch (error: any) {
       console.error('Error saving customer:', error);
       if (error.status === 409) {
@@ -89,7 +96,23 @@ const CustomersPage = () => {
             </TooltipProvider>
           )}
         </div>
-        <CustomerTable onEdit={handleEditCustomer} />
+        
+        <div className="flex items-center gap-2">
+          <Search className="h-4 w-4 text-gray-400" />
+          <Input
+            placeholder="Search customers..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="max-w-sm"
+          />
+        </div>
+        
+        <CustomerTable 
+          key={refreshKey}
+          onEdit={handleEditCustomer} 
+          searchTerm={searchTerm} 
+          onRefresh={handleRefresh}
+        />
         <CustomerDialog 
           open={isDialogOpen} 
           onOpenChange={setIsDialogOpen}

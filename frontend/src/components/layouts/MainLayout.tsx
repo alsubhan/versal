@@ -7,9 +7,11 @@ import { ConfigIndicator } from '@/components/ConfigIndicator';
 import { PerformanceDashboard } from '@/components/PerformanceDashboard';
 
 export const MainLayout: React.FC = () => {
-  const { isAuthenticated, loading } = useAuth();
+  const { isAuthenticated, loading, _instanceId } = useAuth();
   const location = useLocation();
   const [isPerformanceDashboardVisible, setIsPerformanceDashboardVisible] = useState(false);
+  
+  console.log(`🏗️ MainLayout using useAuth instance: ${_instanceId}`);
 
   const togglePerformanceDashboard = () => {
     setIsPerformanceDashboardVisible(!isPerformanceDashboardVisible);

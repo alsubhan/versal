@@ -1,6 +1,6 @@
 
 import { useState, useEffect } from "react";
-import { Edit, Trash2 } from "lucide-react";
+import { Edit, Trash2, ChevronUp, ChevronDown } from "lucide-react";
 import { toast } from "sonner";
 
 import {
@@ -34,15 +34,18 @@ import { getUnits, deleteUnit } from "@/lib/api";
 
 interface UnitTableProps {
   onEdit: (unit: Unit) => void;
+  searchTerm?: string;
+  onRefresh?: () => void;
 }
 
-export function UnitTable({ onEdit }: UnitTableProps) {
+export function UnitTable({ onEdit, searchTerm = "", onRefresh }: UnitTableProps) {
   // Move all hooks to the top
   const [loading, setLoading] = useState(true);
   const [units, setUnits] = useState<Unit[]>([]);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [selectedUnit, setSelectedUnit] = useState<Unit | undefined>(undefined);
-  const [searchTerm, setSearchTerm] = useState("");
+  const [sortField, setSortField] = useState<string>("name");
+  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
   const { hasPermission } = useAuth();
   const canEditUnits = hasPermission('units_edit');
   const canDeleteUnits = hasPermission('units_delete');
@@ -122,18 +125,6 @@ export function UnitTable({ onEdit }: UnitTableProps) {
   return (
     <>
       <div className="space-y-4">
-        <div className="flex items-center gap-2">
-          <div className="relative flex-1">
-            <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-gray-500" />
-            <Input
-              placeholder="Search units..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="pl-8"
-            />
-          </div>
-        </div>
-        
         <div className="rounded-md border">
           <Table>
             <TableHeader>

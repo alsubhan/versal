@@ -1,6 +1,9 @@
+# -*- coding: utf-8 -*-
 from fastapi import FastAPI, Depends, HTTPException, status, Security, Body
 import os
 import json
+import random
+from datetime import datetime, timedelta, date
 from supabase import create_client, Client
 from fastapi.responses import JSONResponse
 from dotenv import load_dotenv
@@ -9,11 +12,26 @@ import requests
 from jose import jwt as jose_jwt
 from jose.exceptions import JWTError
 from fastapi.middleware.cors import CORSMiddleware
+import httpx
 import uvicorn
+import sys
 
 load_dotenv()  # Load environment variables from .env file
 
-app = FastAPI()
+# Check for DEBUG mode from environment variable
+DEBUG_MODE = os.getenv("DEBUG", "false").lower() == "true"
+
+if DEBUG_MODE:
+    print("🔧 DEBUG MODE ENABLED - Debug endpoints and features are active")
+else:
+    print("🚀 PRODUCTION MODE - Debug features are disabled")
+
+app = FastAPI(
+    title="Versal API",
+    description="Inventory Management System API",
+    version="1.0.0",
+    debug=DEBUG_MODE
+)
 
 # Add CORS middleware
 app.add_middleware(
@@ -25,6 +43,9 @@ app.add_middleware(
         "http://127.0.0.1:8080",  # Alternative localhost
         "http://127.0.0.1:5173",  # Alternative localhost
         "http://127.0.0.1:3000",  # Alternative localhost
+        "http://localhost:4173",  # Vite preview port
+        "http://127.0.0.1:4173",  # Vite preview port
+        "*",  # Allow all origins in development
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -41,11 +62,35 @@ if not SUPABASE_SERVICE_KEY:
     raise ValueError("SUPABASE_SERVICE_KEY environment variable is not set")
 
 SUPABASE_JWKS_URL = f"{SUPABASE_URL}/auth/v1/.well-known/jwks.json"
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+
+def get_supabase_client():
+    """Get a fresh Supabase client to avoid connection reuse issues"""
+    return create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+
+# Keep a global client for backward compatibility
+supabase: Client = get_supabase_client()
 bearer_scheme = HTTPBearer()
 
 # Cache the JWK set
 _jwk_set = None
+
+def debug_log(message):
+    """Log message only if DEBUG mode is enabled"""
+    if DEBUG_MODE:
+        print(f"[DEBUG] {message}")
+
+def require_debug_mode():
+    """Decorator to require DEBUG mode for endpoints"""
+    def decorator(func):
+        def wrapper(*args, **kwargs):
+            if not DEBUG_MODE:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN, 
+                    detail="Debug endpoints are only available in DEBUG mode"
+                )
+            return func(*args, **kwargs)
+        return wrapper
+    return decorator
 
 def get_jwk_set():
     global _jwk_set
@@ -95,8 +140,11 @@ def to_camel_case_role(role):
     }
 
 def to_camel_case_user(user):
+    if not user:
+        return None
     return {
         **user,
+        "fullName": user.get("full_name"),
         "role": user.get("role"),
         "createdAt": user.get("created_at"),
         "updatedAt": user.get("updated_at"),
@@ -125,69 +173,47 @@ def require_permission(required_permission):
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid token: missing user ID"
             )
-        
-        # Get user's role and permissions from profiles and roles tables
+
         try:
-            print(f"Checking permission '{required_permission}' for user {user_id}")
-            
-            # Get user profile with role_id
-            profile_data = supabase.table("profiles").select("role_id").eq("id", user_id).execute()
+            debug_log(f"Checking permission '{required_permission}' for user {user_id}")
+
+            client = get_supabase_client()
+
+            # Load profile with role
+            try:
+                profile_data = client.table("profiles").select("role_id").eq("id", user_id).execute()
+            except httpx.RemoteProtocolError:
+                client = get_supabase_client()
+                profile_data = client.table("profiles").select("role_id").eq("id", user_id).execute()
+
             if not profile_data.data:
-                print(f"User profile not found for user {user_id}")
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="User profile not found"
-                )
-            
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="User profile not found")
+
             user_role_id = profile_data.data[0].get("role_id")
             if not user_role_id:
-                print(f"User {user_id} has no assigned role")
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="User has no assigned role"
-                )
-            
-            print(f"User {user_id} has role_id: {user_role_id}")
-            
-            # Get role name from roles table
-            role_data = supabase.table("roles").select("name, permissions").eq("id", user_role_id).execute()
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="User has no assigned role")
+
+            # Load role and permissions
+            role_data = client.table("roles").select("name, permissions").eq("id", user_role_id).execute()
             if not role_data.data:
-                print(f"Role not found for role_id {user_role_id}")
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Role not found"
-                )
-            
-            user_role_name = role_data.data[0].get("name")
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Role not found")
+
             user_permissions = role_data.data[0].get("permissions", [])
-            
-            print(f"User {user_id} has role '{user_role_name}' with permissions: {user_permissions}")
-            
-            # Parse permissions if it's a JSON string
             if isinstance(user_permissions, str):
                 try:
                     user_permissions = json.loads(user_permissions)
                 except json.JSONDecodeError:
                     user_permissions = []
-            
-            # Check if user has the required permission
+
             if required_permission not in user_permissions:
-                print(f"User {user_id} missing permission '{required_permission}'. Available: {user_permissions}")
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail=f"Forbidden: missing permission '{required_permission}'"
-                )
-            
-            print(f"Permission '{required_permission}' granted for user {user_id}")
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Forbidden: missing permission '{required_permission}'")
+
             return payload
-            
+        except HTTPException:
+            raise
         except Exception as e:
-            print(f"Error checking permissions for user {user_id}: {str(e)}")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Error checking permissions: {str(e)}"
-            )
-    
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Error checking permissions: {str(e)}")
+
     return decorator
 
 # Utility functions for camelCase conversion
@@ -290,21 +316,74 @@ def to_camel_case_customer(customer):
     }
 
 def to_camel_case_credit_note(credit_note):
+    """Convert credit note data from snake_case to camelCase"""
+    # Transform nested customer if it exists
+    customer = credit_note.get("customers")
+    if customer:
+        customer = to_camel_case_customer(customer)
+    
     return {
-        "id": credit_note["id"],
-        "customerId": credit_note["customer_id"],
-        "customerName": credit_note.get("customer_name"),
-        "invoiceNumber": credit_note.get("invoice_number"),
+        "id": credit_note.get("id"),
         "creditNoteNumber": credit_note.get("credit_note_number"),
-        "issueDate": credit_note.get("issue_date"),
-        "dueDate": credit_note.get("due_date"),
-        "subtotal": float(credit_note["subtotal"]) if credit_note.get("subtotal") else 0,
-        "taxAmount": float(credit_note["tax_amount"]) if credit_note.get("tax_amount") else 0,
-        "totalAmount": float(credit_note["total_amount"]) if credit_note.get("total_amount") else 0,
+        "salesOrderId": credit_note.get("sales_order_id"),
+        "invoiceId": credit_note.get("invoice_id"),  # NEW: Add invoice_id
+        "customerId": credit_note.get("customer_id"),
+        "customer": customer,
+        "creditDate": credit_note.get("credit_date"),
+        "reason": credit_note.get("reason"),
+        "reasonDescription": credit_note.get("reason_description"),
         "status": credit_note.get("status", "draft"),
+        "approvalRequired": credit_note.get("approval_required", True),
+        "approvedBy": credit_note.get("approved_by"),
+        "approvedDate": credit_note.get("approved_date"),
+        "subtotal": float(credit_note.get("subtotal", 0)),
+        "taxAmount": float(credit_note.get("tax_amount", 0)),
+        "discountAmount": float(credit_note.get("discount_amount", 0)),
+        "totalAmount": float(credit_note.get("total_amount", 0)),
+        "roundingAdjustment": float(credit_note.get("rounding_adjustment", 0)),
+        "refundMethod": credit_note.get("refund_method", "credit_account"),
+        "refundProcessed": credit_note.get("refund_processed", False),
+        "refundDate": credit_note.get("refund_date"),
+        "refundReference": credit_note.get("refund_reference"),
+        "affectsInventory": credit_note.get("affects_inventory", True),
+        "inventoryProcessed": credit_note.get("inventory_processed", False),
+        "creditNoteType": credit_note.get("credit_note_type", "invoice_linked"),  # NEW: Add credit_note_type
         "notes": credit_note.get("notes"),
+        "internalNotes": credit_note.get("internal_notes"),
+        "createdBy": credit_note.get("created_by"),
         "createdAt": credit_note.get("created_at"),
         "updatedAt": credit_note.get("updated_at")
+    }
+
+def to_camel_case_credit_note_item(item):
+    """Convert credit note item data from snake_case to camelCase"""
+    return {
+        "id": item.get("id"),
+        "creditNoteId": item.get("credit_note_id"),
+        "productId": item.get("product_id"),
+        "productName": item.get("products", {}).get("name") if item.get("products") else item.get("product_name"),
+        "skuCode": item.get("products", {}).get("sku_code") if item.get("products") else item.get("sku_code"),
+        "hsnCode": item.get("products", {}).get("hsn_code") if item.get("products") else item.get("hsn_code"),
+        "salesOrderItemId": item.get("sales_order_item_id"),
+        "originalQuantity": item.get("original_quantity"),
+        "creditQuantity": item.get("credit_quantity"),
+        "unitPrice": item.get("unit_price"),
+        "discount": item.get("discount"),
+        "tax": item.get("tax"),
+        "total": item.get("total"),
+        "returnedQuantity": item.get("returned_quantity"),
+        "conditionOnReturn": item.get("condition_on_return"),
+        "returnToStock": item.get("return_to_stock"),
+        "batchNumber": item.get("batch_number"),
+        "expiryDate": item.get("expiry_date"),
+        "storageLocation": item.get("storage_location"),
+        "qualityNotes": item.get("quality_notes"),
+        "saleTaxType": item.get("sale_tax_type"),
+        "unitAbbreviation": item.get("unit_abbreviation"),
+        "createdBy": item.get("created_by"),
+        "reason": item.get("reason"),
+        "createdAt": item.get("created_at"),
+        "updatedAt": item.get("updated_at")
     }
 
 def to_camel_case_stock_level(stock_level):
@@ -403,7 +482,26 @@ def to_camel_case_system_setting(system_setting):
 def read_root():
     return {"message": "Hello, FastAPI!"}
 
+@app.get("/debug/status")
+@require_debug_mode()
+def debug_status():
+    """Get debug mode status and available debug endpoints"""
+    return {
+        "debug_mode": DEBUG_MODE,
+        "available_debug_endpoints": [
+            "/debug/status",
+            "/debug/roles-schema",
+            "/debug/profiles-schema", 
+            "/debug/stock-levels-schema",
+            "/debug/inventory-transactions-schema",
+            "/debug/products",
+            "/debug/stock-levels"
+        ],
+        "message": "Debug mode is active. Use these endpoints for troubleshooting."
+    }
+
 @app.get("/debug/roles-schema")
+@require_debug_mode()
 def debug_roles_schema():
     try:
         # Test query to check roles table schema
@@ -413,6 +511,7 @@ def debug_roles_schema():
         return {"error": str(e), "message": "Roles table error"}
 
 @app.get("/debug/profiles-schema")
+@require_debug_mode()
 def debug_profiles_schema():
     try:
         # Test query to check profiles table schema
@@ -422,6 +521,7 @@ def debug_profiles_schema():
         return {"error": str(e), "message": "Profiles table error"}
 
 @app.get("/debug/stock-levels-schema")
+@require_debug_mode()
 def debug_stock_levels_schema():
     try:
         # Test query to check stock_levels table schema
@@ -431,6 +531,7 @@ def debug_stock_levels_schema():
         return {"error": str(e), "message": "Stock levels table error"}
 
 @app.get("/debug/inventory-transactions-schema")
+@require_debug_mode()
 def debug_inventory_transactions_schema():
     try:
         # Test query to check inventory_transactions table schema
@@ -442,24 +543,26 @@ def debug_inventory_transactions_schema():
 @app.get("/products")
 def get_products(payload=Depends(verify_jwt)):
     try:
-        print("Products endpoint: Starting query with stock_levels...")
-        # Query products with related category, unit, and stock data
+        debug_log("Products endpoint: Starting query with stock_levels...")
+        # Query products with related category, unit, stock data, and tax information
         # Use specific relationship names to avoid conflicts
         products_data = supabase.table("products").select("""
             *,
             categories!products_category_id_fkey(name),
             units(name, abbreviation),
-            stock_levels(quantity_on_hand, quantity_available)
+            stock_levels(quantity_on_hand, quantity_available),
+            purchase_tax:taxes!products_purchase_tax_id_fkey(id, name, rate),
+            sale_tax:taxes!products_sale_tax_id_fkey(id, name, rate)
         """).execute()
         
-        print(f"Products endpoint: Query successful, got {len(products_data.data) if products_data.data else 0} products")
+        debug_log(f"Products endpoint: Query successful, got {len(products_data.data) if products_data.data else 0} products")
         
         if products_data.data:
             # Process the data to ensure stock_levels is always an array
             processed_data = []
             for product in products_data.data:
-                print(f"Processing product {product.get('name', 'Unknown')}: stock_levels = {product.get('stock_levels')}")
-                print(f"Product {product.get('name', 'Unknown')}: reorder_point = {product.get('reorder_point')} (type: {type(product.get('reorder_point'))})")
+                debug_log(f"Processing product {product.get('name', 'Unknown')}: stock_levels = {product.get('stock_levels')}")
+                debug_log(f"Product {product.get('name', 'Unknown')}: reorder_point = {product.get('reorder_point')} (type: {type(product.get('reorder_point'))})")
                 # Convert stock_levels object to array if it's not already
                 if product.get('stock_levels') and not isinstance(product['stock_levels'], list):
                     product['stock_levels'] = [product['stock_levels']]
@@ -467,22 +570,22 @@ def get_products(payload=Depends(verify_jwt)):
                     product['stock_levels'] = []
                 processed_data.append(product)
             
-            print(f"Products endpoint: Returning {len(processed_data)} processed products")
+            debug_log(f"Products endpoint: Returning {len(processed_data)} processed products")
             return JSONResponse(content=processed_data)
         else:
-            print("Products endpoint: No data returned from query")
+            debug_log("Products endpoint: No data returned from query")
             return JSONResponse(content=[])
             
     except Exception as e:
-        print(f"Exception in products endpoint: {str(e)}")
+        debug_log(f"Exception in products endpoint: {str(e)}")
         # Fallback to basic query if join fails
         try:
-            print("Products endpoint: Trying fallback query...")
+            debug_log("Products endpoint: Trying fallback query...")
             products_data = supabase.table("products").select("*").execute()
-            print(f"Fallback query returned {len(products_data.data) if products_data.data else 0} products")
+            debug_log(f"Fallback query returned {len(products_data.data) if products_data.data else 0} products")
             return JSONResponse(content=products_data.data or [])
         except Exception as fallback_error:
-            print(f"Fallback query also failed: {str(fallback_error)}")
+            debug_log(f"Fallback query also failed: {str(fallback_error)}")
             return JSONResponse(content=[])
 
 @app.post("/products")
@@ -572,7 +675,7 @@ def create_product(product: dict = Body(...), payload=Depends(require_permission
         
         # Handle initial stock quantity
         initial_quantity = product.get("initialQty", 0) or product.get("initial_quantity", 0)
-        print(f"Create product: initial_quantity = {initial_quantity}, product_id = {created_product.get('id') if created_product else 'None'}")
+        debug_log(f"Create product: initial_quantity = {initial_quantity}, product_id = {created_product.get('id') if created_product else 'None'}")
         
         # Always create stock level record, even if initial_quantity is 0
         if created_product:
@@ -585,11 +688,11 @@ def create_product(product: dict = Body(...), payload=Depends(require_permission
                     "created_by": payload.get("sub")
                     # quantity_available is a generated column, so we don't set it
                 }
-                print(f"Creating stock level with data: {stock_data}")
+                debug_log(f"Creating stock level with data: {stock_data}")
                 
                 # Create the stock level
                 stock_result = supabase.table("stock_levels").insert(stock_data).execute()
-                print(f"Stock level created successfully for product {created_product['id']}")
+                debug_log(f"Stock level created successfully for product {created_product['id']}")
                 
                 # Create inventory transaction for audit trail only if there's initial quantity
                 if stock_result.data and len(stock_result.data) > 0 and initial_quantity > 0:
@@ -606,26 +709,26 @@ def create_product(product: dict = Body(...), payload=Depends(require_permission
                     
                     try:
                         supabase.table("inventory_transactions").insert(transaction_data).execute()
-                        print(f"Created inventory transaction for initial stock")
+                        debug_log(f"Created inventory transaction for initial stock")
                     except Exception as transaction_error:
-                        print(f"Error creating inventory transaction: {str(transaction_error)}")
+                        debug_log(f"Error creating inventory transaction: {str(transaction_error)}")
                         # Don't fail if transaction creation fails
                 else:
-                    print(f"Stock level created for product {created_product['id']} with quantity: {initial_quantity}")
+                    debug_log(f"Stock level created for product {created_product['id']} with quantity: {initial_quantity}")
                     
             except Exception as stock_error:
-                print(f"Error creating stock level: {str(stock_error)}")
+                debug_log(f"Error creating stock level: {str(stock_error)}")
                 # Check if it's a unique constraint violation (stock level already exists)
                 if "duplicate key value violates unique constraint" in str(stock_error) and "stock_levels_product_id_key" in str(stock_error):
-                    print(f"Stock level already exists for product {created_product['id']}, skipping stock creation")
+                    debug_log(f"Stock level already exists for product {created_product['id']}, skipping stock creation")
                 else:
-                    print(f"Unexpected error creating stock level: {str(stock_error)}")
+                    debug_log(f"Unexpected error creating stock level: {str(stock_error)}")
                 # Don't fail the product creation if stock creation fails
         
         return JSONResponse(content=created_product)
         
     except Exception as e:
-        print(f"Error creating product: {str(e)}")
+        debug_log(f"Error creating product: {str(e)}")
         
         # Handle unique constraint violations
         if "duplicate key value violates unique constraint" in str(e):
@@ -805,7 +908,13 @@ def delete_product(product_id: str, payload=Depends(require_permission("products
 
 @app.get("/customers")
 def get_customers(payload=Depends(verify_jwt)):
-    data = supabase.table("customers").select("*").execute()
+    try:
+        fresh = get_supabase_client()
+        data = fresh.table("customers").select("*").execute()
+    except httpx.RemoteProtocolError:
+        # Retry once with a brand-new client to avoid HTTP/2 connection reuse issues
+        fresh = get_supabase_client()
+        data = fresh.table("customers").select("*").execute()
     customers = [to_camel_case_customer(customer) for customer in data.data]
     return JSONResponse(content=customers)
 
@@ -883,9 +992,22 @@ def delete_customer(customer_id: str, payload=Depends(require_permission("custom
     data = supabase.table("customers").delete().eq("id", customer_id).execute()
     return JSONResponse(content=data.data)
 
+@app.get("/customers/{customer_id}/credit-balance")
+def get_customer_credit_balance(customer_id: str, payload=Depends(require_permission("customers_view"))):
+    """Get a customer's credit balance."""
+    data = supabase.table("customer_credit_balances").select("total_credit_balance").eq("customer_id", customer_id).execute()
+    if not data.data:
+        return JSONResponse(content={"creditBalance": 0})
+    return JSONResponse(content={"creditBalance": data.data[0]["total_credit_balance"]})
+
 @app.get("/suppliers")
 def get_suppliers(payload=Depends(verify_jwt)):
-    data = supabase.table("suppliers").select("*").execute()
+    try:
+        client = get_supabase_client()
+        data = client.table("suppliers").select("*").execute()
+    except (httpx.RemoteProtocolError, httpx.ConnectError):
+        client = get_supabase_client()
+        data = client.table("suppliers").select("*").execute()
     suppliers = [to_camel_case_supplier(supplier) for supplier in data.data]
     return JSONResponse(content=suppliers)
 
@@ -963,7 +1085,12 @@ def delete_supplier(supplier_id: str, payload=Depends(require_permission("suppli
 
 @app.get("/taxes")
 def get_taxes(payload=Depends(verify_jwt)):
-    data = supabase.table("taxes").select("*").execute()
+    try:
+        client = get_supabase_client()
+        data = client.table("taxes").select("*").execute()
+    except httpx.RemoteProtocolError:
+        client = get_supabase_client()
+        data = client.table("taxes").select("*").execute()
     taxes = [to_camel_case_tax(tax) for tax in data.data]
     return JSONResponse(content=taxes)
 
@@ -1845,8 +1972,12 @@ def create_user(user: dict = Body(...), payload=Depends(require_role(["admin"]))
                         # Update the profile with the correct role if needed
                         if user.get("role"):
                             try:
-                                # Update profile with role directly
-                                supabase.table("profiles").update({"role": user.get("role")}).eq("id", user_id).execute()
+                                # Get role_id from roles table based on role name
+                                role_data = supabase.table("roles").select("id").eq("name", user.get("role")).execute()
+                                if role_data.data:
+                                    role_id = role_data.data[0]["id"]
+                                    # Update profile with role_id
+                                    supabase.table("profiles").update({"role_id": role_id}).eq("id", user_id).execute()
                             except Exception as e:
                                 print(f"Error updating role: {str(e)}")  # Debug log
                         
@@ -1906,16 +2037,25 @@ def update_user(user_id: str, user: dict = Body(...), payload=Depends(require_ro
         status = user_data.pop("status")
         user_data["is_active"] = (status == "Active")
     
-    # Map role name to role (no need to convert since we use role directly)
+    # Map role name to role_id
     if "role" in user_data:
-        # Keep the role as is, just ensure it's a valid enum value
-        role_name = user_data["role"]
+        role_name = user_data.pop("role")
         if role_name not in ["admin", "manager", "staff"]:
             raise HTTPException(status_code=400, detail=f"Invalid role: {role_name}")
+        
+        # Get role_id from roles table based on role name
+        try:
+            role_data = supabase.table("roles").select("id").eq("name", role_name).execute()
+            if role_data.data:
+                user_data["role_id"] = role_data.data[0]["id"]
+            else:
+                raise HTTPException(status_code=400, detail=f"Role '{role_name}' not found")
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Error fetching role: {str(e)}")
     
     # Map camelCase to snake_case
     if "roleId" in user_data:
-        user_data["role"] = user_data.pop("roleId")
+        user_data["role_id"] = user_data.pop("roleId")
     if "createdAt" in user_data:
         user_data["created_at"] = user_data.pop("createdAt")
     if "updatedAt" in user_data:
@@ -1962,6 +2102,7 @@ def check_user_status(user_id: str, payload=Depends(verify_jwt)):
         raise HTTPException(status_code=500, detail=f"Error checking user status: {str(e)}")
 
 @app.get("/debug/profiles-schema")
+@require_debug_mode()
 def get_profiles_schema(payload=Depends(require_role(["admin"]))):
     try:
         # Try to get all columns from profiles table
@@ -1986,6 +2127,7 @@ def get_profiles_schema(payload=Depends(require_role(["admin"]))):
         })
 
 @app.get("/debug/products")
+@require_debug_mode()
 def debug_products():
     try:
         # Check if products table exists and has data
@@ -2011,6 +2153,7 @@ def debug_products():
         }
 
 @app.get("/debug/stock-levels")
+@require_debug_mode()
 def debug_stock_levels():
     try:
         # Test direct access to stock_levels table
@@ -2038,9 +2181,27 @@ def get_supabase_config():
 # Credit Notes endpoints
 @app.get("/credit-notes")
 def get_credit_notes(payload=Depends(require_permission("credit_notes_view"))):
-    data = supabase.table("credit_notes").select("*").execute()
-    credit_notes = [to_camel_case_credit_note(note) for note in data.data]
-    return JSONResponse(content=credit_notes)
+    # Join with customers to get customer names
+    data = supabase.table("credit_notes").select("*, customers(*)").execute()
+    # Transform to camelCase
+    transformed_data = [to_camel_case_credit_note(credit_note) for credit_note in data.data]
+    return JSONResponse(content=transformed_data)
+
+@app.get("/credit-notes/{credit_note_id}")
+def get_credit_note(credit_note_id: str, payload=Depends(require_permission("credit_notes_view"))):
+    # Get credit note with customer and items
+    cn_data = supabase.table("credit_notes").select("*, customers(*)").eq("id", credit_note_id).execute()
+    if not cn_data.data:
+        return JSONResponse(content={"error": "Credit note not found"}, status_code=404)
+    
+    # Get items for this credit note
+    items_data = supabase.table("credit_note_items").select("*, products(*)").eq("credit_note_id", credit_note_id).execute()
+    
+    # Transform credit note
+    credit_note = to_camel_case_credit_note(cn_data.data[0])
+    credit_note["items"] = [to_camel_case_credit_note_item(item) for item in items_data.data]
+    
+    return JSONResponse(content=credit_note)
 
 @app.post("/credit-notes")
 def create_credit_note(credit_note: dict = Body(...), payload=Depends(require_permission("credit_notes_create"))):
@@ -2048,6 +2209,7 @@ def create_credit_note(credit_note: dict = Body(...), payload=Depends(require_pe
     credit_note_data = {
         "credit_note_number": credit_note["creditNoteNumber"],
         "sales_order_id": credit_note.get("salesOrderId"),
+        "invoice_id": credit_note.get("invoiceId"),  # NEW: Add invoice_id support
         "customer_id": credit_note["customerId"],
         "credit_date": credit_note.get("creditDate", "CURRENT_DATE"),
         "reason": credit_note["reason"],
@@ -2058,21 +2220,70 @@ def create_credit_note(credit_note: dict = Body(...), payload=Depends(require_pe
         "tax_amount": credit_note.get("taxAmount", 0),
         "discount_amount": credit_note.get("discountAmount", 0),
         "total_amount": credit_note.get("totalAmount", 0),
+        "rounding_adjustment": credit_note.get("roundingAdjustment", 0), # Added
         "refund_method": credit_note.get("refundMethod", "credit_account"),
         "affects_inventory": credit_note.get("affectsInventory", True),
+        "credit_note_type": credit_note.get("creditNoteType", "invoice_linked"),  # NEW: Add credit_note_type
         "notes": credit_note.get("notes"),
         "internal_notes": credit_note.get("internalNotes"),
         "created_by": payload.get("sub")  # Use the current user's ID
     }
+    
+    # Validate invoice_id is provided for invoice_linked credit notes
+    if credit_note_data["credit_note_type"] == "invoice_linked" and not credit_note_data["invoice_id"]:
+        raise HTTPException(status_code=400, detail="invoice_id is required for invoice_linked credit notes")
+    
+    # Create the credit note
     data = supabase.table("credit_notes").insert(credit_note_data).execute()
-    return JSONResponse(content=data.data)
+    created_credit_note = data.data[0] if data.data else None
+    
+    if not created_credit_note:
+        raise HTTPException(status_code=500, detail="Failed to create credit note")
+    
+    # Insert items if they exist
+    items = credit_note.get("items", [])
+    if items and len(items) > 0:
+        items_data = []
+        for item in items:
+            item_data = {
+                "credit_note_id": created_credit_note["id"],
+                "product_id": item["productId"],
+                "product_name": item["productName"],
+                "sku_code": item["skuCode"],
+                "hsn_code": item["hsnCode"],
+                "credit_quantity": item["quantity"],  # Use credit_quantity field
+                "unit_price": item["unitPrice"],
+                "discount": item.get("discount", 0),
+                "tax": item.get("tax", 0),
+                "sale_tax_type": item.get("saleTaxType", "exclusive"), # Added
+                "unit_abbreviation": item.get("unitAbbreviation", ""), # Added
+                "created_by": payload["sub"]
+            }
+            items_data.append(item_data)
+        
+        # Insert all items
+        if items_data:
+            supabase.table("credit_note_items").insert(items_data).execute()
+    
+    return JSONResponse(content=created_credit_note)
 
 @app.put("/credit-notes/{credit_note_id}")
 def update_credit_note(credit_note_id: str, credit_note: dict = Body(...), payload=Depends(require_permission("credit_notes_edit"))):
+    # Get current credit note status for validation
+    current_credit_note_data = supabase.table("credit_notes").select("status").eq("id", credit_note_id).execute()
+    if not current_credit_note_data.data:
+        raise HTTPException(status_code=404, detail="Credit note not found")
+    
+    current_status = current_credit_note_data.data[0]["status"]
+    
+    # Validate status transition
+    validate_credit_note_status_transition(current_status, operation="edit")
+    
     # Map camelCase to snake_case
     credit_note_data = {
         "credit_note_number": credit_note["creditNoteNumber"],
         "sales_order_id": credit_note.get("salesOrderId"),
+        "invoice_id": credit_note.get("invoiceId"),  # NEW: Add invoice_id support
         "customer_id": credit_note["customerId"],
         "credit_date": credit_note.get("creditDate"),
         "reason": credit_note["reason"],
@@ -2083,16 +2294,67 @@ def update_credit_note(credit_note_id: str, credit_note: dict = Body(...), paylo
         "tax_amount": credit_note.get("taxAmount", 0),
         "discount_amount": credit_note.get("discountAmount", 0),
         "total_amount": credit_note.get("totalAmount", 0),
+        "rounding_adjustment": credit_note.get("roundingAdjustment", 0), # Added
         "refund_method": credit_note.get("refundMethod", "credit_account"),
         "affects_inventory": credit_note.get("affectsInventory", True),
+        "credit_note_type": credit_note.get("creditNoteType", "invoice_linked"),  # NEW: Add credit_note_type
         "notes": credit_note.get("notes"),
         "internal_notes": credit_note.get("internalNotes")
     }
+    
+    # Validate invoice_id is provided for invoice_linked credit notes
+    if credit_note_data["credit_note_type"] == "invoice_linked" and not credit_note_data["invoice_id"]:
+        raise HTTPException(status_code=400, detail="invoice_id is required for invoice_linked credit notes")
+    
+    # Update the credit note
     data = supabase.table("credit_notes").update(credit_note_data).eq("id", credit_note_id).execute()
-    return JSONResponse(content=data.data)
+    updated_credit_note = data.data[0] if data.data else None
+    
+    if not updated_credit_note:
+        raise HTTPException(status_code=404, detail="Credit note not found")
+    
+    # Handle items update
+    items = credit_note.get("items", [])
+    if items:
+        # Delete existing items
+        supabase.table("credit_note_items").delete().eq("credit_note_id", credit_note_id).execute()
+        
+        # Insert new items
+        items_data = []
+        for item in items:
+            item_data = {
+                "credit_note_id": credit_note_id,
+                "product_id": item["productId"],
+                "product_name": item["productName"],
+                "sku_code": item["skuCode"],
+                "hsn_code": item["hsnCode"],
+                "credit_quantity": item["quantity"],  # Use credit_quantity field
+                "unit_price": item["unitPrice"],
+                "discount": item.get("discount", 0),
+                "tax": item.get("tax", 0),
+                "sale_tax_type": item.get("saleTaxType", "exclusive"), # Added
+                "unit_abbreviation": item.get("unitAbbreviation", ""), # Added
+                "created_by": payload["sub"]
+            }
+            items_data.append(item_data)
+        
+        if items_data:
+            supabase.table("credit_note_items").insert(items_data).execute()
+    
+    return JSONResponse(content=updated_credit_note)
 
 @app.delete("/credit-notes/{credit_note_id}")
 def delete_credit_note(credit_note_id: str, payload=Depends(require_permission("credit_notes_delete"))):
+    # Get current credit note status for validation
+    current_credit_note_data = supabase.table("credit_notes").select("status").eq("id", credit_note_id).execute()
+    if not current_credit_note_data.data:
+        raise HTTPException(status_code=404, detail="Credit note not found")
+    
+    current_status = current_credit_note_data.data[0]["status"]
+    
+    # Validate status transition
+    validate_credit_note_status_transition(current_status, operation="delete")
+    
     data = supabase.table("credit_notes").delete().eq("id", credit_note_id).execute()
     return JSONResponse(content=data.data)
 
@@ -2108,6 +2370,9 @@ def create_credit_note_item(credit_note_id: str, item: dict = Body(...), payload
     item_data = {
         "credit_note_id": credit_note_id,
         "product_id": item["productId"],
+        "product_name": item.get("productName"),
+        "sku_code": item.get("skuCode"),
+        "hsn_code": item.get("hsnCode"),
         "sales_order_item_id": item.get("salesOrderItemId"),
         "original_quantity": item.get("originalQuantity"),
         "credit_quantity": item["creditQuantity"],
@@ -2120,7 +2385,10 @@ def create_credit_note_item(credit_note_id: str, item: dict = Body(...), payload
         "batch_number": item.get("batchNumber"),
         "expiry_date": item.get("expiryDate"),
         "storage_location": item.get("storageLocation"),
-        "quality_notes": item.get("qualityNotes")
+        "quality_notes": item.get("qualityNotes"),
+        "sale_tax_type": item.get("saleTaxType", "exclusive"),
+        "unit_abbreviation": item.get("unitAbbreviation", ""),
+        "created_by": payload["sub"]
     }
     data = supabase.table("credit_note_items").insert(item_data).execute()
     return JSONResponse(content=data.data)
@@ -2130,6 +2398,9 @@ def update_credit_note_item(item_id: str, item: dict = Body(...), payload=Depend
     # Map camelCase to snake_case
     item_data = {
         "product_id": item["productId"],
+        "product_name": item.get("productName"),
+        "sku_code": item.get("skuCode"),
+        "hsn_code": item.get("hsnCode"),
         "sales_order_item_id": item.get("salesOrderItemId"),
         "original_quantity": item.get("originalQuantity"),
         "credit_quantity": item["creditQuantity"],
@@ -2142,7 +2413,9 @@ def update_credit_note_item(item_id: str, item: dict = Body(...), payload=Depend
         "batch_number": item.get("batchNumber"),
         "expiry_date": item.get("expiryDate"),
         "storage_location": item.get("storageLocation"),
-        "quality_notes": item.get("qualityNotes")
+        "quality_notes": item.get("qualityNotes"),
+        "sale_tax_type": item.get("saleTaxType", "exclusive"),
+        "unit_abbreviation": item.get("unitAbbreviation", "")
     }
     data = supabase.table("credit_note_items").update(item_data).eq("id", item_id).execute()
     return JSONResponse(content=data.data)
@@ -2193,16 +2466,118 @@ def update_user_setting(user_setting: dict = Body(...), payload=Depends(verify_j
 def get_system_settings(payload=Depends(require_permission("settings_view"))):
     try:
         data = supabase.table("system_settings").select("*").execute()
-        if data.data:
+        if data.data and len(data.data) > 0:
             settings = [to_camel_case_system_setting(setting) for setting in data.data]
             return JSONResponse(content=settings)
         else:
-            # Return default settings if no settings exist in database
+            # Return default settings only if no settings exist in database
             return JSONResponse(content=get_default_system_settings())
     except Exception as e:
         print(f"Error fetching system settings: {str(e)}")
         # Return default settings on error
         return JSONResponse(content=get_default_system_settings())
+
+@app.get("/public/system-settings")
+def get_public_system_settings():
+    """Public endpoint for system settings that doesn't require authentication"""
+    try:
+        # Only return settings where is_public = true
+        data = supabase.table("system_settings").select("*").eq("is_public", True).execute()
+        if data.data and len(data.data) > 0:
+            settings = [to_camel_case_system_setting(setting) for setting in data.data]
+            return JSONResponse(content=settings)
+        else:
+            # Return default public settings only if no public settings exist in database
+            return JSONResponse(content=get_default_public_system_settings())
+    except Exception as e:
+        print(f"Error fetching public system settings: {str(e)}")
+        # Return default public settings on error
+        return JSONResponse(content=get_default_public_system_settings())
+
+def get_default_public_system_settings():
+    """Return default public system settings when database is empty or has errors"""
+    return [
+        {
+            "id": "default-company-name",
+            "key": "company_name",
+            "value": "Versal",
+            "type": "string",
+            "description": "Company name",
+            "isPublic": True,
+            "createdAt": None,
+            "updatedAt": None
+        },
+        {
+            "id": "default-company-logo-url",
+            "key": "company_logo_url",
+            "value": "/placeholder.svg",
+            "type": "string",
+            "description": "Public URL for company logo",
+            "isPublic": True,
+            "createdAt": None,
+            "updatedAt": None
+        },
+        {
+            "id": "default-company-email",
+            "key": "company_email",
+            "value": "contact@versal.com",
+            "type": "string",
+            "description": "Company email",
+            "isPublic": True,
+            "createdAt": None,
+            "updatedAt": None
+        },
+        {
+            "id": "default-currency",
+            "key": "default_currency",
+            "value": "USD",
+            "type": "string",
+            "description": "Default currency",
+            "isPublic": True,
+            "createdAt": None,
+            "updatedAt": None
+        },
+        {
+            "id": "default-date-format",
+            "key": "date_format",
+            "value": "MM/DD/YYYY",
+            "type": "string",
+            "description": "Date format",
+            "isPublic": True,
+            "createdAt": None,
+            "updatedAt": None
+        },
+        {
+            "id": "default-timezone",
+            "key": "timezone",
+            "value": "UTC",
+            "type": "string",
+            "description": "Default timezone",
+            "isPublic": True,
+            "createdAt": None,
+            "updatedAt": None
+        },
+        {
+            "id": "default-language",
+            "key": "language",
+            "value": "en",
+            "type": "string",
+            "description": "Default language",
+            "isPublic": True,
+            "createdAt": None,
+            "updatedAt": None
+        },
+        {
+            "id": "default-enable-signup",
+            "key": "enable_signup",
+            "value": True,
+            "type": "boolean",
+            "description": "Enable user signup feature",
+            "isPublic": True,
+            "createdAt": None,
+            "updatedAt": None
+        }
+    ]
 
 def get_default_system_settings():
     """Return default system settings when database is empty or has errors"""
@@ -2213,6 +2588,16 @@ def get_default_system_settings():
             "value": "Versal",
             "type": "string",
             "description": "Company name",
+            "isPublic": True,
+            "createdAt": None,
+            "updatedAt": None
+        },
+        {
+            "id": "default-company-logo-url",
+            "key": "company_logo_url",
+            "value": "/placeholder.svg",
+            "type": "string",
+            "description": "Public URL for company logo",
             "isPublic": True,
             "createdAt": None,
             "updatedAt": None
@@ -2716,5 +3101,1715 @@ def delete_system_setting(setting_id: str, payload=Depends(require_permission("s
     data = supabase.table("system_settings").delete().eq("id", setting_id).execute()
     return JSONResponse(content=data.data)
 
+def to_camel_case_purchase_order(purchase_order):
+    """Convert purchase order data from snake_case to camelCase"""
+    return {
+        "id": purchase_order.get("id"),
+        "orderNumber": purchase_order.get("order_number"),
+        "supplierId": purchase_order.get("supplier_id"),
+        "supplier": purchase_order.get("suppliers", {}),
+        "orderDate": purchase_order.get("order_date"),
+        "expectedDeliveryDate": purchase_order.get("expected_delivery_date"),
+        "status": purchase_order.get("status"),
+        "subtotal": purchase_order.get("subtotal"),
+        "taxAmount": purchase_order.get("tax_amount"),
+        "discountAmount": purchase_order.get("discount_amount"),
+        "totalAmount": purchase_order.get("total_amount"),
+        "roundingAdjustment": purchase_order.get("rounding_adjustment", 0), # Added
+        "notes": purchase_order.get("notes"),
+        "createdBy": purchase_order.get("created_by"),
+        "createdAt": purchase_order.get("created_at"),
+        "updatedAt": purchase_order.get("updated_at")
+    }
+
+def to_camel_case_purchase_order_item(item):
+    """Convert purchase order item data from snake_case to camelCase"""
+    return {
+        "id": item.get("id"),
+        "purchaseOrderId": item.get("purchase_order_id"),
+        "productId": item.get("product_id"),
+        "productName": item.get("products", {}).get("name") if item.get("products") else item.get("product_name"),
+        "skuCode": item.get("products", {}).get("sku_code") if item.get("products") else item.get("sku_code"),
+        "hsnCode": item.get("products", {}).get("hsn_code") if item.get("products") else item.get("hsn_code"),
+        "quantity": item.get("quantity"),
+        "costPrice": item.get("cost_price"),
+        "discount": item.get("discount"),
+        "tax": item.get("tax"),
+        "total": item.get("total"),
+        "purchaseTaxType": item.get("purchase_tax_type", "exclusive"), # Added
+        "unitAbbreviation": item.get("unit_abbreviation", ""), # Added
+        "createdAt": item.get("created_at"),
+        "updatedAt": item.get("updated_at")
+    }
+
+# Purchase Orders API endpoints
+@app.get("/purchase-orders")
+def get_purchase_orders(payload=Depends(require_permission("purchase_orders_view"))):
+    # Join with suppliers to get supplier names
+    try:
+        client = get_supabase_client()
+        data = client.table("purchase_orders").select("*, suppliers(*)").execute()
+    except (httpx.RemoteProtocolError, httpx.ConnectError):
+        client = get_supabase_client()
+        data = client.table("purchase_orders").select("*, suppliers(*)").execute()
+    # Transform to camelCase
+    transformed_data = [to_camel_case_purchase_order(order) for order in data.data]
+    return JSONResponse(content=transformed_data)
+
+@app.get("/purchase-orders/{purchase_order_id}")
+def get_purchase_order(purchase_order_id: str, payload=Depends(require_permission("purchase_orders_view"))):
+    try:
+        # Use a fresh Supabase client to avoid connection issues
+        fresh_supabase = get_supabase_client()
+        # Get purchase order with supplier and items
+        po_data = fresh_supabase.table("purchase_orders").select("*, suppliers(*)").eq("id", purchase_order_id).execute()
+        if not po_data.data:
+            return JSONResponse(content={"error": "Purchase order not found"}, status_code=404)
+        
+        # Get items for this purchase order
+        items_data = fresh_supabase.table("purchase_order_items").select("*, products(*)").eq("purchase_order_id", purchase_order_id).execute()
+        
+        # Transform purchase order
+        purchase_order = to_camel_case_purchase_order(po_data.data[0])
+        purchase_order["items"] = [to_camel_case_purchase_order_item(item) for item in items_data.data]
+        
+        return JSONResponse(content=purchase_order)
+    except Exception as e:
+        print(f"ERROR fetching purchase order {purchase_order_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error fetching purchase order: {str(e)}")
+
+@app.get("/purchase-orders/{purchase_order_id}/items")
+def get_purchase_order_items(purchase_order_id: str, payload=Depends(require_permission("purchase_orders_view"))):
+    # Get items for this purchase order
+    data = supabase.table("purchase_order_items").select("*, products(*)").eq("purchase_order_id", purchase_order_id).execute()
+    transformed_data = [to_camel_case_purchase_order_item(item) for item in data.data]
+    return JSONResponse(content=transformed_data)
+
+@app.post("/purchase-orders")
+def create_purchase_order(purchase_order: dict = Body(...), payload=Depends(require_permission("purchase_orders_create"))):
+    # Validate status value
+    valid_statuses = ["draft", "pending", "approved", "received", "cancelled"]
+    status = purchase_order.get("status")
+    if status not in valid_statuses:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid status '{status}'. Valid statuses are: {valid_statuses}"
+        )
+    
+    # Map camelCase to snake_case
+    purchase_order_data = {
+        "order_number": purchase_order["orderNumber"],
+        "supplier_id": purchase_order["supplierId"],
+        "order_date": purchase_order["orderDate"],
+        "expected_delivery_date": purchase_order.get("expectedDeliveryDate"),
+        "status": status,
+        "subtotal": purchase_order["subtotal"],
+        "tax_amount": purchase_order["taxAmount"],
+        "discount_amount": purchase_order["discountAmount"],
+        "total_amount": purchase_order["totalAmount"],
+        "rounding_adjustment": purchase_order.get("roundingAdjustment", 0),
+        "notes": purchase_order.get("notes"),
+        "created_by": payload["sub"]
+    }
+    
+    # Create the purchase order
+    data = supabase.table("purchase_orders").insert(purchase_order_data).execute()
+    created_purchase_order = data.data[0] if data.data else None
+    
+    if not created_purchase_order:
+        raise HTTPException(status_code=500, detail="Failed to create purchase order")
+    
+    # Insert items if they exist
+    items = purchase_order.get("items", [])
+    if items and len(items) > 0:
+        items_data = []
+        for item in items:
+            item_data = {
+                "purchase_order_id": created_purchase_order["id"],
+                "product_id": item["productId"],
+                "product_name": item["productName"],
+                "sku_code": item["skuCode"],
+                "hsn_code": item["hsnCode"],
+                "quantity": item["quantity"],
+                "cost_price": item["costPrice"],
+                "discount": item["discount"],
+                "tax": item["tax"],
+                "purchase_tax_type": item.get("purchaseTaxType", "exclusive"),
+                "unit_abbreviation": item.get("unitAbbreviation", ""),
+                "created_by": payload["sub"]
+            }
+            items_data.append(item_data)
+        
+        # Insert all items
+        if items_data:
+            supabase.table("purchase_order_items").insert(items_data).execute()
+    
+    return JSONResponse(content=created_purchase_order)
+
+@app.put("/purchase-orders/{purchase_order_id}")
+def update_purchase_order(purchase_order_id: str, purchase_order: dict = Body(...), payload=Depends(require_permission("purchase_orders_edit"))):
+    # Get current purchase order status for validation
+    current_order_data = supabase.table("purchase_orders").select("status").eq("id", purchase_order_id).execute()
+    if not current_order_data.data:
+        raise HTTPException(status_code=404, detail="Purchase order not found")
+    
+    current_status = current_order_data.data[0]["status"]
+    
+    # Validate status transition
+    validate_purchase_order_status_transition(current_status, operation="edit")
+    
+    print(f"DEBUG: Received purchase order update request with status: {purchase_order.get('status')}")
+    # Validate status value
+    valid_statuses = ["draft", "pending", "approved", "received", "cancelled"]
+    status = purchase_order.get("status")
+    print(f"DEBUG: Validating status '{status}' against valid_statuses: {valid_statuses}")
+    if status not in valid_statuses:
+        print(f"DEBUG: Invalid status '{status}' detected, raising HTTPException")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid status '{status}'. Valid statuses are: {valid_statuses}"
+        )
+    print(f"DEBUG: Status validation passed, proceeding with update")
+    
+    # Map camelCase to snake_case
+    purchase_order_data = {
+        "order_number": purchase_order["orderNumber"],
+        "supplier_id": purchase_order["supplierId"],
+        "order_date": purchase_order["orderDate"],
+        "expected_delivery_date": purchase_order.get("expectedDeliveryDate"),
+        "status": status,
+        "subtotal": purchase_order["subtotal"],
+        "tax_amount": purchase_order["taxAmount"],
+        "discount_amount": purchase_order["discountAmount"],
+        "total_amount": purchase_order["totalAmount"],
+        "rounding_adjustment": purchase_order.get("roundingAdjustment", 0),
+        "notes": purchase_order.get("notes")
+    }
+    
+    # Update the purchase order
+    data = supabase.table("purchase_orders").update(purchase_order_data).eq("id", purchase_order_id).execute()
+    updated_purchase_order = data.data[0] if data.data else None
+    
+    if not updated_purchase_order:
+        raise HTTPException(status_code=404, detail="Purchase order not found")
+    
+    # Handle items update
+    items = purchase_order.get("items", [])
+    if items is not None:  # Only update items if they are provided
+        # First, delete existing items
+        supabase.table("purchase_order_items").delete().eq("purchase_order_id", purchase_order_id).execute()
+        
+        # Then insert new items if they exist
+        if len(items) > 0:
+            items_data = []
+            for item in items:
+                item_data = {
+                    "purchase_order_id": purchase_order_id,
+                    "product_id": item["productId"],
+                    "product_name": item["productName"],
+                    "sku_code": item["skuCode"],
+                    "hsn_code": item["hsnCode"],
+                    "quantity": item["quantity"],
+                    "cost_price": item["costPrice"],
+                    "discount": item["discount"],
+                    "tax": item["tax"],
+                    "purchase_tax_type": item.get("purchaseTaxType", "exclusive"),
+                    "unit_abbreviation": item.get("unitAbbreviation", ""),
+                    "created_by": payload["sub"]
+                }
+                items_data.append(item_data)
+            
+            # Insert all items
+            if items_data:
+                supabase.table("purchase_order_items").insert(items_data).execute()
+    
+    return JSONResponse(content=updated_purchase_order)
+
+@app.delete("/purchase-orders/{purchase_order_id}")
+def delete_purchase_order(purchase_order_id: str, payload=Depends(require_permission("purchase_orders_delete"))):
+    # Get current purchase order status for validation
+    current_order_data = supabase.table("purchase_orders").select("status").eq("id", purchase_order_id).execute()
+    if not current_order_data.data:
+        raise HTTPException(status_code=404, detail="Purchase order not found")
+    
+    current_status = current_order_data.data[0]["status"]
+    
+    # Validate status transition
+    validate_purchase_order_status_transition(current_status, operation="delete")
+    
+    data = supabase.table("purchase_orders").delete().eq("id", purchase_order_id).execute()
+    return JSONResponse(content=data.data)
+
+def to_camel_case_sales_order(sales_order):
+    """Convert sales order data from snake_case to camelCase"""
+    return {
+        "id": sales_order.get("id"),
+        "orderNumber": sales_order.get("order_number"),
+        "customerId": sales_order.get("customer_id"),
+        "customer": sales_order.get("customers", {}),
+        "orderDate": sales_order.get("order_date"),
+        "dueDate": sales_order.get("due_date"),
+        "status": sales_order.get("status"),
+        "subtotal": sales_order.get("subtotal"),
+        "taxAmount": sales_order.get("tax_amount"),
+        "discountAmount": sales_order.get("discount_amount"),
+        "totalAmount": sales_order.get("total_amount"),
+        "roundingAdjustment": sales_order.get("rounding_adjustment", 0), # Added
+        "notes": sales_order.get("notes"),
+        "createdBy": sales_order.get("created_by"),
+        "createdAt": sales_order.get("created_at"),
+        "updatedAt": sales_order.get("updated_at")
+    }
+
+def to_camel_case_sales_order_item(item):
+    """Convert sales order item data from snake_case to camelCase"""
+    return {
+        "id": item.get("id"),
+        "salesOrderId": item.get("sales_order_id"),
+        "productId": item.get("product_id"),
+        "productName": item.get("products", {}).get("name") if item.get("products") else item.get("product_name"),
+        "skuCode": item.get("products", {}).get("sku_code") if item.get("products") else item.get("sku_code"),
+        "hsnCode": item.get("products", {}).get("hsn_code") if item.get("products") else item.get("hsn_code"),
+        "quantity": item.get("quantity"),
+        "unitPrice": item.get("unit_price"),
+        "discount": item.get("discount"),
+        "tax": item.get("tax"),
+        "total": item.get("total"),
+        "saleTaxType": item.get("sale_tax_type", "exclusive"), # Added
+        "unitAbbreviation": item.get("unit_abbreviation", ""), # Added
+        "createdAt": item.get("created_at"),
+        "updatedAt": item.get("updated_at")
+    }
+
+# Sales Orders API endpoints
+@app.get("/sales-orders")
+def get_sales_orders(payload=Depends(require_permission("sale_orders_view"))):
+    # Join with customers to get customer names
+    data = supabase.table("sales_orders").select("*, customers(*)").execute()
+    # Transform to camelCase
+    transformed_data = [to_camel_case_sales_order(order) for order in data.data]
+    return JSONResponse(content=transformed_data)
+
+@app.get("/sales-orders/{sales_order_id}")
+def get_sales_order(sales_order_id: str, payload=Depends(require_permission("sale_orders_view"))):
+    # Get sales order with customer and items
+    so_data = supabase.table("sales_orders").select("*, customers(*)").eq("id", sales_order_id).execute()
+    if not so_data.data:
+        return JSONResponse(content={"error": "Sales order not found"}, status_code=404)
+    
+    # Get items for this sales order
+    items_data = supabase.table("sales_order_items").select("*, products(*)").eq("sales_order_id", sales_order_id).execute()
+    
+    # Transform sales order
+    sales_order = to_camel_case_sales_order(so_data.data[0])
+    sales_order["items"] = [to_camel_case_sales_order_item(item) for item in items_data.data]
+    
+    return JSONResponse(content=sales_order)
+
+@app.get("/sales-orders/{sales_order_id}/items")
+def get_sales_order_items(sales_order_id: str, payload=Depends(require_permission("sale_orders_view"))):
+    # Get items for this sales order
+    data = supabase.table("sales_order_items").select("*, products(*)").eq("sales_order_id", sales_order_id).execute()
+    transformed_data = [to_camel_case_sales_order_item(item) for item in data.data]
+    return JSONResponse(content=transformed_data)
+
+@app.post("/sales-orders")
+def create_sales_order(sales_order: dict = Body(...), payload=Depends(require_permission("sale_orders_create"))):
+    # Map camelCase to snake_case
+    sales_order_data = {
+        "order_number": sales_order["orderNumber"],
+        "customer_id": sales_order["customerId"],
+        "order_date": sales_order["orderDate"],
+        "due_date": sales_order.get("dueDate"),
+        "status": sales_order["status"],
+        "subtotal": sales_order["subtotal"],
+        "tax_amount": sales_order["taxAmount"],
+        "discount_amount": sales_order["discountAmount"],
+        "total_amount": sales_order["totalAmount"],
+        "rounding_adjustment": sales_order.get("roundingAdjustment", 0), # Added
+        "notes": sales_order.get("notes"),
+        "created_by": payload["sub"]
+    }
+    
+    # Create the sales order
+    data = supabase.table("sales_orders").insert(sales_order_data).execute()
+    created_sales_order = data.data[0] if data.data else None
+    
+    if not created_sales_order:
+        raise HTTPException(status_code=500, detail="Failed to create sales order")
+    
+    # Insert items if they exist
+    items = sales_order.get("items", [])
+    if items and len(items) > 0:
+        items_data = []
+        for item in items:
+            item_data = {
+                "sales_order_id": created_sales_order["id"],
+                "product_id": item["productId"],
+                "product_name": item["productName"],
+                "sku_code": item["skuCode"],
+                "hsn_code": item["hsnCode"],
+                "quantity": item["quantity"],
+                "unit_price": item["unitPrice"],
+                "discount": item["discount"],
+                "tax": item["tax"],
+                "sale_tax_type": item.get("saleTaxType", "exclusive"), # Added
+                "unit_abbreviation": item.get("unitAbbreviation", ""), # Added
+                "created_by": payload["sub"]
+            }
+            items_data.append(item_data)
+        
+        # Insert all items
+        if items_data:
+            supabase.table("sales_order_items").insert(items_data).execute()
+    
+    return JSONResponse(content=created_sales_order)
+
+@app.put("/sales-orders/{sales_order_id}")
+def update_sales_order(sales_order_id: str, sales_order: dict = Body(...), payload=Depends(require_permission("sale_orders_edit"))):
+    # Get current sales order status for validation
+    current_order_data = supabase.table("sales_orders").select("status").eq("id", sales_order_id).execute()
+    if not current_order_data.data:
+        raise HTTPException(status_code=404, detail="Sales order not found")
+    
+    current_status = current_order_data.data[0]["status"]
+    
+    # Validate status transition
+    validate_sales_order_status_transition(current_status, operation="edit")
+    
+    # Map camelCase to snake_case
+    sales_order_data = {
+        "order_number": sales_order["orderNumber"],
+        "customer_id": sales_order["customerId"],
+        "order_date": sales_order["orderDate"],
+        "due_date": sales_order.get("dueDate"),
+        "status": sales_order["status"],
+        "subtotal": sales_order["subtotal"],
+        "tax_amount": sales_order["taxAmount"],
+        "discount_amount": sales_order["discountAmount"],
+        "total_amount": sales_order["totalAmount"],
+        "rounding_adjustment": sales_order.get("roundingAdjustment", 0), # Added
+        "notes": sales_order.get("notes")
+    }
+    
+    # Update the sales order
+    data = supabase.table("sales_orders").update(sales_order_data).eq("id", sales_order_id).execute()
+    updated_sales_order = data.data[0] if data.data else None
+    
+    if not updated_sales_order:
+        raise HTTPException(status_code=404, detail="Sales order not found")
+    
+    # Handle items update
+    items = sales_order.get("items", [])
+    if items:
+        # Delete existing items
+        supabase.table("sales_order_items").delete().eq("sales_order_id", sales_order_id).execute()
+        
+        # Insert new items
+        items_data = []
+        for item in items:
+            item_data = {
+                "sales_order_id": sales_order_id,
+                "product_id": item["productId"],
+                "product_name": item["productName"],
+                "sku_code": item["skuCode"],
+                "hsn_code": item["hsnCode"],
+                "quantity": item["quantity"],
+                "unit_price": item["unitPrice"],
+                "discount": item["discount"],
+                "tax": item["tax"],
+                "sale_tax_type": item.get("saleTaxType", "exclusive"), # Added
+                "unit_abbreviation": item.get("unitAbbreviation", ""), # Added
+                "created_by": payload["sub"]
+            }
+            items_data.append(item_data)
+        
+        if items_data:
+            supabase.table("sales_order_items").insert(items_data).execute()
+    
+    return JSONResponse(content=updated_sales_order)
+
+@app.delete("/sales-orders/{sales_order_id}")
+def delete_sales_order(sales_order_id: str, payload=Depends(require_permission("sale_orders_delete"))):
+    # Get current sales order status for validation
+    current_order_data = supabase.table("sales_orders").select("status").eq("id", sales_order_id).execute()
+    if not current_order_data.data:
+        raise HTTPException(status_code=404, detail="Sales order not found")
+    
+    current_status = current_order_data.data[0]["status"]
+    
+    # Validate status transition
+    validate_sales_order_status_transition(current_status, operation="delete")
+    
+    data = supabase.table("sales_orders").delete().eq("id", sales_order_id).execute()
+    return JSONResponse(content=data.data)
+
+def to_camel_case_payment(payment):
+    """Convert payment from snake_case to camelCase."""
+    if not payment:
+        return None
+    
+    return {
+        "id": payment.get("id"),
+        "invoiceId": payment.get("invoice_id"),
+        "customerId": payment.get("customer_id"),
+        "paymentAmount": payment.get("payment_amount"),
+        "paymentDate": payment.get("payment_date"),
+        "paymentMethod": payment.get("payment_method"),
+        "paymentReference": payment.get("payment_reference"),
+        "notes": payment.get("notes"),
+        "createdAt": payment.get("created_at"),
+        "updatedAt": payment.get("updated_at"),
+        "createdBy": payment.get("created_by"),
+        "updatedBy": payment.get("updated_by")
+    }
+
+def to_camel_case_sale_invoice(sale_invoice):
+    """Convert sale invoice data from snake_case to camelCase"""
+    return {
+        "id": sale_invoice.get("id"),
+        "invoiceNumber": sale_invoice.get("invoice_number"),
+        "salesOrderId": sale_invoice.get("sales_order_id"),
+        "salesOrder": to_camel_case_sales_order(sale_invoice.get("sales_orders", {})) if sale_invoice.get("sales_orders") else None,
+        "customerId": sale_invoice.get("customer_id"),
+        "customer": sale_invoice.get("customers", {}),
+        "invoiceDate": sale_invoice.get("invoice_date"),
+        "dueDate": sale_invoice.get("due_date"),
+        "status": sale_invoice.get("status"),
+        "subtotal": sale_invoice.get("subtotal"),
+        "taxAmount": sale_invoice.get("tax_amount"),
+        "discountAmount": sale_invoice.get("discount_amount"),
+        "totalAmount": sale_invoice.get("total_amount"),
+        "amountPaid": sale_invoice.get("amount_paid", 0),  # Added for payment tracking
+        "amountDue": sale_invoice.get("amount_due", 0),    # Added for payment tracking
+        "roundingAdjustment": sale_invoice.get("rounding_adjustment", 0), # Added
+        "isDirect": sale_invoice.get("is_direct", False), # Added
+        "notes": sale_invoice.get("notes"),
+        "createdBy": sale_invoice.get("created_by"),
+        "createdAt": sale_invoice.get("created_at"),
+        "updatedAt": sale_invoice.get("updated_at")
+    }
+
+def to_camel_case_sale_invoice_item(item):
+    """Convert sale invoice item data from snake_case to camelCase"""
+    return {
+        "id": item.get("id"),
+        "saleInvoiceId": item.get("invoice_id"),
+        "productId": item.get("product_id"),
+        "productName": item.get("products", {}).get("name") if item.get("products") else item.get("product_name"),
+        "skuCode": item.get("products", {}).get("sku_code") if item.get("products") else item.get("sku_code"),
+        "hsnCode": item.get("products", {}).get("hsn_code") if item.get("products") else item.get("hsn_code"),
+        "quantity": item.get("quantity"),
+        "unitPrice": item.get("unit_price"),
+        "discount": item.get("discount"),
+        "tax": item.get("tax"),
+        "total": item.get("total"),
+        "saleTaxType": item.get("sale_tax_type", "exclusive"), # Added
+        "unitAbbreviation": item.get("unit_abbreviation", ""), # Added
+        "createdAt": item.get("created_at"),
+        "updatedAt": item.get("updated_at")
+    }
+
+# Sale Invoices API endpoints
+@app.get("/sale-invoices")
+def get_sale_invoices(payload=Depends(require_permission("sale_invoices_view"))):
+    # Join with customers to get customer names
+    data = supabase.table("sale_invoices").select("*, customers(*)").execute()
+    # Transform to camelCase
+    transformed_data = [to_camel_case_sale_invoice(invoice) for invoice in data.data]
+    return JSONResponse(content=transformed_data)
+
+@app.get("/sale-invoices/{sale_invoice_id}")
+def get_sale_invoice(sale_invoice_id: str, payload=Depends(require_permission("sale_invoices_view"))):
+    # Get sale invoice with customer and sales order
+    si_data = supabase.table("sale_invoices").select("*, customers(*), sales_orders(*)").eq("id", sale_invoice_id).execute()
+    if not si_data.data:
+        return JSONResponse(content={"error": "Sale invoice not found"}, status_code=404)
+    
+    # Get items for this sale invoice
+    items_data = supabase.table("sale_invoice_items").select("*, products(*)").eq("invoice_id", sale_invoice_id).execute()
+    
+    # Transform sale invoice
+    sale_invoice = to_camel_case_sale_invoice(si_data.data[0])
+    sale_invoice["items"] = [to_camel_case_sale_invoice_item(item) for item in items_data.data]
+    
+    return JSONResponse(content=sale_invoice)
+
+@app.get("/sale-invoices/{sale_invoice_id}/items")
+def get_sale_invoice_items(sale_invoice_id: str, payload=Depends(require_permission("sale_invoices_view"))):
+    # Get items for this sale invoice
+    data = supabase.table("sale_invoice_items").select("*, products(*)").eq("invoice_id", sale_invoice_id).execute()
+    transformed_data = [to_camel_case_sale_invoice_item(item) for item in data.data]
+    return JSONResponse(content=transformed_data)
+
+@app.post("/sale-invoices")
+def create_sale_invoice(sale_invoice: dict = Body(...), payload=Depends(require_permission("sale_invoices_create"))):
+    # Check if this is a direct sale invoice (not linked to existing sales order)
+    is_direct = sale_invoice.get("isDirect", False)
+    sales_order_id = sale_invoice.get("salesOrderId")
+    
+    # Get customer information for credit validation and payment method defaults
+    customer_id = sale_invoice.get("customerId")
+    if not customer_id:
+        raise HTTPException(status_code=400, detail="Customer ID is required")
+    
+    # Get customer details including type and credit limit
+    customer_data = supabase.table("customers").select("customer_type, credit_limit").eq("id", customer_id).execute()
+    if not customer_data.data:
+        raise HTTPException(status_code=400, detail="Customer not found")
+    
+    customer = customer_data.data[0]
+    customer_type = customer.get("customer_type", "retail")
+    credit_limit = customer.get("credit_limit", 0)
+    
+    # Set default payment method for wholesale customers
+    payment_method = sale_invoice.get("paymentMethod")
+    if not payment_method and customer_type in ["wholesale", "distributor"]:
+        payment_method = "credit"
+        sale_invoice["paymentMethod"] = "credit"
+    
+    # Validate credit limit for wholesale customers
+    if customer_type in ["wholesale", "distributor"] and payment_method == "credit":
+        # Call the credit validation function
+        credit_check_result = supabase.rpc("check_customer_credit_limit", {
+            "p_customer_id": customer_id,
+            "p_invoice_amount": sale_invoice.get("totalAmount", 0)
+        }).execute()
+        
+        # The function returns True if credit is sufficient, False otherwise
+        if not credit_check_result.data:
+            raise HTTPException(
+                status_code=400, 
+                detail="Insufficient credit limit: Credit limit exceeded"
+            )
+    
+    # If it's a direct sale invoice, create a sales order first
+    if is_direct and not sales_order_id:
+        # Create sales order data from sale invoice data
+        sales_order_data = {
+            "order_number": f"SO-{sale_invoice['invoiceNumber']}",  # Generate order number from invoice number
+            "customer_id": sale_invoice["customerId"],
+            "order_date": sale_invoice["invoiceDate"],  # Use invoice date as order date
+            "due_date": sale_invoice.get("dueDate"),
+            "status": "approved",  # Set status to approved since it's being invoiced
+            "subtotal": sale_invoice["subtotal"],
+            "tax_amount": sale_invoice["taxAmount"],
+            "discount_amount": sale_invoice["discountAmount"],
+            "total_amount": sale_invoice["totalAmount"],
+            "rounding_adjustment": sale_invoice.get("roundingAdjustment", 0),
+            "notes": f"Auto-generated from direct sale invoice {sale_invoice['invoiceNumber']}",
+            "created_by": payload["sub"]
+        }
+        
+        # Create the sales order
+        so_data = supabase.table("sales_orders").insert(sales_order_data).execute()
+        created_sales_order = so_data.data[0] if so_data.data else None
+        
+        if not created_sales_order:
+            raise HTTPException(status_code=500, detail="Failed to create auto-generated sales order")
+        
+        # Set the sales order ID for the sale invoice
+        sales_order_id = created_sales_order["id"]
+        
+        # Create sales order items from sale invoice items
+        items = sale_invoice.get("items", [])
+        if items and len(items) > 0:
+            so_items_data = []
+            for item in items:
+                so_item_data = {
+                    "sales_order_id": created_sales_order["id"],
+                    "product_id": item["productId"] if item["productId"] else None,
+                    "product_name": item["productName"],
+                    "sku_code": item["skuCode"],
+                    "hsn_code": item["hsnCode"],
+                    "quantity": item["quantity"],
+                    "unit_price": item["unitPrice"],
+                    "discount": item["discount"],
+                    "tax": item["tax"],
+                    "sale_tax_type": item.get("saleTaxType", "exclusive"),
+                    "unit_abbreviation": item.get("unitAbbreviation", ""),
+                    "created_by": payload["sub"]
+                }
+                
+                # Validate required UUID fields for items
+                if not so_item_data["product_id"]:
+                    raise HTTPException(status_code=400, detail="Product ID is required for all items")
+                
+                if not so_item_data["created_by"]:
+                    raise HTTPException(status_code=400, detail="Created by user ID is required")
+                
+                so_items_data.append(so_item_data)
+            
+            # Insert all sales order items
+            if so_items_data:
+                supabase.table("sales_order_items").insert(so_items_data).execute()
+    
+    # Map camelCase to snake_case for sale invoice
+    sale_invoice_data = {
+        "invoice_number": sale_invoice["invoiceNumber"],
+        "sales_order_id": sales_order_id,
+        "customer_id": sale_invoice["customerId"] if sale_invoice["customerId"] else None,
+        "invoice_date": sale_invoice["invoiceDate"],
+        "due_date": sale_invoice.get("dueDate"),
+        "status": sale_invoice["status"],
+        "payment_method": payment_method,  # Add payment method
+        "subtotal": sale_invoice["subtotal"],
+        "tax_amount": sale_invoice["taxAmount"],
+        "discount_amount": sale_invoice["discountAmount"],
+        "total_amount": sale_invoice["totalAmount"],
+        "rounding_adjustment": sale_invoice.get("roundingAdjustment", 0),
+        "is_direct": is_direct,  # Set is_direct flag
+        "notes": sale_invoice.get("notes"),
+        "created_by": payload["sub"] if payload["sub"] else None,
+        # Initialize amount_paid and amount_due for proper payment tracking
+        "amount_paid": 0,
+        "amount_due": sale_invoice["totalAmount"],
+    }
+    
+    # Validate required UUID fields
+    if not sale_invoice_data["customer_id"]:
+        raise HTTPException(status_code=400, detail="Customer ID is required")
+    
+    if not sale_invoice_data["created_by"]:
+        raise HTTPException(status_code=400, detail="Created by user ID is required")
+    
+    # Validate payment method is required
+    if not sale_invoice_data["payment_method"]:
+        raise HTTPException(status_code=400, detail="Payment method is required")
+    
+    # Create the sale invoice
+    data = supabase.table("sale_invoices").insert(sale_invoice_data).execute()
+    created_sale_invoice = data.data[0] if data.data else None
+    
+    if not created_sale_invoice:
+        raise HTTPException(status_code=500, detail="Failed to create sale invoice")
+    
+    # Insert items if they exist
+    items = sale_invoice.get("items", [])
+    if items and len(items) > 0:
+        items_data = []
+        for item in items:
+            item_data = {
+                "invoice_id": created_sale_invoice["id"],
+                "product_id": item["productId"] if item["productId"] else None,
+                "product_name": item["productName"],
+                "sku_code": item["skuCode"],
+                "hsn_code": item["hsnCode"],
+                "quantity": item["quantity"],
+                "unit_price": item["unitPrice"],
+                "discount": item["discount"],
+                "tax": item["tax"],
+                "sale_tax_type": item.get("saleTaxType", "exclusive"),
+                "unit_abbreviation": item.get("unitAbbreviation", ""),
+                "created_by": payload["sub"] if payload["sub"] else None
+            }
+            
+            # Validate required UUID fields for items
+            if not item_data["product_id"]:
+                raise HTTPException(status_code=400, detail="Product ID is required for all items")
+            
+            if not item_data["created_by"]:
+                raise HTTPException(status_code=400, detail="Created by user ID is required")
+            
+            items_data.append(item_data)
+        
+        # Insert all items
+        if items_data:
+            supabase.table("sale_invoice_items").insert(items_data).execute()
+    
+    # Update linked sales order status if invoice is created with "sent" status
+    if created_sale_invoice["status"] == "sent" and created_sale_invoice["sales_order_id"]:
+        supabase.table("sales_orders").update({"status": "sent"}).eq("id", created_sale_invoice["sales_order_id"]).execute()
+    
+    return JSONResponse(content=created_sale_invoice)
+
+@app.get("/sale-invoices/overdue")
+def get_overdue_invoices(payload=Depends(require_permission("sale_invoices_view"))):
+    """Get all overdue sale invoices."""
+    today = date.today().isoformat()
+    data = supabase.table("sale_invoices").select("*").lt("due_date", today).in_("status", ["sent", "partial"]).execute()
+    return JSONResponse(content=data.data)
+
+@app.put("/sale-invoices/{sale_invoice_id}")
+def update_sale_invoice(sale_invoice_id: str, sale_invoice: dict = Body(...), payload=Depends(require_permission("sale_invoices_edit"))):
+    # Get current sale invoice status for validation
+    current_invoice_data = supabase.table("sale_invoices").select("status").eq("id", sale_invoice_id).execute()
+    if not current_invoice_data.data:
+        raise HTTPException(status_code=404, detail="Sale invoice not found")
+    
+    current_status = current_invoice_data.data[0]["status"]
+    
+    # Validate status transition
+    validate_sale_invoice_status_transition(current_status, operation="edit")
+    
+    # Map camelCase to snake_case
+    sale_invoice_data = {
+        "invoice_number": sale_invoice["invoiceNumber"],
+        "sales_order_id": sale_invoice.get("salesOrderId") if sale_invoice.get("salesOrderId") else None,
+        "customer_id": sale_invoice["customerId"] if sale_invoice["customerId"] else None,
+        "invoice_date": sale_invoice["invoiceDate"],
+        "due_date": sale_invoice.get("dueDate"),
+        "status": sale_invoice["status"],
+        "subtotal": sale_invoice["subtotal"],
+        "tax_amount": sale_invoice["taxAmount"],
+        "discount_amount": sale_invoice["discountAmount"],
+        "total_amount": sale_invoice["totalAmount"],
+        "rounding_adjustment": sale_invoice.get("roundingAdjustment", 0), # Added
+        "is_direct": sale_invoice.get("isDirect", False), # Added
+        "notes": sale_invoice.get("notes")
+    }
+    
+    # Validate required UUID fields
+    if not sale_invoice_data["customer_id"]:
+        raise HTTPException(status_code=400, detail="Customer ID is required")
+    
+    # Update the sale invoice
+    data = supabase.table("sale_invoices").update(sale_invoice_data).eq("id", sale_invoice_id).execute()
+    updated_sale_invoice = data.data[0] if data.data else None
+    
+    if not updated_sale_invoice:
+        raise HTTPException(status_code=404, detail="Sale invoice not found")
+    
+    # Handle items update
+    items = sale_invoice.get("items", [])
+    if items:
+        # Delete existing items
+        supabase.table("sale_invoice_items").delete().eq("invoice_id", sale_invoice_id).execute()
+        
+        # Insert new items
+        items_data = []
+        for item in items:
+            item_data = {
+                "invoice_id": sale_invoice_id,
+                "product_id": item["productId"] if item["productId"] else None,
+                "product_name": item["productName"],
+                "sku_code": item["skuCode"],
+                "hsn_code": item["hsnCode"],
+                "quantity": item["quantity"],
+                "unit_price": item["unitPrice"],
+                "discount": item["discount"],
+                "tax": item["tax"],
+                "sale_tax_type": item.get("saleTaxType", "exclusive"), # Added
+                "unit_abbreviation": item.get("unitAbbreviation", ""), # Added
+                "created_by": payload["sub"]
+            }
+            
+            # Validate required UUID fields for items
+            if not item_data["product_id"]:
+                raise HTTPException(status_code=400, detail="Product ID is required for all items")
+            
+            if not item_data["created_by"]:
+                raise HTTPException(status_code=400, detail="Created by user ID is required")
+            
+            items_data.append(item_data)
+        
+        if items_data:
+            supabase.table("sale_invoice_items").insert(items_data).execute()
+    
+    # Update linked sales order status based on invoice status changes
+    new_status = sale_invoice["status"]
+    if sale_invoice_data["sales_order_id"]:
+        # Get current sales order status
+        so_data = supabase.table("sales_orders").select("status").eq("id", sale_invoice_data["sales_order_id"]).execute()
+        if so_data.data:
+            current_so_status = so_data.data[0]["status"]
+            
+            # If invoice is being set to "sent", update sales order to "sent"
+            if new_status == "sent" and current_so_status != "sent":
+                supabase.table("sales_orders").update({"status": "sent"}).eq("id", sale_invoice_data["sales_order_id"]).execute()
+            
+            # If invoice is being set to "partial", update sales order to "partial"
+            elif new_status == "partial" and current_so_status != "partial":
+                supabase.table("sales_orders").update({"status": "partial"}).eq("id", sale_invoice_data["sales_order_id"]).execute()
+            
+            # If invoice is being set to "paid", update sales order to "fulfilled"
+            elif new_status == "paid" and current_so_status != "fulfilled":
+                supabase.table("sales_orders").update({"status": "fulfilled"}).eq("id", sale_invoice_data["sales_order_id"]).execute()
+            
+            # If invoice is being set to "cancelled", update sales order to "cancelled"
+            elif new_status == "cancelled" and current_so_status != "cancelled":
+                supabase.table("sales_orders").update({"status": "cancelled"}).eq("id", sale_invoice_data["sales_order_id"]).execute()
+            
+            # If invoice is being changed from "sent" to something else, revert sales order to "approved"
+            elif current_status == "sent" and new_status not in ["sent", "paid", "cancelled"] and current_so_status == "sent":
+                supabase.table("sales_orders").update({"status": "approved"}).eq("id", sale_invoice_data["sales_order_id"]).execute()
+    
+    return JSONResponse(content=updated_sale_invoice)
+
+@app.delete("/sale-invoices/{sale_invoice_id}")
+def delete_sale_invoice(sale_invoice_id: str, payload=Depends(require_permission("sale_invoices_delete"))):
+    # Get current sale invoice status for validation
+    current_invoice_data = supabase.table("sale_invoices").select("status, sales_order_id").eq("id", sale_invoice_id).execute()
+    if not current_invoice_data.data:
+        raise HTTPException(status_code=404, detail="Sale invoice not found")
+    
+    current_status = current_invoice_data.data[0]["status"]
+    sales_order_id = current_invoice_data.data[0]["sales_order_id"]
+    
+    # Validate status transition
+    validate_sale_invoice_status_transition(current_status, operation="delete")
+    
+    # If this invoice was linked to a sales order and was in "sent" status, revert sales order to "approved"
+    if sales_order_id and current_status == "sent":
+        # Get current sales order status
+        so_data = supabase.table("sales_orders").select("status").eq("id", sales_order_id).execute()
+        if so_data.data and so_data.data[0]["status"] == "sent":
+            supabase.table("sales_orders").update({"status": "approved"}).eq("id", sales_order_id).execute()
+    
+    data = supabase.table("sale_invoices").delete().eq("id", sale_invoice_id).execute()
+    return JSONResponse(content=data.data)
+
+def to_camel_case_good_receive_note(grn):
+    """Convert good receive note data from snake_case to camelCase"""
+    return {
+        "id": grn.get("id"),
+        "grnNumber": grn.get("grn_number"),
+        "purchaseOrderId": grn.get("purchase_order_id"),
+        "purchaseOrder": to_camel_case_purchase_order(grn.get("purchase_orders", {})) if grn.get("purchase_orders") else None,
+        "supplierId": grn.get("supplier_id"),
+        "supplier": grn.get("suppliers", {}),
+        "receivedDate": grn.get("received_date"),
+        "vendorInvoiceNumber": grn.get("vendor_invoice_number"),
+        "receivedBy": grn.get("received_by"),
+        "receivedByUser": to_camel_case_user(grn.get("profiles", {})) if grn.get("profiles") else None,
+        "status": grn.get("status"),
+        "totalReceivedItems": grn.get("total_received_items"),
+        "notes": grn.get("notes"),
+        "qualityCheckStatus": grn.get("quality_check_status"),
+        "warehouseLocation": grn.get("warehouse_location"),
+        "subtotal": grn.get("subtotal"),
+        "taxAmount": grn.get("tax_amount"),
+        "discountAmount": grn.get("discount_amount"),
+        "totalAmount": grn.get("total_amount"),
+        "roundingAdjustment": grn.get("rounding_adjustment"),
+        "isDirect": grn.get("is_direct", False),
+        "items": [to_camel_case_good_receive_note_item(item) for item in grn.get("items", [])],
+        "createdAt": grn.get("created_at"),
+        "updatedAt": grn.get("updated_at")
+    }
+
+def to_camel_case_good_receive_note_item(item):
+    """Convert good receive note item data from snake_case to camelCase"""
+    return {
+        "id": item.get("id"),
+        "grnId": item.get("grn_id"),
+        "purchaseOrderItemId": item.get("purchase_order_item_id"),
+        "productId": item.get("product_id"),
+        "productName": item.get("products", {}).get("name") if item.get("products") else item.get("product_name"),
+        "skuCode": item.get("products", {}).get("sku_code") if item.get("products") else item.get("sku_code"),
+        "hsnCode": item.get("products", {}).get("hsn_code") if item.get("products") else item.get("hsn_code"),
+        "orderedQuantity": item.get("ordered_quantity"),
+        "receivedQuantity": item.get("received_quantity"),
+        "rejectedQuantity": item.get("rejected_quantity"),
+        "acceptedQuantity": item.get("accepted_quantity"),
+        "unitCost": item.get("unit_cost"),
+        "discount": item.get("discount", 0), # Added
+        "tax": item.get("tax", 0), # Added
+        "total": item.get("total", 0), # Added
+        "batchNumber": item.get("batch_number"),
+        "expiryDate": item.get("expiry_date"),
+        "manufacturingDate": item.get("manufacturing_date"),
+        "qualityNotes": item.get("quality_notes"),
+        "storageLocation": item.get("storage_location"),
+        "eanCode": item.get("ean_code"),
+        "purchaseTaxType": item.get("purchase_tax_type", "exclusive"), # Added
+        "unitAbbreviation": item.get("unit_abbreviation", ""), # Added
+        "createdAt": item.get("created_at"),
+        "updatedAt": item.get("updated_at")
+    }
+
+# Good Receive Notes API endpoints
+@app.get("/good-receive-notes")
+def get_good_receive_notes(payload=Depends(require_permission("grn_view"))):
+    # Join with purchase orders and profiles to get order numbers and user names
+    try:
+        # Use a fresh Supabase client to avoid connection issues
+        fresh_supabase = get_supabase_client()
+        
+        # First get all GRNs
+        grn_data = fresh_supabase.table("good_receive_notes").select("*").execute()
+        
+        # Then get all profiles for the received_by IDs
+        received_by_ids = list(set([grn["received_by"] for grn in grn_data.data if grn.get("received_by")]))
+        profiles_data = {}
+        if received_by_ids:
+            profiles_result = fresh_supabase.table("profiles").select("*").in_("id", received_by_ids).execute()
+            profiles_data = {profile["id"]: profile for profile in profiles_result.data}
+        
+        # Get purchase orders
+        purchase_order_ids = list(set([grn["purchase_order_id"] for grn in grn_data.data if grn.get("purchase_order_id")]))
+        purchase_orders_data = {}
+        if purchase_order_ids:
+            po_result = fresh_supabase.table("purchase_orders").select("*").in_("id", purchase_order_ids).execute()
+            purchase_orders_data = {po["id"]: po for po in po_result.data}
+        
+        # Get items for all GRNs
+        grn_ids = [grn["id"] for grn in grn_data.data]
+        items_data = {}
+        if grn_ids:
+            items_result = fresh_supabase.table("good_receive_note_items").select("*, products(*)").in_("grn_id", grn_ids).execute()
+            for item in items_result.data:
+                grn_id = item["grn_id"]
+                if grn_id not in items_data:
+                    items_data[grn_id] = []
+                items_data[grn_id].append(item)
+        
+        # Combine the data
+        for grn in grn_data.data:
+            grn["profiles"] = profiles_data.get(grn.get("received_by"))
+            grn["purchase_orders"] = purchase_orders_data.get(grn.get("purchase_order_id"))
+            grn["items"] = items_data.get(grn["id"], [])
+        
+        # Transform to camelCase
+        transformed_data = [to_camel_case_good_receive_note(grn) for grn in grn_data.data]
+        return JSONResponse(content=transformed_data)
+    except Exception as e:
+        print(f"ERROR fetching GRNs: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error fetching GRNs: {str(e)}")
+
+@app.get("/good-receive-notes/{grn_id}")
+def get_good_receive_note(grn_id: str, payload=Depends(require_permission("grn_view"))):
+    try:
+        # Use a fresh Supabase client to avoid connection issues
+        fresh_supabase = get_supabase_client()
+        
+        # Get GRN with purchase order and profiles
+        grn_data = fresh_supabase.table("good_receive_notes").select("*, purchase_orders(*), profiles!good_receive_notes_received_by_fkey(*)").eq("id", grn_id).execute()
+        if not grn_data.data:
+            return JSONResponse(content={"error": "GRN not found"}, status_code=404)
+        
+        # Get items for this GRN
+        items_data = fresh_supabase.table("good_receive_note_items").select("*, products(*)").eq("grn_id", grn_id).execute()
+        
+        # Transform GRN
+        grn = to_camel_case_good_receive_note(grn_data.data[0])
+        grn["items"] = [to_camel_case_good_receive_note_item(item) for item in items_data.data]
+        
+        return JSONResponse(content=grn)
+    except Exception as e:
+        print(f"ERROR fetching GRN {grn_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error fetching GRN: {str(e)}")
+
+@app.get("/good-receive-notes/{grn_id}/items")
+def get_good_receive_note_items(grn_id: str, payload=Depends(require_permission("grn_view"))):
+    # Get items for this GRN
+    data = supabase.table("good_receive_note_items").select("*, products(*)").eq("grn_id", grn_id).execute()
+    transformed_data = [to_camel_case_good_receive_note_item(item) for item in data.data]
+    return JSONResponse(content=transformed_data)
+
+@app.post("/good-receive-notes")
+def create_good_receive_note(good_receive_note: dict = Body(...), payload=Depends(require_permission("grn_create"))):
+    try:
+        # Validate required fields based on creation mode
+        is_direct = good_receive_note.get("isDirect", False)
+        
+        if not is_direct:  # linked mode
+            if not good_receive_note.get("purchaseOrderId"):
+                raise HTTPException(status_code=400, detail="Purchase Order ID is required for linked GRN")
+            # For linked mode, we need to get supplier_id from the purchase order
+            try:
+                po_data = supabase.table("purchase_orders").select("supplier_id").eq("id", good_receive_note["purchaseOrderId"]).execute()
+                if not po_data.data:
+                    raise HTTPException(status_code=400, detail="Purchase Order not found")
+                supplier_id = po_data.data[0]["supplier_id"]
+                purchase_order_id = good_receive_note["purchaseOrderId"]
+            except Exception as e:
+                raise HTTPException(status_code=400, detail=f"Error fetching purchase order: {str(e)}")
+        else:  # direct mode
+            if not good_receive_note.get("supplierId"):
+                raise HTTPException(status_code=400, detail="Supplier ID is required for direct GRN")
+            supplier_id = good_receive_note["supplierId"]
+            
+            # For direct mode, create a purchase order first
+            try:
+                # Generate a PO number
+                today = datetime.now()
+                po_number = f"PO-{today.strftime('%Y%m%d')}-{random.randint(1000, 9999)}"
+                # Calculate totals from GRN items (server-side tax computation)
+                raw_items = good_receive_note.get("items", []) or []
+                product_ids = [it.get("productId") for it in raw_items if it.get("productId")]
+                products_map = {}
+                if product_ids:
+                    try:
+                        if DEBUG_MODE:
+                            print(f"DEBUG: Direct GRN - Looking up tax data for product IDs: {product_ids}")
+                        prod_res = supabase.table("products").select("id, purchase_tax_type, purchase_tax_id, taxes!purchase_tax_id(rate)").in_("id", product_ids).execute()
+                        if DEBUG_MODE:
+                            print(f"DEBUG: Direct GRN - Product tax data query result: {prod_res.data}")
+                        for prod in prod_res.data:
+                            # Extract rate from the taxes join
+                            rate = 0.0
+                            if prod.get("taxes") and isinstance(prod.get("taxes"), dict):
+                                rate = float(prod.get("taxes", {}).get("rate") or 0)
+                            products_map[prod["id"]] = {
+                                "type": prod.get("purchase_tax_type") or "exclusive",
+                                "rate": rate,
+                            }
+                            if DEBUG_MODE:
+                                print(f"DEBUG: Direct GRN - Product {prod['id']} tax data: type={prod.get('purchase_tax_type')}, rate={rate}, tax_id={prod.get('purchase_tax_id')}")
+                        if DEBUG_MODE:
+                            print(f"DEBUG: Direct GRN - Final products_map: {products_map}")
+                    except Exception as e:
+                        if DEBUG_MODE:
+                            print(f"DEBUG: Direct GRN - Error fetching product tax data: {e}")
+                        products_map = {}
+                processed_items = []
+                subtotal = 0.0
+                tax_amount = 0.0
+                discount_amount = 0.0
+                for it in raw_items:
+                    qty = float(it.get("receivedQuantity") or 0)
+                    unit_cost = float(it.get("unitCost") or 0)
+                    discount = float(it.get("discount") or 0)
+                    prod = products_map.get(it.get("productId"), {"type": it.get("purchaseTaxType", "exclusive"), "rate": 0.0})
+                    tax_type = it.get("purchaseTaxType") or prod.get("type") or "exclusive"
+                    rate = float(prod.get("rate") or 0.0)
+                    if DEBUG_MODE:
+                        print(f"DEBUG: Direct GRN - Item {it.get('productId')} tax calculation: prod_data={prod}, tax_type={tax_type}, rate={rate}")
+                    line_subtotal = qty * unit_cost
+                    amount_after_discount = line_subtotal - discount
+                    if tax_type == "inclusive":
+                        line_tax = amount_after_discount - (amount_after_discount / (1 + rate)) if amount_after_discount > 0 and rate > 0 else 0.0
+                        line_total = amount_after_discount
+                    else:
+                        line_tax = amount_after_discount * rate
+                        line_total = amount_after_discount + line_tax
+                    processed_item = {
+                        **it,
+                        "discount": discount,
+                        "purchaseTaxType": tax_type,
+                        "tax": round(line_tax, 2),
+                        "total": round(line_total, 2),
+                    }
+                    if DEBUG_MODE:
+                        print(f"DEBUG: Direct GRN processed item: {processed_item}")
+                    processed_items.append(processed_item)
+                    subtotal += line_subtotal
+                    discount_amount += discount
+                    tax_amount += 0.0 if tax_type == "inclusive" else line_tax
+                total_amount = good_receive_note.get("totalAmount") or (subtotal - discount_amount + tax_amount)
+                
+                # Use delivery date from GRN if provided, otherwise default to received date + 7 days
+                delivery_date = good_receive_note.get("deliveryDate")
+                if delivery_date:
+                    expected_delivery = delivery_date
+                else:
+                    # Default to 7 days from received date
+                    received_date = datetime.fromisoformat(good_receive_note["receivedDate"].replace('Z', '+00:00')) if isinstance(good_receive_note["receivedDate"], str) else good_receive_note["receivedDate"]
+                    expected_delivery = (received_date + timedelta(days=7)).isoformat()
+
+                if DEBUG_MODE:
+                    print(f"DEBUG: Auto-generated PO totals - subtotal: {subtotal}, tax_amount: {tax_amount}, discount_amount: {discount_amount}, total_amount: {total_amount}")
+                po_data = {
+                    "order_number": po_number,
+                    "supplier_id": supplier_id,
+                    "order_date": good_receive_note["receivedDate"],
+                    "expected_delivery_date": expected_delivery,
+                    "status": "approved",  # Auto-approve for direct GRN
+                    "subtotal": subtotal,
+                    "tax_amount": tax_amount,
+                    "discount_amount": discount_amount,
+                    "total_amount": total_amount,
+                    "notes": f"Auto-generated PO for GRN {good_receive_note['grnNumber']}",
+                    "created_by": payload["sub"]
+                }
+                
+                po_result = supabase.table("purchase_orders").insert(po_data).execute()
+                if not po_result.data:
+                    raise HTTPException(status_code=500, detail="Failed to create purchase order for direct GRN")
+                
+                purchase_order_id = po_result.data[0]["id"]
+                
+                # Create purchase order items from GRN items
+                if processed_items:
+                    po_items_data = []
+                    for item in processed_items:
+                        po_item_data = {
+                            "purchase_order_id": purchase_order_id,
+                            "product_id": item["productId"],
+                            "product_name": item["productName"],
+                            "sku_code": item["skuCode"],
+                            "hsn_code": item["hsnCode"],
+                            "quantity": item["receivedQuantity"],  # Use receivedQuantity for direct GRN
+                            "cost_price": item["unitCost"],
+                            "discount": item.get("discount", 0),
+                            "tax": item.get("tax", 0),
+                            "purchase_tax_type": item.get("purchaseTaxType", "exclusive"),
+                            "unit_abbreviation": item.get("unitAbbreviation", ""),
+                            "created_by": payload["sub"]
+                        }
+                        po_items_data.append(po_item_data)
+                    
+                    if po_items_data:
+                        po_items_result = supabase.table("purchase_order_items").insert(po_items_data).execute()
+                        # Map the created PO item IDs back to the processed items for GRN
+                        if po_items_result.data:
+                            for i, po_item in enumerate(po_items_result.data):
+                                if i < len(processed_items):
+                                    processed_items[i]["purchaseOrderItemId"] = po_item["id"]
+                        
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=f"Error creating purchase order: {str(e)}")
+        
+        if not good_receive_note.get("receivedDate"):
+            raise HTTPException(status_code=400, detail="Received Date is required")
+        
+        if not good_receive_note.get("status"):
+            raise HTTPException(status_code=400, detail="Status is required")
+        
+        if not payload.get("sub"):
+            raise HTTPException(status_code=400, detail="User ID is required")
+        
+    # Map camelCase to snake_case
+        # If not direct mode, still compute accurate totals from items provided
+        _raw_items_for_grn = good_receive_note.get("items", []) or []
+        _product_ids = [it.get("productId") for it in _raw_items_for_grn if it.get("productId")]
+        _products_map = {}
+        if _product_ids:
+            try:
+                _prod_res = supabase.table("products").select("id, purchase_tax_type, purchase_tax_id, taxes!purchase_tax_id(rate)").in_("id", _product_ids).execute()
+                for prod in _prod_res.data:
+                    rate = 0.0
+                    if prod.get("taxes") and isinstance(prod.get("taxes"), dict):
+                        rate = float(prod.get("taxes", {}).get("rate") or 0)
+                    _products_map[prod["id"]] = {"type": prod.get("purchase_tax_type") or "exclusive", "rate": rate}
+            except Exception:
+                _products_map = {}
+        _processed_items_for_grn = []
+        _subtotal = 0.0
+        _tax_amount = 0.0
+        _discount_amount = 0.0
+        
+        # For Direct GRNs, use the already processed items (which have purchaseOrderItemId set)
+        if good_receive_note.get("isDirect") and 'processed_items' in locals():
+            _processed_items_for_grn = processed_items
+            # Calculate totals from processed items
+            for item in processed_items:
+                _subtotal += float(item.get("receivedQuantity", 0)) * float(item.get("unitCost", 0))
+                _discount_amount += float(item.get("discount", 0))
+                _tax_amount += float(item.get("tax", 0))
+        else:
+            # For Linked GRNs or when processed_items not available, process from raw items
+            for it in _raw_items_for_grn:
+                qty = float(it.get("receivedQuantity") or 0)
+                unit_cost = float(it.get("unitCost") or 0)
+                discount = float(it.get("discount") or 0)
+                prod = _products_map.get(it.get("productId"), {"type": it.get("purchaseTaxType", "exclusive"), "rate": 0.0})
+                tax_type = it.get("purchaseTaxType") or prod.get("type") or "exclusive"
+                rate = float(prod.get("rate") or 0.0)
+                line_subtotal = qty * unit_cost
+                amount_after_discount = line_subtotal - discount
+                if tax_type == "inclusive":
+                    line_tax = amount_after_discount - (amount_after_discount / (1 + rate)) if amount_after_discount > 0 and rate > 0 else 0.0
+                    line_total = amount_after_discount
+                else:
+                    line_tax = amount_after_discount * rate
+                    line_total = amount_after_discount + line_tax
+                processed_item = {**it, "purchaseTaxType": tax_type, "discount": discount, "tax": round(line_tax, 2), "total": round(line_total, 2)}
+                _processed_items_for_grn.append(processed_item)
+                _subtotal += line_subtotal
+                _discount_amount += discount
+                _tax_amount += 0.0 if tax_type == "inclusive" else line_tax
+
+        # Calculate total received items from the actual items
+        _total_received_items = sum(int(item.get("receivedQuantity", 0)) for item in _processed_items_for_grn)
+        
+        if DEBUG_MODE:
+            print(f"DEBUG: GRN totals - _subtotal: {_subtotal}, _tax_amount: {_tax_amount}, _discount_amount: {_discount_amount}, _total_received_items: {_total_received_items}")
+        grn_data = {
+        "grn_number": good_receive_note["grnNumber"],
+            "purchase_order_id": purchase_order_id,
+            "supplier_id": supplier_id,
+        "received_date": good_receive_note["receivedDate"],
+            "received_by": payload["sub"],
+        "status": good_receive_note["status"],
+            "total_received_items": _total_received_items,
+            "notes": good_receive_note.get("notes", ""),
+            "quality_check_status": (good_receive_note.get("qualityCheckStatus") or "pending"),
+            "warehouse_location": good_receive_note.get("warehouseLocation", ""),
+            "subtotal": round(_subtotal, 2),
+            "tax_amount": round(_tax_amount, 2),
+            "discount_amount": round(_discount_amount, 2),
+            "total_amount": round((_subtotal - _discount_amount + _tax_amount), 2),
+            "rounding_adjustment": good_receive_note.get("roundingAdjustment", 0),
+            "is_direct": is_direct,
+            "vendor_invoice_number": good_receive_note.get("vendorInvoiceNumber")
+        }
+        
+        # Create the GRN
+        data = supabase.table("good_receive_notes").insert(grn_data).execute()
+        created_grn = data.data[0] if data.data else None
+        
+        if not created_grn:
+            raise HTTPException(status_code=500, detail="Failed to create good receive note")
+    except Exception as e:
+        print(f"Error creating GRN: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to create good receive note: {str(e)}")
+    
+    # Insert items if they exist (use processed values with computed tax/total)
+    items = _processed_items_for_grn
+    if DEBUG_MODE:
+        print(f"DEBUG: Processed items for GRN creation: {items}")
+    if items and len(items) > 0:
+        items_data = []
+        for item in items:
+            item_data = {
+                "grn_id": created_grn["id"],
+                "purchase_order_item_id": item.get("purchaseOrderItemId"),
+                "product_id": item["productId"],
+                "product_name": item["productName"],
+                "sku_code": item["skuCode"],
+                "hsn_code": item["hsnCode"],
+                "ordered_quantity": item["orderedQuantity"],
+                "received_quantity": item["receivedQuantity"],
+                "rejected_quantity": item.get("rejectedQuantity", 0),
+                "unit_cost": item["unitCost"],
+                "discount": item.get("discount", 0), # Added
+                "tax": item.get("tax", 0), # Added
+                "batch_number": item.get("batchNumber"),
+                "ean_code": item.get("eanCode"),
+                "expiry_date": item.get("expiryDate"),
+                "manufacturing_date": item.get("manufacturingDate"),
+                "quality_notes": item.get("qualityNotes"),
+                "storage_location": item.get("storageLocation"),
+                "purchase_tax_type": item.get("purchaseTaxType", "exclusive"), # Added
+                "unit_abbreviation": item.get("unitAbbreviation", ""), # Added
+                "created_by": payload["sub"]
+    }
+            items_data.append(item_data)
+        
+        # Insert all items
+        if items_data:
+            try:
+                supabase.table("good_receive_note_items").insert(items_data).execute()
+            except Exception as e:
+                print(f"Error inserting GRN items: {str(e)}")
+                # If items fail to insert, we should still return the created GRN
+                # but log the error for debugging
+    
+    # Recompute purchase order status based on all GRNs for this PO
+    if created_grn.get("purchase_order_id"):
+        try:
+            update_purchase_order_status_from_grns(created_grn["purchase_order_id"]) 
+        except Exception as _:
+            pass
+    
+    return JSONResponse(content=created_grn)
+
+@app.put("/good-receive-notes/{good_receive_note_id}")
+def update_good_receive_note(good_receive_note_id: str, good_receive_note: dict = Body(...), payload=Depends(require_permission("grn_edit"))):
+    # Get current GRN status for validation
+    current_grn_data = supabase.table("good_receive_notes").select("status").eq("id", good_receive_note_id).execute()
+    if not current_grn_data.data:
+        raise HTTPException(status_code=404, detail="Good receive note not found")
+    
+    current_status = current_grn_data.data[0]["status"]
+    
+    # Validate status transition
+    validate_grn_status_transition(current_status, operation="edit")
+    
+    # Calculate total received items from the items
+    items = good_receive_note.get("items", [])
+    total_received_items = sum(int(item.get("receivedQuantity", 0)) for item in items)
+    
+    # Map camelCase to snake_case
+    grn_data = {
+        "grn_number": good_receive_note["grnNumber"],
+        "purchase_order_id": good_receive_note["purchaseOrderId"],
+        "supplier_id": good_receive_note["supplierId"],
+        "received_date": good_receive_note["receivedDate"],
+        "status": good_receive_note["status"],
+        "total_received_items": total_received_items,
+        "notes": good_receive_note.get("notes"),
+        "quality_check_status": (good_receive_note.get("qualityCheckStatus") or "pending"),
+        "warehouse_location": good_receive_note.get("warehouseLocation"),
+        "subtotal": good_receive_note.get("subtotal", 0),
+        "tax_amount": good_receive_note.get("taxAmount", 0),
+        "discount_amount": good_receive_note.get("discountAmount", 0),
+        "total_amount": good_receive_note.get("totalAmount", 0),
+        "rounding_adjustment": good_receive_note.get("roundingAdjustment", 0), # Added
+        "vendor_invoice_number": good_receive_note.get("vendorInvoiceNumber")
+    }
+    
+    # Update the GRN
+    data = supabase.table("good_receive_notes").update(grn_data).eq("id", good_receive_note_id).execute()
+    updated_grn = data.data[0] if data.data else None
+    
+    if not updated_grn:
+        raise HTTPException(status_code=404, detail="Good receive note not found")
+    
+    # Recompute linked purchase order status based on all GRNs for this PO
+    if grn_data.get("purchase_order_id"):
+        try:
+            update_purchase_order_status_from_grns(grn_data["purchase_order_id"]) 
+        except Exception as _:
+            pass
+    
+    # Handle items update
+    items = good_receive_note.get("items", [])
+    if items:
+        # Delete existing items
+        supabase.table("good_receive_note_items").delete().eq("grn_id", good_receive_note_id).execute()
+        
+        # Insert new items
+        items_data = []
+        for item in items:
+            item_data = {
+                "grn_id": good_receive_note_id,
+                "purchase_order_item_id": item.get("purchaseOrderItemId"),
+                "product_id": item["productId"],
+                "product_name": item["productName"],
+                "sku_code": item["skuCode"],
+                "hsn_code": item["hsnCode"],
+                "ordered_quantity": item["orderedQuantity"],
+                "received_quantity": item["receivedQuantity"],
+                "rejected_quantity": item.get("rejectedQuantity", 0),
+                "unit_cost": item["unitCost"],
+                "discount": item.get("discount", 0), # Added
+                "tax": item.get("tax", 0), # Added
+                "batch_number": item.get("batchNumber"),
+                "ean_code": item.get("eanCode"),
+                "expiry_date": item.get("expiryDate"),
+                "manufacturing_date": item.get("manufacturingDate"),
+                "quality_notes": item.get("qualityNotes"),
+                "storage_location": item.get("storageLocation"),
+                "purchase_tax_type": item.get("purchaseTaxType", "exclusive"), # Added
+                "unit_abbreviation": item.get("unitAbbreviation", ""), # Added
+                "created_by": payload["sub"]
+            }
+            items_data.append(item_data)
+        
+        if items_data:
+            supabase.table("good_receive_note_items").insert(items_data).execute()
+    
+    return JSONResponse(content=updated_grn)
+
+@app.delete("/good-receive-notes/{good_receive_note_id}")
+def delete_good_receive_note(good_receive_note_id: str, payload=Depends(require_permission("grn_delete"))):
+    # Get current GRN status for validation
+    current_grn_data = supabase.table("good_receive_notes").select("status, purchase_order_id").eq("id", good_receive_note_id).execute()
+    if not current_grn_data.data:
+        raise HTTPException(status_code=404, detail="Good receive note not found")
+    
+    current_status = current_grn_data.data[0]["status"]
+    purchase_order_id = current_grn_data.data[0]["purchase_order_id"]
+    
+    # Validate status transition
+    validate_grn_status_transition(current_status, operation="delete")
+    
+    # Recompute PO status after deletion
+    if purchase_order_id:
+        try:
+            update_purchase_order_status_from_grns(purchase_order_id)
+        except Exception as _:
+            pass
+    
+    data = supabase.table("good_receive_notes").delete().eq("id", good_receive_note_id).execute()
+    return JSONResponse(content=data.data)
+
+def check_duplicate_ean_code(ean_code: str, exclude_product_id: str = None):
+    """Check if EAN code already exists"""
+    query = supabase.table("products").select("id").eq("barcode", ean_code)
+    if exclude_product_id:
+        query = query.neq("id", exclude_product_id)
+    data = query.execute()
+    return len(data.data) > 0
+
+def update_purchase_order_status_from_grns(purchase_order_id: str):
+    """Evaluate cumulative receipts from all completed GRNs for a PO and set PO status.
+    - If all PO item quantities are fully received (sum of accepted_quantity >= ordered quantity for each item), set PO to 'received'.
+    - Otherwise keep or set status to 'approved' (do not override 'cancelled').
+    """
+    if DEBUG_MODE:
+        print(f"DEBUG: Updating PO status for purchase_order_id: {purchase_order_id}")
+    fresh = get_supabase_client()
+    # Fetch PO status to avoid overriding cancelled
+    po_res = fresh.table("purchase_orders").select("status").eq("id", purchase_order_id).execute()
+    if not po_res.data:
+        return
+    current_status = po_res.data[0]["status"]
+    if current_status == "cancelled":
+        return
+    # Fetch PO items
+    poi_res = fresh.table("purchase_order_items").select("id, quantity").eq("purchase_order_id", purchase_order_id).execute()
+    po_items = poi_res.data or []
+    if not po_items:
+        # No items -> mark as received to close out
+        fresh.table("purchase_orders").update({"status": "received"}).eq("id", purchase_order_id).execute()
+        return
+    # Fetch completed GRNs for this PO
+    grn_res = fresh.table("good_receive_notes").select("id, status").eq("purchase_order_id", purchase_order_id).execute()
+    grn_ids = [g["id"] for g in (grn_res.data or []) if g.get("status") == "completed"]
+    if DEBUG_MODE:
+        print(f"DEBUG: Found GRNs for PO {purchase_order_id}: {[(g['id'], g['status']) for g in (grn_res.data or [])]}")
+        print(f"DEBUG: Completed GRN IDs: {grn_ids}")
+    if not grn_ids:
+        if DEBUG_MODE:
+            print(f"DEBUG: No completed GRNs found for PO {purchase_order_id}")
+        if current_status == "received":
+            fresh.table("purchase_orders").update({"status": "approved"}).eq("id", purchase_order_id).execute()
+        return
+    # Sum accepted quantities per PO item across completed GRNs
+    items_res = fresh.table("good_receive_note_items").select("purchase_order_item_id, accepted_quantity, received_quantity, rejected_quantity, grn_id").in_("grn_id", grn_ids).execute()
+    received_by_item = {}
+    if DEBUG_MODE:
+        print(f"DEBUG: GRN items data: {items_res.data}")
+    for row in items_res.data or []:
+        poi = row.get("purchase_order_item_id")
+        if not poi:
+            if DEBUG_MODE:
+                print(f"DEBUG: Skipping GRN item with no purchase_order_item_id: {row}")
+            continue
+        acc = int(row.get("accepted_quantity") or 0)
+        received_by_item[poi] = received_by_item.get(poi, 0) + acc
+        if DEBUG_MODE:
+            print(f"DEBUG: PO Item {poi}: accepted_quantity={acc}, running_total={received_by_item[poi]}")
+    
+    if DEBUG_MODE:
+        print(f"DEBUG: PO Items: {po_items}")
+        print(f"DEBUG: Received by item: {received_by_item}")
+    
+    # Determine completeness
+    all_received = True
+    for poi in po_items:
+        required = int(poi.get("quantity") or 0)
+        got = int(received_by_item.get(poi.get("id"), 0))
+        if DEBUG_MODE:
+            print(f"DEBUG: PO Item {poi.get('id')}: required={required}, received={got}, satisfied={got >= required}")
+        if got < required:
+            all_received = False
+            # Don't break here, continue logging all items for debugging
+    # Update PO status accordingly
+    if all_received and current_status != "received":
+        if DEBUG_MODE:
+            print(f"DEBUG: All items received for PO {purchase_order_id}, updating status to 'received'")
+        fresh.table("purchase_orders").update({"status": "received"}).eq("id", purchase_order_id).execute()
+    elif not all_received and current_status == "received":
+        if DEBUG_MODE:
+            print(f"DEBUG: Not all items received for PO {purchase_order_id}, reverting status to 'approved'")
+        fresh.table("purchase_orders").update({"status": "approved"}).eq("id", purchase_order_id).execute()
+    else:
+        if DEBUG_MODE:
+            print(f"DEBUG: No status change needed for PO {purchase_order_id}. Current: {current_status}, All received: {all_received}")
+
+# Status validation functions for business logic
+def validate_grn_status_transition(current_status: str, new_status: str = None, operation: str = "edit"):
+    """Validate GRN status for edit/delete operations"""
+    if operation == "edit":
+        # For editing: only draft and partial can be edited
+        if current_status in ['completed', 'rejected']:
+            raise HTTPException(
+                status_code=403, 
+                detail=f"Cannot edit GRN with status '{current_status}'. Only draft and partial GRNs can be edited."
+            )
+    elif operation == "delete":
+        # For deleting: only draft can be deleted
+        if current_status in ['partial', 'completed', 'rejected']:
+            raise HTTPException(
+                status_code=403, 
+                detail=f"Cannot delete GRN with status '{current_status}'. Only draft GRNs can be deleted."
+            )
+
+def validate_sale_invoice_status_transition(current_status: str, new_status: str = None, operation: str = "edit"):
+    """Validate Sale Invoice status for edit/delete operations"""
+    if operation == "edit":
+        # For editing: draft, sent, and partial can be edited
+        if current_status in ['paid', 'overdue', 'cancelled']:
+            raise HTTPException(
+                status_code=403, 
+                detail=f"Cannot edit sale invoice with status '{current_status}'. Only draft, sent, and partial invoices can be edited."
+            )
+    elif operation == "delete":
+        # For deleting: only draft can be deleted
+        if current_status in ['sent', 'partial', 'paid', 'overdue', 'cancelled']:
+            raise HTTPException(
+                status_code=403, 
+                detail=f"Cannot delete sale invoice with status '{current_status}'. Only draft invoices can be deleted."
+            )
+
+def validate_credit_note_status_transition(current_status: str, new_status: str = None, operation: str = "edit"):
+    """Validate Credit Note status for edit/delete operations"""
+    if operation == "edit":
+        # For editing: only draft and pending can be edited
+        if current_status in ['approved', 'processed', 'cancelled']:
+            raise HTTPException(
+                status_code=403, 
+                detail=f"Cannot edit credit note with status '{current_status}'. Only draft and pending credit notes can be edited."
+            )
+    elif operation == "delete":
+        # For deleting: only draft can be deleted
+        if current_status in ['pending', 'approved', 'processed', 'cancelled']:
+            raise HTTPException(
+                status_code=403, 
+                detail=f"Cannot delete credit note with status '{current_status}'. Only draft credit notes can be deleted."
+            )
+
+def validate_purchase_order_status_transition(current_status: str, new_status: str = None, operation: str = "edit"):
+    """Validate Purchase Order status for edit/delete operations"""
+    if operation == "edit":
+        # For editing: only draft and pending can be edited
+        if current_status in ['approved', 'cancelled', 'received']:
+            raise HTTPException(
+                status_code=403, 
+                detail=f"Cannot edit purchase order with status '{current_status}'. Only draft and pending orders can be edited."
+            )
+    elif operation == "delete":
+        # For deleting: only draft can be deleted
+        if current_status in ['pending', 'approved', 'cancelled', 'received']:
+            raise HTTPException(
+                status_code=403, 
+                detail=f"Cannot delete purchase order with status '{current_status}'. Only draft orders can be deleted."
+            )
+
+def validate_sales_order_status_transition(current_status: str, new_status: str = None, operation: str = "edit"):
+    """Validate Sales Order status for edit/delete operations"""
+    if operation == "edit":
+        # For editing: draft, pending, approved, sent, partial, and overdue can be edited
+        if current_status in ['fulfilled', 'cancelled']:
+            raise HTTPException(
+                status_code=403, 
+                detail=f"Cannot edit sales order with status '{current_status}'. Only draft, pending, approved, sent, partial, and overdue orders can be edited."
+            )
+    elif operation == "delete":
+        # For deleting: only draft, pending, and approved can be deleted
+        if current_status in ['sent', 'partial', 'fulfilled', 'overdue', 'cancelled']:
+            raise HTTPException(
+                status_code=403, 
+                detail=f"Cannot delete sales order with status '{current_status}'. Only draft, pending, and approved orders can be deleted."
+            )
+
+# Customer Payments API Endpoints
+@app.get("/customer-payments")
+def get_customer_payments(payload=Depends(require_permission("sale_invoices_view"))):
+    """Get all customer payments."""
+    try:
+        data = supabase.table("customer_payments").select("*").order("created_at", desc=True).execute()
+        # Transform to camelCase
+        transformed_data = [to_camel_case_payment(payment) for payment in data.data]
+        return JSONResponse(content=transformed_data)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/customer-payments/{payment_id}")
+def get_customer_payment(payment_id: str, payload=Depends(require_permission("sale_invoices_view"))):
+    """Get a specific customer payment."""
+    try:
+        data = supabase.table("customer_payments").select("*").eq("id", payment_id).execute()
+        if not data.data:
+            raise HTTPException(status_code=404, detail="Payment not found")
+        # Transform to camelCase
+        transformed_data = to_camel_case_payment(data.data[0])
+        return JSONResponse(content=transformed_data)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/customer-payments")
+def create_customer_payment(payment: dict = Body(...), payload=Depends(require_permission("sale_invoices_edit"))):
+    """Create a new customer payment."""
+    try:
+        # Map camelCase to snake_case
+        payment_data = {
+            "invoice_id": payment["invoiceId"],
+            "customer_id": payment["customerId"],
+            "payment_amount": payment["paymentAmount"],
+            "payment_date": payment["paymentDate"],
+            "payment_method": payment["paymentMethod"],
+            "payment_reference": payment.get("paymentReference"),
+            "notes": payment.get("notes"),
+            "created_by": payload["sub"]
+        }
+
+        # Insert the payment
+        result = supabase.table("customer_payments").insert(payment_data).execute()
+        created_payment = result.data[0] if result.data else None
+
+        if not created_payment:
+            raise HTTPException(status_code=500, detail="Failed to create payment")
+
+        # Transform to camelCase before returning
+        transformed_payment = to_camel_case_payment(created_payment)
+        return JSONResponse(content=transformed_payment, status_code=201)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.put("/customer-payments/{payment_id}")
+def update_customer_payment(payment_id: str, payment: dict = Body(...), payload=Depends(require_permission("sale_invoices_edit"))):
+    """Update a customer payment."""
+    try:
+        # Map camelCase to snake_case
+        payment_data = {
+            "payment_amount": payment["paymentAmount"],
+            "payment_date": payment["paymentDate"],
+            "payment_method": payment["paymentMethod"],
+            "payment_reference": payment.get("paymentReference"),
+            "notes": payment.get("notes"),
+            "updated_at": "now()"
+        }
+
+        # Update the payment
+        result = supabase.table("customer_payments").update(payment_data).eq("id", payment_id).execute()
+        updated_payment = result.data[0] if result.data else None
+
+        if not updated_payment:
+            raise HTTPException(status_code=404, detail="Payment not found")
+
+        # Transform to camelCase before returning
+        transformed_payment = to_camel_case_payment(updated_payment)
+        return JSONResponse(content=transformed_payment)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/customer-payments/{payment_id}")
+def delete_customer_payment(payment_id: str, payload=Depends(require_permission("sale_invoices_edit"))):
+    """Delete a customer payment."""
+    try:
+        result = supabase.table("customer_payments").delete().eq("id", payment_id).execute()
+        if not result.data:
+            raise HTTPException(status_code=404, detail="Payment not found")
+        return JSONResponse(content={"message": "Payment deleted successfully"})
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/sale-invoices/{sale_invoice_id}/payments")
+def get_invoice_payments(sale_invoice_id: str, payload=Depends(require_permission("sale_invoices_view"))):
+    """Get all payments for a specific sale invoice."""
+    try:
+        data = supabase.table("customer_payments").select("*").eq("invoice_id", sale_invoice_id).order("payment_date", desc=True).execute()
+        # Transform to camelCase
+        transformed_data = [to_camel_case_payment(payment) for payment in data.data]
+        return JSONResponse(content=transformed_data)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/sale-invoices/{sale_invoice_id}/payments")
+def add_invoice_payment(sale_invoice_id: str, payment: dict = Body(...), payload=Depends(require_permission("sale_invoices_edit"))):
+    """Add a payment to a specific sale invoice."""
+    try:
+        # Map camelCase to snake_case
+        payment_data = {
+            "invoice_id": sale_invoice_id,
+            "customer_id": payment["customerId"],
+            "payment_amount": payment["paymentAmount"],
+            "payment_date": payment["paymentDate"],
+            "payment_method": payment["paymentMethod"],
+            "payment_reference": payment.get("paymentReference"),
+            "notes": payment.get("notes"),
+            "created_by": payload["sub"]
+        }
+
+        # Insert the payment
+        result = supabase.table("customer_payments").insert(payment_data).execute()
+        created_payment = result.data[0] if result.data else None
+
+        if not created_payment:
+            raise HTTPException(status_code=500, detail="Failed to create payment")
+
+        # Transform to camelCase before returning
+        transformed_payment = to_camel_case_payment(created_payment)
+        return JSONResponse(content=transformed_payment, status_code=201)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    print(f"Starting server with DEBUG_MODE: {DEBUG_MODE}")
+    uvicorn.run(app, host="0.0.0.0", port=8000, reload=DEBUG_MODE)

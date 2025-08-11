@@ -26,6 +26,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Customer, Address } from "@/types/customer";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { CustomerCredit } from "./CustomerCredit";
 
 const addressSchema = z.object({
   street: z.string().min(1, "Street is required"),
@@ -204,10 +205,11 @@ export function CustomerDialog({
 
 
             <Tabs defaultValue="basic" className="w-full">
-              <TabsList className="grid w-full grid-cols-3">
+              <TabsList className="grid w-full grid-cols-4">
                 <TabsTrigger value="basic">Basic Details</TabsTrigger>
                 <TabsTrigger value="billing">Billing Address</TabsTrigger>
                 <TabsTrigger value="shipping">Shipping Address</TabsTrigger>
+                <TabsTrigger value="credit">Credit</TabsTrigger>
               </TabsList>
               
               <TabsContent value="basic" className="space-y-4">
@@ -505,6 +507,9 @@ export function CustomerDialog({
                     />
                   </div>
                 )}
+              </TabsContent>
+              <TabsContent value="credit">
+                {customer && <CustomerCredit customerId={customer.id} />}
               </TabsContent>
             </Tabs>
 

@@ -1,6 +1,6 @@
 
 import { Skeleton } from '@/components/ui/skeleton';
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import {
   Table,
   TableBody,
@@ -16,80 +16,62 @@ import { type PurchaseOrder } from "@/types/purchase-order";
 import { useCurrencyStore } from "@/stores/currencyStore";
 
 interface PurchaseOrderTableProps {
-  onEdit: (purchaseOrder: PurchaseOrder) => void;
+  purchaseOrders: PurchaseOrder[];
+  loading: boolean;
+  onView?: (purchaseOrder: PurchaseOrder) => void;
+  onEdit?: (purchaseOrder: PurchaseOrder) => void;
+  onDelete?: (id: string) => void;
+  onPrint?: (purchaseOrder: PurchaseOrder) => void;
+  canEdit?: boolean;
+  canDelete?: boolean;
 }
 
-// Sample data for demonstration
-const purchaseOrderData: PurchaseOrder[] = [
-  {
-    id: "1",
-    orderNumber: "PO-0001",
-    supplierId: "1",
-    supplier: {
-      id: "1",
-      name: "ABC Electronics",
-      contactName: "John Smith",
-      email: "john@abcelectronics.com",
-      phone: "1234567890",
-      address: "123 Main St",
-      taxId: "TAX12345",
-      paymentTerms: "Net 30",
-      isActive: true,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    },
-    orderDate: new Date(),
-    expectedDeliveryDate: new Date(),
-    status: "pending",
-    subtotal: 3500,
-    taxAmount: 630,
-    discountAmount: 0,
-    totalAmount: 4130,
-    notes: "Please deliver as soon as possible",
-    items: [],
-    createdAt: new Date(),
-    updatedAt: new Date(),
-  },
-  {
-    id: "2",
-    orderNumber: "PO-0002",
-    supplierId: "2",
-    supplier: {
-      id: "2",
-      name: "XYZ Appliances",
-      contactName: "Jane Doe",
-      email: "jane@xyzappliances.com",
-      phone: "0987654321",
-      address: "456 Oak St",
-      taxId: "TAX67890",
-      paymentTerms: "Net 15",
-      isActive: true,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    },
-    orderDate: new Date(),
-    expectedDeliveryDate: new Date(),
-    status: "approved",
-    subtotal: 7200,
-    taxAmount: 1296,
-    discountAmount: 720,
-    totalAmount: 7776,
-    notes: "",
-    items: [],
-    createdAt: new Date(),
-    updatedAt: new Date(),
-  },
-];
 
-export function PurchaseOrderTable({ onEdit }: PurchaseOrderTableProps) {
-  // Move all hooks to the top
-  const [loading, setLoading] = useState(true);
-  const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>(purchaseOrderData);
+
+export function PurchaseOrderTable({ 
+  purchaseOrders, 
+  loading, 
+  onView,
+  onEdit, 
+  onDelete, 
+  onPrint,
+  canEdit, 
+  canDelete 
+}: PurchaseOrderTableProps) {
+  // Ensure purchaseOrders is always an array
+  const safePurchaseOrders = Array.isArray(purchaseOrders) ? purchaseOrders : [];
+  
+  const [sortColumn, setSortColumn] = useState<string>("orderDate");
+  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
   const { currency } = useCurrencyStore();
 
-  useEffect(() => {
-    setTimeout(() => setLoading(false), 1000);
-  }, []);
+  const handleSort = (column: string) => {
+    if (sortColumn === column) {
+      setSortDirection(sortDirection === "asc" ? "desc" : "asc");
+    } else {
+      setSortColumn(column);
+      setSortDirection("asc");
+    }
+  };
+
+  const sortedPurchaseOrders = [...safePurchaseOrders].sort((a: any, b: any) => {
+    let aValue = a[sortColumn];
+    let bValue = b[sortColumn];
+
+    // Handle nested properties like supplier.name
+    if (sortColumn === "supplier.name") {
+      aValue = a.supplier?.name;
+      bValue = b.supplier?.name;
+    }
+
+    if (aValue < bValue) {
+      return sortDirection === "asc" ? -1 : 1;
+    }
+    if (aValue > bValue) {
+      return sortDirection === "asc" ? 1 : -1;
+    }
+    return 0;
+  });
 
   // Now do the conditional render
   if (loading) {
@@ -99,20 +81,24 @@ export function PurchaseOrderTable({ onEdit }: PurchaseOrderTableProps) {
           <TableHeader>
             <TableRow>
               <TableHead>PO #</TableHead>
-              <TableHead>Date</TableHead>
               <TableHead>Supplier</TableHead>
+              <TableHead>Order Date</TableHead>
+              <TableHead>Delivery Date</TableHead>
               <TableHead>Status</TableHead>
-              <TableHead className="text-right">Actions</TableHead>
+              <TableHead className="text-right">Amount</TableHead>
+              <TableHead className="text-center">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {[...Array(6)].map((_, i) => (
               <TableRow key={i}>
                 <TableCell><Skeleton className="h-4 w-20" /></TableCell>
-                <TableCell><Skeleton className="h-4 w-24" /></TableCell>
                 <TableCell><Skeleton className="h-4 w-32" /></TableCell>
+                <TableCell><Skeleton className="h-4 w-24" /></TableCell>
+                <TableCell><Skeleton className="h-4 w-24" /></TableCell>
                 <TableCell><Skeleton className="h-4 w-16" /></TableCell>
                 <TableCell className="text-right"><Skeleton className="h-4 w-20 ml-auto" /></TableCell>
+                <TableCell className="text-center"><Skeleton className="h-4 w-20" /></TableCell>
               </TableRow>
             ))}
           </TableBody>
@@ -122,7 +108,9 @@ export function PurchaseOrderTable({ onEdit }: PurchaseOrderTableProps) {
   }
 
   const handleDelete = (id: string) => {
-    setPurchaseOrders(purchaseOrders.filter((po) => po.id !== id));
+    if (onDelete) {
+      onDelete(id);
+    }
   };
 
   return (
@@ -130,28 +118,58 @@ export function PurchaseOrderTable({ onEdit }: PurchaseOrderTableProps) {
       <Table>
         <TableHeader>
           <TableRow>
-            <TableHead>PO #</TableHead>
-            <TableHead>Supplier</TableHead>
-            <TableHead>Order Date</TableHead>
-            <TableHead>Delivery Date</TableHead>
-            <TableHead>Status</TableHead>
-            <TableHead className="text-right">Amount</TableHead>
+            <TableHead 
+              className="cursor-pointer"
+              onClick={() => handleSort("orderNumber")}
+            >
+              PO #
+            </TableHead>
+            <TableHead
+              className="cursor-pointer"
+              onClick={() => handleSort("supplier.name")}
+            >
+              Supplier
+            </TableHead>
+            <TableHead
+              className="cursor-pointer"
+              onClick={() => handleSort("orderDate")}
+            >
+              Order Date
+            </TableHead>
+            <TableHead
+              className="cursor-pointer"
+              onClick={() => handleSort("expectedDeliveryDate")}
+            >
+              Delivery Date
+            </TableHead>
+            <TableHead
+              className="cursor-pointer"
+              onClick={() => handleSort("status")}
+            >
+              Status
+            </TableHead>
+            <TableHead
+              className="cursor-pointer text-right"
+              onClick={() => handleSort("totalAmount")}
+            >
+              Amount
+            </TableHead>
             <TableHead className="text-center">Actions</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
-          {purchaseOrders.length === 0 ? (
+          {sortedPurchaseOrders.length === 0 ? (
             <TableRow>
               <TableCell colSpan={7} className="text-center text-gray-500 py-6">
                 No purchase orders found
               </TableCell>
             </TableRow>
           ) : (
-            purchaseOrders.map((po) => (
+            sortedPurchaseOrders.map((po) => (
               <TableRow key={po.id}>
-                <TableCell className="font-medium">{po.orderNumber}</TableCell>
-                <TableCell>{po.supplier.name}</TableCell>
-                <TableCell>{formatDate(po.orderDate)}</TableCell>
+                <TableCell className="font-medium">{po.orderNumber || 'N/A'}</TableCell>
+                <TableCell>{po.supplier?.name || 'N/A'}</TableCell>
+                <TableCell>{po.orderDate ? formatDate(po.orderDate) : 'N/A'}</TableCell>
                 <TableCell>{po.expectedDeliveryDate ? formatDate(po.expectedDeliveryDate) : "N/A"}</TableCell>
                 <TableCell>
                   <span className={`capitalize px-2 py-1 rounded-full text-xs ${
@@ -169,18 +187,66 @@ export function PurchaseOrderTable({ onEdit }: PurchaseOrderTableProps) {
                 </TableCell>
                 <TableCell>
                   <div className="flex justify-center space-x-2">
-                    <Button variant="ghost" size="icon">
-                      <Eye className="h-4 w-4" />
-                    </Button>
-                    <Button variant="ghost" size="icon" onClick={() => onEdit(po)}>
-                      <Edit className="h-4 w-4" />
-                    </Button>
-                    <Button variant="ghost" size="icon" onClick={() => handleDelete(po.id)}>
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                    <Button variant="ghost" size="icon">
-                      <FileText className="h-4 w-4" />
-                    </Button>
+                    {onView && (
+                      <Button 
+                        variant="ghost" 
+                        size="icon" 
+                        onClick={() => onView(po)}
+                        disabled={po.status === 'draft' || po.status === 'pending'}
+                        title={po.status === 'draft' || po.status === 'pending' 
+                          ? `Cannot view ${po.status} purchase order` 
+                          : "View Purchase Order"}
+                        className={po.status === 'draft' || po.status === 'pending' 
+                          ? 'opacity-50 cursor-not-allowed' : ''}
+                      >
+                        <Eye className="h-4 w-4" />
+                      </Button>
+                    )}
+                    {canEdit && onEdit && (
+                      <Button 
+                        variant="ghost" 
+                        size="icon" 
+                        onClick={() => onEdit(po)}
+                        disabled={po.status === 'approved' || po.status === 'cancelled' || po.status === 'received'}
+                        title={po.status === 'approved' || po.status === 'cancelled' || po.status === 'received' 
+                          ? `Cannot edit ${po.status} purchase order` 
+                          : "Edit Purchase Order"}
+                        className={po.status === 'approved' || po.status === 'cancelled' || po.status === 'received' 
+                          ? 'opacity-50 cursor-not-allowed' : ''}
+                      >
+                        <Edit className="h-4 w-4" />
+                      </Button>
+                    )}
+                    {onPrint && (
+                      <Button 
+                        variant="ghost" 
+                        size="icon" 
+                        onClick={() => onPrint(po)}
+                        disabled={po.status === 'draft' || po.status === 'pending'}
+                        title={po.status === 'draft' || po.status === 'pending' 
+                          ? `Cannot print ${po.status} purchase order` 
+                          : "Print Purchase Order"}
+                        className={po.status === 'draft' || po.status === 'pending' 
+                          ? 'opacity-50 cursor-not-allowed' : ''}
+                      >
+                        <FileText className="h-4 w-4" />
+                      </Button>
+                    )}
+                    {canDelete && onDelete && (
+                      <Button 
+                        variant="ghost" 
+                        size="icon" 
+                        onClick={() => handleDelete(po.id)}
+                        disabled={po.status === 'approved' || po.status === 'cancelled' || po.status === 'received'}
+                        title={po.status === 'approved' || po.status === 'cancelled' || po.status === 'received' 
+                          ? `Cannot delete ${po.status} purchase order` 
+                          : "Delete Purchase Order"}
+                        className={po.status === 'approved' || po.status === 'cancelled' || po.status === 'received' 
+                          ? 'opacity-50 cursor-not-allowed' : ''}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    )}
                   </div>
                 </TableCell>
               </TableRow>

@@ -274,9 +274,35 @@ export async function deleteCustomer(id: string) {
   return apiFetch(`/customers/${id}`, { method: 'DELETE' });
 }
 
+export async function getCustomerCreditBalance(customerId: string) {
+  return apiFetch(`/customers/${customerId}/credit-balance`);
+}
+
+// NEW: Get invoices for a specific customer
+export async function getCustomerInvoices(customerId: string) {
+  console.log('API - getCustomerInvoices called with customerId:', customerId);
+  
+  // Filter sale invoices by customer ID
+  const allInvoices = await getSaleInvoices();
+  console.log('API - getSaleInvoices response:', allInvoices);
+  
+  if (allInvoices && !allInvoices.error) {
+    const filteredInvoices = allInvoices.filter((invoice: any) => invoice.customerId === customerId);
+    console.log('API - Filtered invoices for customer:', filteredInvoices);
+    return filteredInvoices;
+  }
+  
+  console.log('API - No invoices found or error occurred');
+  return [];
+}
+
 // Credit Notes API functions
 export async function getCreditNotes() {
   return apiFetch('/credit-notes');
+}
+
+export async function getCreditNote(id: string) {
+  return apiFetch(`/credit-notes/${id}`);
 }
 
 export async function createCreditNote(creditNote: any) {
@@ -326,7 +352,7 @@ export async function getSystemSettings() {
   return apiFetch('/system-settings');
 }
 
-export async function getPublicSystemSettings() {
+export async function getPublicSystemSettings(signal?: AbortSignal) {
   // This function doesn't use apiFetch since it doesn't require authentication
   const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
   
@@ -335,6 +361,7 @@ export async function getPublicSystemSettings() {
     headers: {
       'Content-Type': 'application/json',
     },
+    signal,
   });
   
   if (!res.ok) {
@@ -505,4 +532,285 @@ export async function deleteCategory(id: string) {
   }
   
   return result;
+}
+
+// Purchase Orders API functions
+export async function getPurchaseOrders() {
+  return apiFetch('/purchase-orders');
+}
+
+export async function getPurchaseOrder(id: string) {
+  return apiFetch(`/purchase-orders/${id}`);
+}
+
+export async function createPurchaseOrder(purchaseOrder: any) {
+  const result = await apiFetch('/purchase-orders', { method: 'POST', body: JSON.stringify(purchaseOrder) });
+  
+  if (result && result.error) {
+    const error = new Error(result.detail);
+    (error as any).status = result.status;
+    throw error;
+  }
+  
+  return result;
+}
+
+export async function updatePurchaseOrder(id: string, purchaseOrder: any) {
+  const result = await apiFetch(`/purchase-orders/${id}`, { method: 'PUT', body: JSON.stringify(purchaseOrder) });
+  
+  if (result && result.error) {
+    const error = new Error(result.detail);
+    (error as any).status = result.status;
+    throw error;
+  }
+  
+  return result;
+}
+
+export async function deletePurchaseOrder(id: string) {
+  return apiFetch(`/purchase-orders/${id}`, { method: 'DELETE' });
+}
+
+// Purchase Order Items API functions
+export async function getPurchaseOrderItems(purchaseOrderId: string) {
+  return apiFetch(`/purchase-orders/${purchaseOrderId}/items`);
+}
+
+export async function createPurchaseOrderItem(purchaseOrderId: string, item: any) {
+  return apiFetch(`/purchase-orders/${purchaseOrderId}/items`, { method: 'POST', body: JSON.stringify(item) });
+}
+
+export async function updatePurchaseOrderItem(itemId: string, item: any) {
+  return apiFetch(`/purchase-orders/items/${itemId}`, { method: 'PUT', body: JSON.stringify(item) });
+}
+
+export async function deletePurchaseOrderItem(itemId: string) {
+  return apiFetch(`/purchase-orders/items/${itemId}`, { method: 'DELETE' });
+}
+
+// Sales Orders API functions
+export async function getSalesOrders() {
+  return apiFetch('/sales-orders');
+}
+
+export async function getSalesOrder(id: string) {
+  return apiFetch(`/sales-orders/${id}`);
+}
+
+export async function createSalesOrder(salesOrder: any) {
+  const result = await apiFetch('/sales-orders', { method: 'POST', body: JSON.stringify(salesOrder) });
+  
+  if (result && result.error) {
+    const error = new Error(result.detail);
+    (error as any).status = result.status;
+    throw error;
+  }
+  
+  return result;
+}
+
+export async function updateSalesOrder(id: string, salesOrder: any) {
+  const result = await apiFetch(`/sales-orders/${id}`, { method: 'PUT', body: JSON.stringify(salesOrder) });
+  
+  if (result && result.error) {
+    const error = new Error(result.detail);
+    (error as any).status = result.status;
+    throw error;
+  }
+  
+  return result;
+}
+
+export async function deleteSalesOrder(id: string) {
+  return apiFetch(`/sales-orders/${id}`, { method: 'DELETE' });
+}
+
+// Sales Order Items API functions
+export async function getSalesOrderItems(salesOrderId: string) {
+  return apiFetch(`/sales-orders/${salesOrderId}/items`);
+}
+
+export async function createSalesOrderItem(salesOrderId: string, item: any) {
+  return apiFetch(`/sales-orders/${salesOrderId}/items`, { method: 'POST', body: JSON.stringify(item) });
+}
+
+export async function updateSalesOrderItem(itemId: string, item: any) {
+  return apiFetch(`/sales-orders/items/${itemId}`, { method: 'PUT', body: JSON.stringify(item) });
+}
+
+export async function deleteSalesOrderItem(itemId: string) {
+  return apiFetch(`/sales-orders/items/${itemId}`, { method: 'DELETE' });
+}
+
+// Sale Invoices API functions
+export async function getSaleInvoices() {
+  return apiFetch('/sale-invoices');
+}
+
+export async function getSaleInvoice(id: string) {
+  return apiFetch(`/sale-invoices/${id}`);
+}
+
+export async function createSaleInvoice(saleInvoice: any) {
+  const result = await apiFetch('/sale-invoices', { method: 'POST', body: JSON.stringify(saleInvoice) });
+  
+  if (result && result.error) {
+    const error = new Error(result.detail);
+    (error as any).status = result.status;
+    throw error;
+  }
+  
+  return result;
+}
+
+export async function getOverdueInvoices() {
+  return apiFetch('/sale-invoices/overdue');
+}
+
+// Customer Payments API functions
+export async function getCustomerPayments() {
+  return apiFetch('/customer-payments');
+}
+
+export async function getCustomerPayment(id: string) {
+  return apiFetch(`/customer-payments/${id}`);
+}
+
+export async function createCustomerPayment(payment: any) {
+  const result = await apiFetch('/customer-payments', { method: 'POST', body: JSON.stringify(payment) });
+  
+  if (result && result.error) {
+    const error = new Error(result.detail);
+    (error as any).status = result.status;
+    throw error;
+  }
+  
+  return result;
+}
+
+export async function updateCustomerPayment(id: string, payment: any) {
+  const result = await apiFetch(`/customer-payments/${id}`, { method: 'PUT', body: JSON.stringify(payment) });
+  
+  if (result && result.error) {
+    const error = new Error(result.detail);
+    (error as any).status = result.status;
+    throw error;
+  }
+  
+  return result;
+}
+
+export async function deleteCustomerPayment(id: string) {
+  const result = await apiFetch(`/customer-payments/${id}`, { method: 'DELETE' });
+  
+  if (result && result.error) {
+    const error = new Error(result.detail);
+    (error as any).status = result.status;
+    throw error;
+  }
+  
+  return result;
+}
+
+export async function getInvoicePayments(invoiceId: string) {
+  return apiFetch(`/sale-invoices/${invoiceId}/payments`);
+}
+
+export async function addInvoicePayment(invoiceId: string, payment: any) {
+  const result = await apiFetch(`/sale-invoices/${invoiceId}/payments`, { method: 'POST', body: JSON.stringify(payment) });
+  
+  if (result && result.error) {
+    const error = new Error(result.detail);
+    (error as any).status = result.status;
+    throw error;
+  }
+  
+  return result;
+}
+
+export async function updateSaleInvoice(id: string, saleInvoice: any) {
+  const result = await apiFetch(`/sale-invoices/${id}`, { method: 'PUT', body: JSON.stringify(saleInvoice) });
+  
+  if (result && result.error) {
+    const error = new Error(result.detail);
+    (error as any).status = result.status;
+    throw error;
+  }
+  
+  return result;
+}
+
+export async function deleteSaleInvoice(id: string) {
+  return apiFetch(`/sale-invoices/${id}`, { method: 'DELETE' });
+}
+
+// Sale Invoice Items API functions
+export async function getSaleInvoiceItems(saleInvoiceId: string) {
+  return apiFetch(`/sale-invoices/${saleInvoiceId}/items`);
+}
+
+export async function createSaleInvoiceItem(saleInvoiceId: string, item: any) {
+  return apiFetch(`/sale-invoices/${saleInvoiceId}/items`, { method: 'POST', body: JSON.stringify(item) });
+}
+
+export async function updateSaleInvoiceItem(itemId: string, item: any) {
+  return apiFetch(`/sale-invoices/items/${itemId}`, { method: 'PUT', body: JSON.stringify(item) });
+}
+
+export async function deleteSaleInvoiceItem(itemId: string) {
+  return apiFetch(`/sale-invoices/items/${itemId}`, { method: 'DELETE' });
+}
+
+// Good Receive Notes API functions
+export async function getGoodReceiveNotes() {
+  return apiFetch('/good-receive-notes');
+}
+
+export async function getGoodReceiveNote(id: string) {
+  return apiFetch(`/good-receive-notes/${id}`);
+}
+
+export async function createGoodReceiveNote(goodReceiveNote: any) {
+  const result = await apiFetch('/good-receive-notes', { method: 'POST', body: JSON.stringify(goodReceiveNote) });
+  
+  if (result && result.error) {
+    const error = new Error(result.detail);
+    (error as any).status = result.status;
+    throw error;
+  }
+  
+  return result;
+}
+
+export async function updateGoodReceiveNote(id: string, goodReceiveNote: any) {
+  const result = await apiFetch(`/good-receive-notes/${id}`, { method: 'PUT', body: JSON.stringify(goodReceiveNote) });
+  
+  if (result && result.error) {
+    const error = new Error(result.detail);
+    (error as any).status = result.status;
+    throw error;
+  }
+  
+  return result;
+}
+
+export async function deleteGoodReceiveNote(id: string) {
+  return apiFetch(`/good-receive-notes/${id}`, { method: 'DELETE' });
+}
+
+// Good Receive Note Items API functions
+export async function getGoodReceiveNoteItems(goodReceiveNoteId: string) {
+  return apiFetch(`/good-receive-notes/${goodReceiveNoteId}/items`);
+}
+
+export async function createGoodReceiveNoteItem(goodReceiveNoteId: string, item: any) {
+  return apiFetch(`/good-receive-notes/${goodReceiveNoteId}/items`, { method: 'POST', body: JSON.stringify(item) });
+}
+
+export async function updateGoodReceiveNoteItem(itemId: string, item: any) {
+  return apiFetch(`/good-receive-notes/items/${itemId}`, { method: 'PUT', body: JSON.stringify(item) });
+}
+
+export async function deleteGoodReceiveNoteItem(itemId: string) {
+  return apiFetch(`/good-receive-notes/items/${itemId}`, { method: 'DELETE' });
 } 

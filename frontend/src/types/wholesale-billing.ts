@@ -9,6 +9,7 @@ export interface WholesaleBillingItem {
   productId: string;
   productName: string;
   skuCode: string;
+  hsnCode?: string;
   quantity: number;
   unitPrice: number;
   discount: number;

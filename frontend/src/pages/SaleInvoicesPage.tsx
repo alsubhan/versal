@@ -1,11 +1,13 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
-import { PlusCircle, FileText } from "lucide-react";
-import { type WholesaleBill } from "@/types/wholesale-billing";
-import { type WholesaleOrder } from "@/types/wholesale-order";
+import { Input } from "@/components/ui/input";
+import { Plus, FileText, Search } from "lucide-react";
+import { type SaleInvoice } from "@/types/sale-invoice";
+import { type SalesOrder } from "@/types/sales-order";
 import { SalesInvoiceTable } from "@/components/sale-invoices/SalesInvoiceTable";
 import { SaleInvoiceDialog } from "@/components/sale-invoices/SaleInvoiceDialog";
-import { ReturnDialog } from "@/components/sale-invoices/ReturnDialog";
+import { SaleInvoiceView } from "@/components/sale-invoices/SaleInvoiceView";
+import { SaleReturnDialog } from "@/components/sale-invoices/SaleReturnDialog";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -16,7 +18,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { toast } from "@/hooks/use-toast";
+import { toast } from "sonner";
 import { type Customer } from "@/types/customer";
 import { type CreditNote } from "@/types/credit-note";
 import { useAuth } from "@/hooks/useAuth";
@@ -24,270 +26,105 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Lock } from "lucide-react";
 import { PermissionGuard } from "@/components/ui/permission-guard";
-
-// Sample data for demonstration
-const sampleBills: WholesaleBill[] = [
-  {
-    id: "1",
-    billNumber: "BILL-0001",
-    wholesaleOrderId: "1",
-    customerId: "1",
-    customer: {
-      id: "1",
-      name: "ABC Corporation",
-      email: "info@abccorp.com",
-      phone: "555-1234",
-      billingAddress: {
-        street: "123 Main St",
-        city: "New York",
-        state: "NY",
-        zipCode: "10001",
-        country: "USA"
-      },
-      createdAt: new Date(),
-      updatedAt: new Date()
-    },
-    billingDate: new Date(),
-    dueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
-    status: "pending",
-    subtotal: 1500,
-    taxAmount: 150,
-    discountAmount: 50,
-    totalAmount: 1600,
-    amountPaid: 0,
-    amountDue: 1600,
-    notes: "Please make payment by due date",
-    items: [
-      {
-        id: "1",
-        billId: "1",
-        productId: "1",
-        productName: "Product One",
-        skuCode: "PRD-001",
-        quantity: 10,
-        unitPrice: 150,
-        discount: 5,
-        tax: 10,
-        total: 1600,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      }
-    ],
-    createdAt: new Date(),
-    updatedAt: new Date(),
-  },
-  {
-    id: "2",
-    billNumber: "BILL-0002",
-    customerId: "2",
-    customer: {
-      id: "2",
-      name: "XYZ Limited",
-      email: "info@xyzlimited.com",
-      phone: "555-5678",
-      billingAddress: {
-        street: "456 Market St",
-        city: "San Francisco",
-        state: "CA",
-        zipCode: "94103",
-        country: "USA"
-      },
-      createdAt: new Date(),
-      updatedAt: new Date()
-    },
-    billingDate: new Date(Date.now() - 15 * 24 * 60 * 60 * 1000),
-    dueDate: new Date(Date.now() + 15 * 24 * 60 * 60 * 1000),
-    status: "paid",
-    paymentMethod: "bank_transfer",
-    paymentReference: "TXN-9876543",
-    paymentDate: new Date(),
-    subtotal: 750,
-    taxAmount: 75,
-    discountAmount: 0,
-    totalAmount: 825,
-    amountPaid: 825,
-    amountDue: 0,
-    notes: "",
-    items: [
-      {
-        id: "2",
-        billId: "2",
-        productId: "2",
-        productName: "Product Two",
-        skuCode: "PRD-002",
-        quantity: 5,
-        unitPrice: 150,
-        discount: 0,
-        tax: 10,
-        total: 825,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      }
-    ],
-    createdAt: new Date(),
-    updatedAt: new Date(),
-  },
-];
-
-// Sample customers for demonstration
-const sampleCustomers: Customer[] = [
-  { 
-    id: "1", 
-    name: "ABC Corporation",
-    email: "info@abccorp.com",
-    phone: "555-1234",
-    billingAddress: {
-      street: "123 Main St",
-      city: "New York",
-      state: "NY",
-      zipCode: "10001",
-      country: "USA"
-    },
-    createdAt: new Date(),
-    updatedAt: new Date()
-  },
-  { 
-    id: "2", 
-    name: "XYZ Limited",
-    email: "info@xyzlimited.com",
-    phone: "555-5678",
-    billingAddress: {
-      street: "456 Market St",
-      city: "San Francisco",
-      state: "CA",
-      zipCode: "94103",
-      country: "USA"
-    },
-    createdAt: new Date(),
-    updatedAt: new Date()
-  },
-  { 
-    id: "3", 
-    name: "123 Industries",
-    email: "info@123industries.com",
-    phone: "555-9012",
-    billingAddress: {
-      street: "789 Broadway",
-      city: "Chicago",
-      state: "IL",
-      zipCode: "60601",
-      country: "USA"
-    },
-    createdAt: new Date(),
-    updatedAt: new Date()
-  },
-];
-
-// Sample products for demonstration
-const sampleProducts = [
-  { id: "1", name: "Product One", skuCode: "PRD-001", price: 150, taxRate: 10 },
-  { id: "2", name: "Product Two", skuCode: "PRD-002", price: 150, taxRate: 10 },
-  { id: "3", name: "Product Three", skuCode: "PRD-003", price: 200, taxRate: 10 },
-];
-
-// Sample orders for demonstration
-const sampleOrders: WholesaleOrder[] = [
-  {
-    id: "1",
-    orderNumber: "WS-0001",
-    customerId: "1",
-    customer: {
-      id: "1",
-      name: "ABC Corporation",
-      email: "info@abccorp.com",
-      phone: "555-1234",
-      billingAddress: {
-        street: "123 Main St",
-        city: "New York",
-        state: "NY",
-        zipCode: "10001",
-        country: "USA"
-      },
-      createdAt: new Date(),
-      updatedAt: new Date()
-    },
-    orderDate: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000),
-    status: "confirmed",
-    subtotal: 1500,
-    taxAmount: 150,
-    discountAmount: 50,
-    shippingAmount: 25,
-    totalAmount: 1625,
-    items: [
-      {
-        id: "1",
-        orderId: "1",
-        productId: "1",
-        productName: "Product One",
-        skuCode: "PRD-001",
-        quantity: 10,
-        unitPrice: 150,
-        discount: 5,
-        tax: 10,
-        total: 1625,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      }
-    ],
-    createdAt: new Date(),
-    updatedAt: new Date(),
-  }
-];
+import { getSaleInvoices, createSaleInvoice, updateSaleInvoice, deleteSaleInvoice, getSaleInvoice } from "@/lib/api";
+import { PrintPreviewDialog } from "@/components/print/PrintPreviewDialog";
 
 export default function SaleInvoicesPage() {
-  const [bills, setBills] = useState<WholesaleBill[]>(sampleBills);
+  const [invoices, setInvoices] = useState<SaleInvoice[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [searchTerm, setSearchTerm] = useState("");
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [selectedBill, setSelectedBill] = useState<WholesaleBill | undefined>(undefined);
+  const [viewDialogOpen, setViewDialogOpen] = useState(false);
+  const [selectedInvoice, setSelectedInvoice] = useState<SaleInvoice | undefined>(undefined);
+  const [viewingInvoice, setViewingInvoice] = useState<SaleInvoice | null>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
-  const [itemToDeleteId, setItemToDeleteId] = useState<string | null>(null);
+  const [invoiceToDelete, setInvoiceToDelete] = useState<SaleInvoice | undefined>(undefined);
   
   // For returns processing
   const [returnDialogOpen, setReturnDialogOpen] = useState(false);
-  const [selectedReturnBill, setSelectedReturnBill] = useState<WholesaleBill | undefined>(undefined);
-  const [creditNotes, setCreditNotes] = useState<CreditNote[]>([]);
+  const [selectedReturnInvoice, setSelectedReturnInvoice] = useState<SaleInvoice | undefined>(undefined);
+  const [printDialogOpen, setPrintDialogOpen] = useState(false);
+  const [printingInvoice, setPrintingInvoice] = useState<SaleInvoice | null>(null);
 
   const { hasPermission } = useAuth();
   const canCreateBilling = hasPermission('sale_invoices_create');
   const canEditBilling = hasPermission('sale_invoices_edit');
   const canDeleteBilling = hasPermission('sale_invoices_delete');
 
+  // Load data on component mount
+  useEffect(() => {
+    loadData();
+  }, []);
 
-
-  const handleAddNew = () => {
-    setSelectedBill(undefined);
-    setDialogOpen(true);
-  };
-
-  const handleEdit = (bill: WholesaleBill) => {
-    setSelectedBill(bill);
-    setDialogOpen(true);
-  };
-
-  const handleView = (bill: WholesaleBill) => {
-    setSelectedBill(bill);
-    setDialogOpen(true);
-  };
-
-  const handleDeleteClick = (id: string) => {
-    setItemToDeleteId(id);
-    setDeleteDialogOpen(true);
-  };
-
-  const handleDelete = () => {
-    if (itemToDeleteId) {
-      setBills(bills.filter((item) => item.id !== itemToDeleteId));
-      toast({
-        title: "Success",
-        description: "Sale invoice deleted successfully",
-      });
-      setDeleteDialogOpen(false);
-      setItemToDeleteId(null);
+  const loadData = async () => {
+    try {
+      setLoading(true);
+      const data = await getSaleInvoices().catch(() => []);
+      setInvoices(data || []);
+    } catch (error) {
+      console.error('Error loading sale invoices:', error);
+      toast.error('Failed to load sale invoices');
+      setInvoices([]);
+    } finally {
+      setLoading(false);
     }
   };
 
-  const handleProcessReturn = (bill: WholesaleBill) => {
-    setSelectedReturnBill(bill);
-    setReturnDialogOpen(true);
+  const handleAddNew = () => {
+    setSelectedInvoice(undefined);
+    setDialogOpen(true);
+  };
+
+  const handleEdit = (invoice: SaleInvoice) => {
+    // Check if invoice can be edited based on status
+    if (invoice.status === 'paid' || invoice.status === 'overdue' || invoice.status === 'cancelled') {
+      toast.error(`Cannot edit sale invoice with status "${invoice.status}". Only draft, sent, and partial invoices can be edited.`);
+      return;
+    }
+    
+    setSelectedInvoice(invoice);
+    setDialogOpen(true);
+  };
+
+  const handleView = (invoice: SaleInvoice) => {
+    setViewingInvoice(invoice);
+    setViewDialogOpen(true);
+  };
+
+  const handleDeleteClick = (id: string) => {
+    setInvoiceToDelete(invoices.find(invoice => invoice.id === id));
+    setDeleteDialogOpen(true);
+  };
+
+  const handleDelete = async () => {
+    if (invoiceToDelete) {
+      try {
+        await deleteSaleInvoice(invoiceToDelete.id);
+      toast.success("Sale invoice deleted successfully");
+        loadData();
+      } catch (error) {
+        console.error('Error deleting sale invoice:', error);
+        toast.error("Failed to delete sale invoice");
+      }
+      setDeleteDialogOpen(false);
+      setInvoiceToDelete(undefined);
+    }
+  };
+
+  const handleProcessReturn = async (invoice: SaleInvoice) => {
+    try {
+      // Fetch complete invoice data including items
+      const completeInvoice = await getSaleInvoice(invoice.id);
+      if (completeInvoice && !completeInvoice.error) {
+        setSelectedReturnInvoice(completeInvoice);
+        setReturnDialogOpen(true);
+      } else {
+        toast.error("Failed to load invoice details for return processing");
+      }
+    } catch (error) {
+      console.error('Error loading invoice for return:', error);
+      toast.error("Failed to load invoice details for return processing");
+    }
   };
 
   const handleCreateCreditNote = (creditNote: Partial<CreditNote>) => {
@@ -298,78 +135,65 @@ export default function SaleInvoicesPage() {
       updatedAt: new Date(),
     };
     
-    setCreditNotes([...creditNotes, newCreditNote]);
-    
-    // If the bill was fully returned, update its status
-    if (selectedReturnBill && newCreditNote.totalAmount >= selectedReturnBill.totalAmount) {
-      setBills(bills.map(bill => 
-        bill.id === selectedReturnBill.id 
-          ? { ...bill, status: "cancelled", notes: `${bill.notes || ''} \nFully returned. Credit Note #${newCreditNote.creditNoteNumber}` }
-          : bill
+    // If the invoice was fully returned, update its status
+    if (selectedReturnInvoice && newCreditNote.totalAmount >= selectedReturnInvoice.totalAmount) {
+      setInvoices(invoices.map(invoice => 
+        invoice.id === selectedReturnInvoice.id 
+          ? { ...invoice, status: "cancelled", notes: `${invoice.notes || ''} \nFully returned. Credit Note #${newCreditNote.creditNoteNumber}` }
+          : invoice
       ));
-    } else if (selectedReturnBill) {
+    } else if (selectedReturnInvoice) {
       // Mark as partially returned
-      setBills(bills.map(bill => 
-        bill.id === selectedReturnBill.id 
-          ? { ...bill, notes: `${bill.notes || ''} \nPartially returned. Credit Note #${newCreditNote.creditNoteNumber}` }
-          : bill
+      setInvoices(invoices.map(invoice => 
+        invoice.id === selectedReturnInvoice.id 
+          ? { ...invoice, notes: `${invoice.notes || ''} \nPartially returned. Credit Note #${newCreditNote.creditNoteNumber}` }
+          : invoice
       ));
     }
   };
 
-  const handleSave = (bill: Partial<WholesaleBill>) => {
-    if (selectedBill) {
-      // Update existing bill
-      setBills(bills.map((item) => (item.id === selectedBill.id ? { ...item, ...bill } : item)));
-      toast({
-        title: "Success",
-        description: "Wholesale bill updated successfully",
-      });
+  const handleSave = async (invoice: Partial<SaleInvoice>) => {
+    try {
+    if (selectedInvoice) {
+        await updateSaleInvoice(selectedInvoice.id, invoice);
+      toast.success("Sale invoice updated successfully");
     } else {
-      // Create new bill
-      const newBill: WholesaleBill = {
-        id: Date.now().toString(),
-        billNumber: bill.billNumber || "",
-        wholesaleOrderId: bill.wholesaleOrderId,
-        customerId: bill.customerId || "",
-        customer: bill.customer || sampleCustomers[0],
-        billingDate: bill.billingDate || new Date(),
-        dueDate: bill.dueDate || new Date(),
-        status: bill.status || "draft",
-        paymentMethod: bill.paymentMethod,
-        paymentReference: bill.paymentReference,
-        paymentDate: bill.status === "paid" ? new Date() : undefined,
-        subtotal: bill.subtotal || 0,
-        taxAmount: bill.taxAmount || 0,
-        discountAmount: bill.discountAmount || 0,
-        totalAmount: bill.totalAmount || 0,
-        amountPaid: bill.amountPaid || 0,
-        amountDue: bill.amountDue || 0,
-        notes: bill.notes,
-        items: bill.items || [],
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      };
-      setBills([...bills, newBill]);
-      toast({
-        title: "Success",
-        description: "Wholesale bill created successfully",
-      });
+        await createSaleInvoice(invoice);
+        toast.success("Sale invoice created successfully");
+      }
+      setDialogOpen(false);
+      loadData();
+    } catch (error) {
+      console.error('Error saving sale invoice:', error);
+      toast.error("Failed to save sale invoice");
     }
   };
 
-  const handlePrintInvoice = (bill: WholesaleBill) => {
-    toast({
-      title: "Printing invoice",
-      description: `Invoice ${bill.billNumber} is being prepared for printing.`,
-    });
-    // In a real implementation, this would trigger a print dialog or generate a PDF
+  const handlePrintInvoice = async (invoice: SaleInvoice) => {
+    try {
+      const full = await getSaleInvoice(invoice.id);
+      const data = full && !full.error ? full : invoice;
+      setPrintingInvoice(data);
+      setPrintDialogOpen(true);
+    } catch (e) {
+      console.error('Error preparing invoice for print:', e);
+      setPrintingInvoice(invoice);
+      setPrintDialogOpen(true);
+    }
   };
+
+  // Filter sale invoices based on search term
+  const filteredInvoices = invoices.filter(invoice => 
+    invoice.invoiceNumber?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    invoice.customer?.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    invoice.status?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    invoice.salesOrder?.orderNumber?.toLowerCase().includes(searchTerm.toLowerCase())
+  );
 
   return (
     <PermissionGuard 
       requiredPermission="sale_invoices_view"
-      fallbackMessage="You do not have permission to view wholesale billing. Please contact an administrator."
+      fallbackMessage="You do not have permission to view sale invoices. Please contact an administrator."
     >
       <div className="space-y-6">
 
@@ -377,31 +201,42 @@ export default function SaleInvoicesPage() {
         <div className="flex items-center justify-between">
           <h1 className="text-2xl font-bold tracking-tight">Sale Invoices</h1>
         {canCreateBilling ? (
-        <Button onClick={handleAddNew} className="flex items-center gap-2">
-          <PlusCircle size={18} />
-          New Bill
+        <Button onClick={handleAddNew} className="flex items-center gap-1">
+          <Plus className="h-4 w-4" />
+          Create Sale Invoice
         </Button>
         ) : (
           <TooltipProvider>
             <Tooltip>
               <TooltipTrigger asChild>
                 <span>
-                  <Button disabled className="flex items-center gap-2">
-                    <PlusCircle size={18} />
-                    New Bill
+                  <Button disabled className="flex items-center gap-1">
+                    <Plus className="h-4 w-4" />
+                    Create Sale Invoice
                   </Button>
                 </span>
               </TooltipTrigger>
               <TooltipContent>
-                You do not have permission to create wholesale bills
+                You do not have permission to create sale invoices
               </TooltipContent>
             </Tooltip>
           </TooltipProvider>
         )}
       </div>
 
+      <div className="flex items-center gap-2">
+        <Search className="h-4 w-4 text-gray-400" />
+        <Input
+          placeholder="Search sale invoices..."
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+          className="max-w-sm"
+        />
+      </div>
+
       <SalesInvoiceTable
-        bills={bills}
+        invoices={filteredInvoices}
+        loading={loading}
         onView={handleView}
         onEdit={canEditBilling ? handleEdit : undefined}
         onDelete={canDeleteBilling ? handleDeleteClick : undefined}
@@ -414,19 +249,22 @@ export default function SaleInvoicesPage() {
       <SaleInvoiceDialog
         open={dialogOpen}
         onOpenChange={setDialogOpen}
-        bill={selectedBill}
+        saleInvoice={selectedInvoice}
         onSave={handleSave}
-        customers={sampleCustomers}
-        products={sampleProducts}
-        orders={sampleOrders}
-        creditNotes={creditNotes}
+      />
+
+      <SaleInvoiceView
+        open={viewDialogOpen}
+        onOpenChange={setViewDialogOpen}
+        saleInvoice={viewingInvoice}
+        onInvoiceUpdate={loadData}
       />
       
-      {selectedReturnBill && (
-        <ReturnDialog
+      {selectedReturnInvoice && (
+        <SaleReturnDialog
           open={returnDialogOpen}
           onOpenChange={setReturnDialogOpen}
-          bill={selectedReturnBill}
+          invoice={selectedReturnInvoice}
           onCreateCreditNote={handleCreateCreditNote}
         />
       )}
@@ -436,8 +274,7 @@ export default function SaleInvoicesPage() {
           <AlertDialogHeader>
             <AlertDialogTitle>Are you sure?</AlertDialogTitle>
             <AlertDialogDescription>
-              This action cannot be undone. This will permanently delete the
-              wholesale bill and all associated data.
+              This action cannot be undone. This will permanently delete the sale invoice "{invoiceToDelete?.invoiceNumber}".
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -446,6 +283,13 @@ export default function SaleInvoicesPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <PrintPreviewDialog
+        open={printDialogOpen}
+        onOpenChange={setPrintDialogOpen}
+        documentType="saleInvoice"
+        data={printingInvoice}
+      />
     </div>
     </PermissionGuard>
   );

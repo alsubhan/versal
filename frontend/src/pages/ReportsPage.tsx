@@ -1,5 +1,5 @@
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -10,6 +10,7 @@ import { InventoryReport } from "@/components/reports/InventoryReport";
 import { PurchaseReport } from "@/components/reports/PurchaseReport";
 import { useAuth } from "@/hooks/useAuth";
 import { PermissionGuard } from "@/components/ui/permission-guard";
+import { toast } from "sonner";
 
 interface DateRange {
   from: Date;
@@ -18,25 +19,94 @@ interface DateRange {
 
 const ReportsPage = () => {
   const [activeTab, setActiveTab] = useState("sales");
-  const [dateRange, setDateRange] = useState<DateRange>({ 
-    from: new Date(), 
-    to: new Date() 
+  const [dateRange, setDateRange] = useState<DateRange>(() => {
+    const today = new Date();
+    const from = new Date();
+    from.setDate(from.getDate() - 30);
+    return { from, to: today };
   });
   const [reportFormat, setReportFormat] = useState("table");
   const { hasPermission } = useAuth();
   const canExportReports = hasPermission('reports_export');
+  const dataProviderRef = useRef<null | (() => { title: string; columns: { key: string; label: string }[]; rows: any[] })>(null);
+  
+  const registerDataProvider = (provider: () => { title: string; columns: { key: string; label: string }[]; rows: any[] }) => {
+    dataProviderRef.current = provider;
+  };
   
   const handleDateRangeChange = (range: DateRange) => {
     setDateRange(range);
   };
   
+  const downloadBlob = (blob: Blob, filename: string) => {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  };
+
+  const generateCSV = (title: string, columns: { key: string; label: string }[], rows: any[]) => {
+    const header = columns.map(c => `"${c.label.replace(/"/g, '""')}"`).join(',');
+    const lines = rows.map(r => columns.map(c => {
+      const v = r[c.key];
+      const s = v == null ? '' : String(v);
+      return `"${s.replace(/"/g, '""')}"`;
+    }).join(','));
+    const csv = [header, ...lines].join('\n');
+    return new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  };
+
+  const generatePDF = (title: string, columns: { key: string; label: string }[], rows: any[]) => {
+    // Client-side printable window; user can save as PDF from print dialog
+    const w = window.open('', '_blank');
+    if (!w) return;
+    const dateRangeText = dateRange.from && dateRange.to ? `${dateRange.from.toDateString()} - ${dateRange.to.toDateString()}` : 'All time';
+    const tableHead = `<tr>${columns.map(c => `<th style="text-align:left;padding:8px;border-bottom:1px solid #ddd">${c.label}</th>`).join('')}</tr>`;
+    const tableRows = rows.map(r => `<tr>${columns.map(c => `<td style="padding:8px;border-bottom:1px solid #eee">${r[c.key] ?? ''}</td>`).join('')}</tr>`).join('');
+    const html = `<!doctype html><html><head><meta charset="utf-8"/><title>${title}</title>
+      <style>body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;padding:24px;color:#111}
+      h1{font-size:20px;margin:0 0 4px} .muted{color:#666;margin:0 0 16px;font-size:12px}
+      table{border-collapse:collapse;width:100%;font-size:12px}</style></head>
+      <body><h1>${title}</h1><p class="muted">${dateRangeText}</p>
+      <table><thead>${tableHead}</thead><tbody>${tableRows}</tbody></table></body></html>`;
+    w.document.write(html);
+    w.document.close();
+    w.focus();
+    setTimeout(() => {
+      w.print();
+      w.close();
+    }, 300);
+  };
+
   const handleExport = () => {
+    if (reportFormat === 'table') return; // view only
     if (!canExportReports) {
-      console.log("User does not have permission to export reports");
+      toast.error('You do not have permission to export reports');
       return;
     }
-    console.log(`Exporting ${activeTab} report in ${reportFormat} format for date range:`, dateRange);
-    // Implementation would connect to API to generate and download report
+    const provider = dataProviderRef.current;
+    if (!provider) {
+      toast.error('No report data available to export');
+      return;
+    }
+    const { title, columns, rows } = provider();
+    if (!rows || rows.length === 0) {
+      toast.error('Nothing to export');
+      return;
+    }
+    if (reportFormat === 'csv') {
+      const blob = generateCSV(title, columns, rows);
+      const filename = `${title.replace(/\s+/g, '_').toLowerCase()}_${activeTab}.csv`;
+      downloadBlob(blob, filename);
+      toast.success('CSV exported');
+    } else if (reportFormat === 'pdf') {
+      generatePDF(title, columns, rows);
+      toast.success('PDF generated');
+    }
   };
   
   return (
@@ -88,15 +158,15 @@ const ReportsPage = () => {
               </TabsList>
               
               <TabsContent value="sales" className="space-y-4">
-                <SalesReport dateRange={dateRange} />
+                <SalesReport dateRange={dateRange} isActive={activeTab === 'sales'} registerDataProvider={registerDataProvider} />
               </TabsContent>
               
               <TabsContent value="inventory" className="space-y-4">
-                <InventoryReport dateRange={dateRange} />
+                <InventoryReport dateRange={dateRange} isActive={activeTab === 'inventory'} registerDataProvider={registerDataProvider} />
               </TabsContent>
               
               <TabsContent value="purchases" className="space-y-4">
-                <PurchaseReport dateRange={dateRange} />
+                <PurchaseReport dateRange={dateRange} isActive={activeTab === 'purchases'} registerDataProvider={registerDataProvider} />
               </TabsContent>
             </Tabs>
           </CardContent>

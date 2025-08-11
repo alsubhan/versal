@@ -1,9 +1,10 @@
-
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { CreditNoteTable } from "@/components/credit-notes/CreditNoteTable";
 import { CreditNoteDialog } from "@/components/credit-notes/CreditNoteDialog";
+import { CreditNoteView } from "@/components/credit-notes/CreditNoteView";
 import { Button } from "@/components/ui/button";
-import { PlusCircle } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { PlusCircle, Search } from "lucide-react";
 import { type CreditNote } from "@/types/credit-note";
 import {
   AlertDialog,
@@ -15,28 +16,61 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { toast } from "sonner";
+import { toast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Lock } from "lucide-react";
-import { createCreditNote, updateCreditNote, deleteCreditNote } from "@/lib/api";
+import { getCreditNotes, createCreditNote, updateCreditNote, deleteCreditNote, getCreditNote, getCustomers } from "@/lib/api";
 import { PermissionGuard } from "@/components/ui/permission-guard";
+import { PrintPreviewDialog } from "@/components/print/PrintPreviewDialog";
 
 export default function CreditNotesPage() {
+  const [creditNotes, setCreditNotes] = useState<CreditNote[]>([]);
+  const [customers, setCustomers] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [searchTerm, setSearchTerm] = useState("");
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isViewDialogOpen, setIsViewDialogOpen] = useState(false);
   const [editingCreditNote, setEditingCreditNote] = useState<CreditNote | null>(null);
   const [viewingCreditNote, setViewingCreditNote] = useState<CreditNote | null>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [creditNoteToDelete, setCreditNoteToDelete] = useState<string | null>(null);
+  const [printDialogOpen, setPrintDialogOpen] = useState(false);
+  const [printingCreditNote, setPrintingCreditNote] = useState<CreditNote | null>(null);
   
   const { hasPermission } = useAuth();
   const canCreateCreditNotes = hasPermission('credit_notes_create');
   const canEditCreditNotes = hasPermission('credit_notes_edit');
   const canDeleteCreditNotes = hasPermission('credit_notes_delete');
 
+  // Load data on component mount
+  useEffect(() => {
+    loadData();
+  }, []);
 
+  const loadData = async () => {
+    try {
+      setLoading(true);
+      const [creditNotesData, customersData] = await Promise.all([
+        getCreditNotes().catch(() => []),
+        getCustomers().catch(() => [])
+      ]);
+      setCreditNotes(creditNotesData || []);
+      setCustomers(customersData || []);
+    } catch (error) {
+      console.error('Error loading data:', error);
+      toast({
+        title: "Error",
+        description: "Failed to load data",
+        variant: "destructive",
+      });
+      setCreditNotes([]);
+      setCustomers([]);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleAddNew = () => {
     setEditingCreditNote(null);
@@ -44,6 +78,16 @@ export default function CreditNotesPage() {
   };
 
   const handleEdit = (creditNote: CreditNote) => {
+    // Check if credit note can be edited based on status
+    if (creditNote.status === 'processed' || creditNote.status === 'cancelled') {
+      toast({
+        title: "Cannot Edit Credit Note",
+        description: `Cannot edit credit note with status "${creditNote.status}". Only draft, pending, and approved credit notes can be edited.`,
+        variant: "destructive",
+      });
+      return;
+    }
+    
     setEditingCreditNote(creditNote);
     setIsDialogOpen(true);
   };
@@ -53,7 +97,32 @@ export default function CreditNotesPage() {
     setIsViewDialogOpen(true);
   };
 
+  const handlePrint = async (creditNote: CreditNote) => {
+    try {
+      const full = await getCreditNote(creditNote.id);
+      const data = full && !full.error ? full : creditNote;
+      setPrintingCreditNote(data);
+      setPrintDialogOpen(true);
+    } catch (e) {
+      console.error('Error preparing credit note for print:', e);
+      setPrintingCreditNote(creditNote);
+      setPrintDialogOpen(true);
+    }
+  };
+
   const handleDeleteClick = (id: string) => {
+    const creditNote = creditNotes.find(cn => cn.id === id);
+    
+    // Check if credit note can be deleted based on status
+    if (creditNote?.status === 'processed' || creditNote?.status === 'cancelled') {
+      toast({
+        title: "Cannot Delete Credit Note",
+        description: `Cannot delete credit note with status "${creditNote.status}". Only draft, pending, and approved credit notes can be deleted.`,
+        variant: "destructive",
+      });
+      return;
+    }
+    
     setCreditNoteToDelete(id);
     setDeleteDialogOpen(true);
   };
@@ -63,13 +132,19 @@ export default function CreditNotesPage() {
     
     try {
       await deleteCreditNote(creditNoteToDelete);
+      setCreditNotes(creditNotes.filter((cn) => cn.id !== creditNoteToDelete));
       setDeleteDialogOpen(false);
-      toast.success("Credit note deleted successfully");
-      // Refresh the page to update the table
-      window.location.reload();
+      toast({
+        title: "Success",
+        description: "Credit note deleted successfully",
+      });
     } catch (error) {
       console.error('Error deleting credit note:', error);
-      toast.error('Failed to delete credit note');
+      toast({
+        title: "Error",
+        description: "Failed to delete credit note",
+        variant: "destructive",
+      });
     }
   };
 
@@ -77,19 +152,35 @@ export default function CreditNotesPage() {
     try {
       if (editingCreditNote) {
         await updateCreditNote(editingCreditNote.id, creditNote);
-        toast.success("Credit note updated successfully");
+        toast({
+          title: "Success",
+          description: "Credit note updated successfully",
+        });
       } else {
         await createCreditNote(creditNote);
-        toast.success("Credit note created successfully");
+        toast({
+          title: "Success",
+          description: "Credit note created successfully",
+        });
       }
       setIsDialogOpen(false);
-      // Refresh the page to update the table
-      window.location.reload();
+      loadData();
     } catch (error) {
       console.error('Error saving credit note:', error);
-      toast.error(`Failed to ${editingCreditNote ? 'update' : 'create'} credit note`);
+      toast({
+        title: "Error",
+        description: "Failed to save credit note",
+        variant: "destructive",
+      });
     }
   };
+
+  // Filter credit notes based on search term
+  const filteredCreditNotes = creditNotes.filter(creditNote => 
+    creditNote.creditNoteNumber?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    creditNote.customer?.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    creditNote.status?.toLowerCase().includes(searchTerm.toLowerCase())
+  );
 
   return (
     <PermissionGuard 
@@ -125,10 +216,23 @@ export default function CreditNotesPage() {
         )}
       </div>
 
+      <div className="flex items-center gap-2">
+        <Search className="h-4 w-4 text-gray-400" />
+        <Input
+          placeholder="Search credit notes..."
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+          className="max-w-sm"
+        />
+      </div>
+
       <CreditNoteTable 
+        creditNotes={filteredCreditNotes}
+        loading={loading}
         onView={handleView}
         onEdit={canEditCreditNotes ? handleEdit : undefined}
         onDelete={canDeleteCreditNotes ? handleDeleteClick : undefined}
+        onPrint={handlePrint}
         canEdit={canEditCreditNotes}
         canDelete={canDeleteCreditNotes}
       />
@@ -138,7 +242,13 @@ export default function CreditNotesPage() {
         onOpenChange={setIsDialogOpen}
         creditNote={editingCreditNote}
         onSave={handleSave}
-        customers={[]} // Data will be fetched from backend
+        customers={customers}
+      />
+
+      <CreditNoteView
+        open={isViewDialogOpen}
+        onOpenChange={setIsViewDialogOpen}
+        creditNote={viewingCreditNote}
       />
 
       <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
@@ -156,6 +266,13 @@ export default function CreditNotesPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <PrintPreviewDialog
+        open={printDialogOpen}
+        onOpenChange={setPrintDialogOpen}
+        documentType="creditNote"
+        data={printingCreditNote}
+      />
     </div>
     </PermissionGuard>
   );

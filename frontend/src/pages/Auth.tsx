@@ -11,55 +11,132 @@ import { Loader2, Package, Shield, Users } from 'lucide-react';
 import { getPublicSystemSettings } from '@/lib/api';
 
 export default function Auth() {
-  const { signIn, signUp, loading, isAuthenticated } = useAuth();
+  console.log('🔄 Auth component rendering...');
+  const { signIn, signUp, loading, isAuthenticated, _instanceId } = useAuth();
   const [isLoading, setIsLoading] = useState(false);
   const [enableSignup, setEnableSignup] = useState(true);
-  const [settingsLoading, setSettingsLoading] = useState(true);
+  const [settingsLoading, setSettingsLoading] = useState(() => {
+    // Check if settings were already fetched in this session
+    const settingsFetched = sessionStorage.getItem('auth_settings_fetched');
+    const signupEnabled = sessionStorage.getItem('auth_signup_enabled');
+    
+    if (settingsFetched === 'true' && signupEnabled !== null) {
+      console.log('🔧 Using cached settings from session storage');
+      setEnableSignup(signupEnabled === 'true');
+      return false; // Don't show loading if we have cached settings
+    }
+    
+    return true; // Show loading if no cached settings
+  });
   const settingsCompletedRef = useRef(false);
+  const isMounted = useRef(true);
+  
+  console.log(`🔍 Auth component state (useAuth instance: ${_instanceId}):`, { loading, isAuthenticated, settingsLoading, enableSignup });
 
   // Fetch public system settings to check if signup is enabled
   useEffect(() => {
+    console.log('🔧 Settings useEffect running...');
+    
+    // Don't fetch settings if user is already authenticated
+    if (isAuthenticated) {
+      console.log('🔧 User already authenticated, skipping settings fetch');
+      setSettingsLoading(false);
+      return;
+    }
+    
+    let timeoutId: NodeJS.Timeout;
+
     const fetchSettings = async () => {
+      console.log('🔧 Starting settings fetch...');
+      // Prevent multiple concurrent fetches
+      if (settingsCompletedRef.current) {
+        console.log('🔧 Settings already completed, skipping fetch');
+        return;
+      }
+      
       try {
+        console.log('🔧 Setting settingsLoading to true');
         setSettingsLoading(true);
-        settingsCompletedRef.current = false;
-        const settings = await getPublicSystemSettings();
         
+        // Create abort controller for request cancellation
+        const controller = new AbortController();
+        timeoutId = setTimeout(() => {
+          console.log('⏰ Settings fetch timeout (3s) - aborting');
+          controller.abort();
+        }, 3000); // 3 second timeout
+        
+        console.log('📡 Calling getPublicSystemSettings...');
+        const settings = await getPublicSystemSettings(controller.signal);
+        console.log('✅ Settings fetched successfully:', settings);
+        
+        // Always set the state, even if component unmounts
+        // This prevents the infinite loading issue
         const signupSetting = settings.find(s => s.key === 'enable_signup');
         const enableSignupValue = signupSetting ? signupSetting.value === true : false;
+        console.log('🔧 Signup setting:', { signupSetting, enableSignupValue });
+        
+        // Store in session storage for persistence across component unmounts
+        sessionStorage.setItem('auth_settings_fetched', 'true');
+        sessionStorage.setItem('auth_signup_enabled', enableSignupValue.toString());
+        
+        // Set both states atomically to prevent race conditions
         setEnableSignup(enableSignupValue);
+        setSettingsLoading(false);
         
         settingsCompletedRef.current = true;
+        clearTimeout(timeoutId);
+        console.log('🔧 Settings fetch completed successfully');
       } catch (error) {
-        console.error('Error fetching settings:', error);
+        console.error('❌ Error fetching settings:', error);
+        
+        // Always set the state, even if component unmounts
         // Default to disabled if there's an error
+        sessionStorage.setItem('auth_settings_fetched', 'true');
+        sessionStorage.setItem('auth_signup_enabled', 'false');
+        
         setEnableSignup(false);
-        settingsCompletedRef.current = true;
-      } finally {
         setSettingsLoading(false);
+        settingsCompletedRef.current = true;
+        console.log('🔧 Settings fetch failed, defaulting to disabled signup');
       }
     };
 
-    // Add timeout to prevent infinite loading
-    const timeoutId = setTimeout(() => {
+    // Add fallback timeout
+    const fallbackTimeoutId = setTimeout(() => {
+      console.log('⏰ Fallback timeout (3s) triggered');
       if (!settingsCompletedRef.current) {
-        console.warn('Settings fetch timeout, defaulting to disabled signup');
-        setEnableSignup(false); // Changed from true to false
+        console.warn('⏰ Settings fetch timeout, defaulting to disabled signup');
+        sessionStorage.setItem('auth_settings_fetched', 'true');
+        sessionStorage.setItem('auth_signup_enabled', 'false');
+        
+        setEnableSignup(false);
         setSettingsLoading(false);
         settingsCompletedRef.current = true;
+      } else {
+        console.log('⏰ Fallback timeout but settings already completed');
       }
-    }, 5000); // 5 second timeout (rolled back from 15 seconds)
+    }, 3000); // 3 second fallback timeout to match abort timeout
 
     fetchSettings();
 
     return () => {
+      console.log('🧹 Auth component cleanup - unmounting');
       clearTimeout(timeoutId);
+      clearTimeout(fallbackTimeoutId);
       settingsCompletedRef.current = true;
     };
-  }, []); // Remove settingsLoading from dependency array
+  }, [isAuthenticated]); // Add isAuthenticated to dependencies
 
-  // Redirect if already authenticated
-  if (isAuthenticated) {
+  // Cleanup effect for component unmount
+  useEffect(() => {
+    return () => {
+      isMounted.current = false;
+    };
+  }, []);
+
+  // Redirect to main app if already authenticated
+  if (isAuthenticated && !loading) {
+    console.log('🔒 User authenticated, redirecting to main app...');
     return <Navigate to="/" replace />;
   }
 
@@ -94,10 +171,19 @@ export default function Auth() {
     setIsLoading(false);
   };
 
+  // Debug logging
+  console.log('🔍 Auth component render state:', { loading, settingsLoading, isAuthenticated });
+  
+  // This check is now handled by the redirect above
+  
   if (loading || settingsLoading) {
+    console.log('⏳ Showing loading spinner - loading:', loading, 'settingsLoading:', settingsLoading);
     return (
       <div className="min-h-screen flex items-center justify-center">
         <Loader2 className="h-8 w-8 animate-spin" />
+        <div className="ml-3 text-sm text-muted-foreground">
+          {loading ? 'Initializing authentication...' : 'Loading settings...'}
+        </div>
       </div>
     );
   }

@@ -8,8 +8,9 @@ import {
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Edit, Search, Trash2 } from "lucide-react";
+import { Edit, Search, Trash2, ChevronUp, ChevronDown } from "lucide-react";
 import { type Tax } from "@/types/tax";
+import { formatTaxRate } from "@/lib/number-utils";
 import { useAuth } from "@/hooks/useAuth";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { getTaxes, deleteTax } from "@/lib/api";
@@ -27,15 +28,18 @@ import {
 
 interface TaxTableProps {
   onEdit: (tax: Tax) => void;
+  searchTerm?: string;
+  onRefresh?: () => void;
 }
 
-export function TaxTable({ onEdit }: TaxTableProps) {
+export function TaxTable({ onEdit, searchTerm = "", onRefresh }: TaxTableProps) {
   // Move all hooks to the top
   const [loading, setLoading] = useState(true);
-  const [searchTerm, setSearchTerm] = useState("");
   const [taxes, setTaxes] = useState<Tax[]>([]);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [selectedTax, setSelectedTax] = useState<Tax | undefined>(undefined);
+  const [sortField, setSortField] = useState<string>("name");
+  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
   const { hasPermission } = useAuth();
   const canEditTaxes = hasPermission('taxes_edit');
   const canDeleteTaxes = hasPermission('taxes_delete');
@@ -55,6 +59,48 @@ export function TaxTable({ onEdit }: TaxTableProps) {
 
     fetchTaxes();
   }, []);
+
+  // Handle column sorting
+  const handleSort = (field: string) => {
+    if (sortField === field) {
+      setSortDirection(sortDirection === "asc" ? "desc" : "asc");
+    } else {
+      setSortField(field);
+      setSortDirection("asc");
+    }
+  };
+
+  // Sortable header component
+  const SortableHeader = ({ 
+    field, 
+    children, 
+    className = "" 
+  }: {
+    field: string;
+    children: React.ReactNode;
+    className?: string;
+  }) => {
+    const isActive = sortField === field;
+    
+    return (
+      <TableHead 
+        className={`cursor-pointer select-none hover:bg-gray-50 ${className}`}
+        onClick={() => handleSort(field)}
+      >
+        <div className="flex items-center gap-1">
+          {children}
+          <div className="flex flex-col">
+            <ChevronUp 
+              className={`h-3 w-3 ${isActive && sortDirection === "asc" ? "text-blue-600" : "text-gray-400"}`} 
+            />
+            <ChevronDown 
+              className={`h-3 w-3 -mt-1 ${isActive && sortDirection === "desc" ? "text-blue-600" : "text-gray-400"}`} 
+            />
+          </div>
+        </div>
+      </TableHead>
+    );
+  };
 
   // Now do the conditional render
   if (loading) {
@@ -97,46 +143,60 @@ export function TaxTable({ onEdit }: TaxTableProps) {
       setTaxes(taxes.filter((tax) => tax.id !== selectedTax.id));
       setDeleteDialogOpen(false);
       toast.success("Tax deleted successfully");
+      if (onRefresh) {
+        onRefresh();
+      }
     } catch (error) {
       console.error('Error deleting tax:', error);
       toast.error('Failed to delete tax');
     }
   };
 
-  const filteredTaxes = taxes.filter(tax => 
-    tax.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    tax.description?.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  // Filter and sort taxes
+  const filteredAndSortedTaxes = taxes
+    .filter(tax => 
+      tax.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      tax.description?.toLowerCase().includes(searchTerm.toLowerCase())
+    )
+    .sort((a, b) => {
+      let aValue = "";
+      let bValue = "";
+      
+      switch (sortField) {
+        case "name":
+          aValue = a.name || "";
+          bValue = b.name || "";
+          break;
+        case "rate":
+          // For numeric sorting
+          return sortDirection === "asc" ? a.rate - b.rate : b.rate - a.rate;
+        default:
+          return 0;
+      }
+      
+      const comparison = aValue.localeCompare(bValue);
+      return sortDirection === "asc" ? comparison : -comparison;
+    });
   
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-2">
-        <Search className="h-4 w-4 text-gray-400" />
-        <Input
-          placeholder="Search tax rates..."
-          value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
-          className="max-w-sm"
-        />
-      </div>
-      
       <div className="rounded-md border">
         <Table>
-                      <TableHeader>
-              <TableRow>
-                <TableHead>Name</TableHead>
-                <TableHead>Rate (%)</TableHead>
-                <TableHead>Applied To</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead className="w-[100px]">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
+          <TableHeader>
+            <TableRow>
+              <SortableHeader field="name">Name</SortableHeader>
+              <SortableHeader field="rate">Rate (%)</SortableHeader>
+              <TableHead>Applied To</TableHead>
+              <TableHead>Status</TableHead>
+              <TableHead className="w-[100px]">Actions</TableHead>
+            </TableRow>
+          </TableHeader>
           <TableBody>
-            {filteredTaxes.length > 0 ? (
-              filteredTaxes.map((tax) => (
+            {filteredAndSortedTaxes.length > 0 ? (
+              filteredAndSortedTaxes.map((tax) => (
                 <TableRow key={tax.id}>
                   <TableCell className="font-medium">{tax.name}</TableCell>
-                  <TableCell>{tax.rate}%</TableCell>
+                  <TableCell>{formatTaxRate(tax.rate)}%</TableCell>
                   <TableCell>
                     <Badge variant="outline">
                       {tax.appliedTo === "both" 

@@ -126,102 +126,108 @@ export const ProductDialog: React.FC<ProductDialogProps> = ({ open, onOpenChange
     unitConversions: ''
   });
 
+  // Function to populate form data
+  const populateFormData = () => {
+    if (product) {
+      // Debug: Log the product data to see what we're receiving
+      console.log('Product data received:', product);
+      console.log('Stock levels:', product.stock_levels);
+      console.log('Minimum stock:', product.minimum_stock);
+      console.log('Reorder point:', product.reorder_point, '(type:', typeof product.reorder_point, ')');
+      console.log('Unit conversions:', product.unit_conversions);
+
+      
+      // Handle stock_levels - ensure it's an array
+      let stockLevels = product.stock_levels;
+      if (stockLevels && !Array.isArray(stockLevels)) {
+          stockLevels = [stockLevels];
+      } else if (!stockLevels) {
+          stockLevels = [];
+      }
+      
+      console.log('Processed stock levels:', stockLevels);
+      
+      // Edit mode - populate form with product data
+      setFormData({
+        skuCode: product.sku_code || '',
+        hsnCode: product.hsn_code || '',
+        eanCode: product.barcode || '',
+        name: product.name || '',
+        description: product.description || '',
+        categoryId: product.category_id || '',
+        subcategoryId: product.subcategory_id || '',
+        supplierId: product.supplier_id || '',
+        costPrice: product.cost_price?.toString() || '',
+        mrp: product.mrp?.toString() || '',
+        retailPrice: product.selling_price?.toString() || '',
+        salePrice: product.sale_price?.toString() || '',
+        discount: product.discount_percentage?.toString() || '',
+        saleTaxId: product.sale_tax_id || '',
+        saleTaxType: product.sale_tax_type || 'exclusive',
+        purchaseTaxId: product.purchase_tax_id || '',
+        purchaseTaxType: product.purchase_tax_type || 'exclusive',
+        unitId: product.unit_id || '',
+        initialQty: product.initial_quantity?.toString() || stockLevels?.[0]?.quantity_on_hand?.toString() || '',
+        warehouseRack: product.warehouse_rack || '',
+        reorderLevel: (product.reorder_point !== null && product.reorder_point !== undefined) ? product.reorder_point.toString() : (product.minimum_stock !== null && product.minimum_stock !== undefined) ? product.minimum_stock.toString() : '',
+        brand: product.brand || '',
+        manufacturer: product.manufacturer || '',
+        manufacturerPartNumber: product.manufacturer_part_number || '',
+        warrantyPeriod: product.warranty_period?.toString() || '',
+        warrantyUnit: product.warranty_unit || 'days',
+        productTags: product.product_tags?.join(', ') || '',
+        isSerialized: product.is_serialized || false,
+        trackInventory: product.track_inventory ?? true,
+        allowOverridePrice: product.allow_override_price || false,
+        isActive: product.is_active ?? true,
+        unitConversions: product.unit_conversions ? JSON.stringify(product.unit_conversions) : ''
+      });
+
+      setSelectedCategory(product.category_id || '');
+    } else {
+      // Add mode - reset form
+      setFormData({
+        skuCode: '',
+        hsnCode: '',
+        eanCode: '',
+        name: '',
+        description: '',
+        categoryId: '',
+        subcategoryId: '',
+        supplierId: '',
+        costPrice: '',
+        mrp: '',
+        retailPrice: '',
+        salePrice: '',
+        discount: '',
+        saleTaxId: '',
+        saleTaxType: 'exclusive',
+        purchaseTaxId: '',
+        purchaseTaxType: 'exclusive',
+        unitId: '',
+        initialQty: '',
+        warehouseRack: '',
+        reorderLevel: '',
+        brand: '',
+        manufacturer: '',
+        manufacturerPartNumber: '',
+        warrantyPeriod: '',
+        warrantyUnit: 'days',
+        productTags: '',
+        isSerialized: false,
+        trackInventory: true,
+        allowOverridePrice: false,
+        isActive: true,
+        unitConversions: ''
+      });
+      setSelectedCategory('');
+    }
+  };
+
   // Reset form when dialog opens/closes or product changes
   useEffect(() => {
     if (open) {
-      if (product) {
-        // Debug: Log the product data to see what we're receiving
-        console.log('Product data received:', product);
-        console.log('Stock levels:', product.stock_levels);
-        console.log('Minimum stock:', product.minimum_stock);
-        console.log('Reorder point:', product.reorder_point, '(type:', typeof product.reorder_point, ')');
-        console.log('Unit conversions:', product.unit_conversions);
-        
-        // Handle stock_levels - ensure it's an array
-        let stockLevels = product.stock_levels;
-        if (stockLevels && !Array.isArray(stockLevels)) {
-            stockLevels = [stockLevels];
-        } else if (!stockLevels) {
-            stockLevels = [];
-        }
-        
-        console.log('Processed stock levels:', stockLevels);
-        
-        // Edit mode - populate form with product data
-        setFormData({
-          skuCode: product.sku_code || '',
-          hsnCode: product.hsn_code || '',
-          eanCode: product.barcode || '',
-          name: product.name || '',
-          description: product.description || '',
-          categoryId: product.category_id || '',
-          subcategoryId: product.subcategory_id || '',
-          supplierId: product.supplier_id || '',
-          costPrice: product.cost_price?.toString() || '',
-          mrp: product.mrp?.toString() || '',
-          retailPrice: product.selling_price?.toString() || '',
-          salePrice: product.sale_price?.toString() || '',
-          discount: product.discount_percentage?.toString() || '',
-          saleTaxId: product.sale_tax_id || '',
-          saleTaxType: product.sale_tax_type || 'exclusive',
-          purchaseTaxId: product.purchase_tax_id || '',
-          purchaseTaxType: product.purchase_tax_type || 'exclusive',
-          unitId: product.unit_id || '',
-          initialQty: product.initial_quantity?.toString() || stockLevels?.[0]?.quantity_on_hand?.toString() || '',
-          warehouseRack: product.warehouse_rack || '',
-          reorderLevel: (product.reorder_point !== null && product.reorder_point !== undefined) ? product.reorder_point.toString() : (product.minimum_stock !== null && product.minimum_stock !== undefined) ? product.minimum_stock.toString() : '',
-          brand: product.brand || '',
-          manufacturer: product.manufacturer || '',
-          manufacturerPartNumber: product.manufacturer_part_number || '',
-          warrantyPeriod: product.warranty_period?.toString() || '',
-          warrantyUnit: product.warranty_unit || 'days',
-          productTags: product.product_tags?.join(', ') || '',
-          isSerialized: product.is_serialized || false,
-          trackInventory: product.track_inventory ?? true,
-          allowOverridePrice: product.allow_override_price || false,
-          isActive: product.is_active ?? true,
-          unitConversions: product.unit_conversions ? JSON.stringify(product.unit_conversions) : ''
-        });
-        console.log('Form data set - reorderLevel:', (product.reorder_point !== null && product.reorder_point !== undefined) ? product.reorder_point.toString() : (product.minimum_stock !== null && product.minimum_stock !== undefined) ? product.minimum_stock.toString() : '');
-        setSelectedCategory(product.category_id || '');
-      } else {
-        // Add mode - reset form
-        setFormData({
-          skuCode: '',
-          hsnCode: '',
-          eanCode: '',
-          name: '',
-          description: '',
-          categoryId: '',
-          subcategoryId: '',
-          supplierId: '',
-          costPrice: '',
-          mrp: '',
-          retailPrice: '',
-          salePrice: '',
-          discount: '',
-          saleTaxId: '',
-          saleTaxType: 'exclusive',
-          purchaseTaxId: '',
-          purchaseTaxType: 'exclusive',
-          unitId: '',
-          initialQty: '',
-          warehouseRack: '',
-          reorderLevel: '',
-          brand: '',
-          manufacturer: '',
-          manufacturerPartNumber: '',
-          warrantyPeriod: '',
-          warrantyUnit: 'days',
-          productTags: '',
-          isSerialized: false,
-          trackInventory: true,
-          allowOverridePrice: false,
-          isActive: true,
-          unitConversions: ''
-        });
-        setSelectedCategory('');
-      }
+      populateFormData();
     }
   }, [open, product]);
 
@@ -430,11 +436,16 @@ export const ProductDialog: React.FC<ProductDialogProps> = ({ open, onOpenChange
         fetchTaxes(),
         fetchUnits(),
         fetchSuppliers()
-      ]).finally(() => {
+      ]).then(() => {
+        // After all data is loaded, repopulate form data if editing a product
+        if (product) {
+          populateFormData();
+        }
+      }).finally(() => {
         setIsLoading(false);
       });
     }
-  }, [open]);
+  }, [open, product]);
   
   // Update subcategories when category changes
   useEffect(() => {
@@ -615,6 +626,11 @@ export const ProductDialog: React.FC<ProductDialogProps> = ({ open, onOpenChange
                       ))}
                     </SelectContent>
                   </Select>
+                  {formData.supplierId && (
+                    <p className="text-xs text-gray-500">
+                      Selected: {suppliers.find(s => s.id === formData.supplierId)?.name || 'Unknown'}
+                    </p>
+                  )}
                 </div>
               </TabsContent>
           
@@ -683,10 +699,15 @@ export const ProductDialog: React.FC<ProductDialogProps> = ({ open, onOpenChange
                     </SelectTrigger>
                     <SelectContent>
                       {taxes.map(tax => (
-                        <SelectItem key={tax.id} value={tax.id}>{tax.name}</SelectItem>
+                        <SelectItem key={tax.id} value={tax.id}>{tax.name} ({tax.rate}%)</SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
+                  {formData.saleTaxId && (
+                    <p className="text-xs text-gray-500">
+                      Selected: {taxes.find(t => t.id === formData.saleTaxId)?.name || 'Unknown'}
+                    </p>
+                  )}
                   
                   <div className="flex items-center gap-4 pt-2">
                     <Label className="text-sm font-normal">Tax Type:</Label>
@@ -725,10 +746,15 @@ export const ProductDialog: React.FC<ProductDialogProps> = ({ open, onOpenChange
                     </SelectTrigger>
                     <SelectContent>
                       {taxes.map(tax => (
-                        <SelectItem key={tax.id} value={tax.id}>{tax.name}</SelectItem>
+                        <SelectItem key={tax.id} value={tax.id}>{tax.name} ({tax.rate}%)</SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
+                  {formData.purchaseTaxId && (
+                    <p className="text-xs text-gray-500">
+                      Selected: {taxes.find(t => t.id === formData.purchaseTaxId)?.name || 'Unknown'}
+                    </p>
+                  )}
                   
                   <div className="flex items-center gap-4 pt-2">
                     <Label className="text-sm font-normal">Tax Type:</Label>

@@ -2,12 +2,23 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { User, Session } from '@supabase/supabase-js';
 import { getSupabaseClient, getFallbackSupabaseClient } from '@/lib/supabase-config';
 import { toast } from 'sonner';
+import { performanceMonitor } from '@/lib/performance';
 
 // Cache for user permissions to avoid redundant queries
 const permissionsCache = new Map<string, { permissions: string[], role: string | null, timestamp: number }>();
 const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
 
+// Track active requests to prevent concurrent calls (legacy - keeping for compatibility)
+const activeRequests = new Set<string>();
+
+// Global flag to prevent multiple auth initializations
+let isAuthInitializing = false;
+
 export const useAuth = () => {
+  // Add unique instance ID to track hook instances
+  const instanceId = useRef(Math.random().toString(36).substr(2, 9));
+  console.log(`🔧 useAuth hook instance created: ${instanceId.current}`);
+  
   const [user, setUser] = useState<User | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
@@ -18,8 +29,10 @@ export const useAuth = () => {
   const lastPermissionCheck = useRef<number>(0);
   const permissionCheckInterval = useRef<NodeJS.Timeout | null>(null);
 
-  // Function to check if user is active with caching
+  // Function to check if user is active with caching and rate limiting
   const checkUserStatus = useCallback(async (supabaseClient: any, userId: string) => {
+    performanceMonitor.startTimer('auth-check-user-status');
+    
     try {
       const { data: profileData, error: profileError } = await supabaseClient
         .from('profiles')
@@ -36,11 +49,14 @@ export const useAuth = () => {
     } catch (error) {
       console.error('Error checking user status:', error);
       return false;
+    } finally {
+      performanceMonitor.endTimer('auth-check-user-status');
     }
   }, []);
 
   // Function to handle deactivation
   const handleDeactivation = useCallback(async (supabaseClient: any) => {
+    performanceMonitor.startTimer('auth-handle-deactivation');
     if (isSigningOutRef.current) return;
     isSigningOutRef.current = true;
     toast.error('Your account has been deactivated. Please contact an administrator.');
@@ -48,10 +64,13 @@ export const useAuth = () => {
     setSession(null);
     setUser(null);
     setLoading(false);
+    performanceMonitor.endTimer('auth-handle-deactivation');
   }, []);
 
   // Optimized permission fetching with caching
   const fetchUserPermissions = useCallback(async (supabaseClient: any, userId: string) => {
+    performanceMonitor.startTimer('auth-fetch-permissions');
+    
     try {
       // Check cache first
       const cached = permissionsCache.get(userId);
@@ -64,7 +83,7 @@ export const useAuth = () => {
         return;
       }
 
-      // Prevent multiple simultaneous permission checks
+      // Rate limit permission checks
       if (now - lastPermissionCheck.current < 1000) {
         console.log('Skipping permission check - too recent');
         return;
@@ -115,11 +134,14 @@ export const useAuth = () => {
       console.error('Error fetching permissions:', e);
       setPermissions([]);
       setRole(null);
+    } finally {
+      performanceMonitor.endTimer('auth-fetch-permissions');
     }
   }, []);
 
   // Optimized auth state change handler
   const handleAuthStateChange = useCallback(async (event: string, session: Session | null, supabaseClient: any) => {
+    performanceMonitor.startTimer('auth-state-change');
     if (event === 'SIGNED_IN' && session?.user) {
       const isActive = await checkUserStatus(supabaseClient, session.user.id);
       if (!isActive) {
@@ -136,72 +158,119 @@ export const useAuth = () => {
     setSession(session);
     setUser(session?.user ?? null);
     setLoading(false);
+    performanceMonitor.endTimer('auth-state-change');
   }, [checkUserStatus, handleDeactivation, fetchUserPermissions]);
 
   useEffect(() => {
+    let mounted = true;
+    let subscription: any = null;
+    
     const initializeAuth = async () => {
+      console.log(`🚀 Starting auth initialization for instance ${instanceId.current}...`);
+      performanceMonitor.startTimer('auth-initialize');
+      
       try {
-        // Try to get Supabase client from backend
+        console.log('📡 Getting Supabase client...');
+        // Get Supabase client (now with singleton protection)
         const client = await getSupabaseClient();
+        
+        if (!mounted) {
+          console.log('❌ Component unmounted during client fetch');
+          return;
+        }
+        
+        console.log('✅ Supabase client obtained, setting up auth listener...');
         setSupabase(client);
         
         // Set up auth state listener
-        const { data: { subscription } } = client.auth.onAuthStateChange(
+        const { data: { subscription: authSubscription } } = client.auth.onAuthStateChange(
           (event, session) => {
-            handleAuthStateChange(event, session, client);
+            console.log('🔄 Auth state change:', event, session?.user?.id);
+            if (mounted) {
+              handleAuthStateChange(event, session, client);
+            }
           }
         );
+        
+        subscription = authSubscription;
 
+        console.log('🔍 Checking for existing session...');
         // Check for existing session
         const { data: { session: existingSession } } = await client.auth.getSession();
-        if (existingSession?.user) {
-          // Check if existing user is still active
-          const isActive = await checkUserStatus(client, existingSession.user.id);
-          if (!isActive) {
-            await handleDeactivation(client);
-            return;
-          }
-          await fetchUserPermissions(client, existingSession.user.id);
+        
+        if (!mounted) {
+          console.log('❌ Component unmounted during session check');
+          return;
         }
         
+        console.log('📋 Session check result:', existingSession ? 'Found session' : 'No session');
+        
+        // Set session and user state
         setSession(existingSession);
         setUser(existingSession?.user ?? null);
-        setLoading(false);
-
-        return () => subscription.unsubscribe();
+        
+        // Handle user permissions if authenticated
+        if (existingSession?.user) {
+          console.log('👤 User authenticated, checking permissions...');
+          try {
+            // Check if existing user is still active
+            const isActive = await checkUserStatus(client, existingSession.user.id);
+            if (!isActive) {
+              console.log('❌ User not active, handling deactivation...');
+              await handleDeactivation(client);
+              // Clear user state after deactivation
+              setUser(null);
+              setSession(null);
+            } else {
+              console.log('✅ User active, fetching permissions...');
+              await fetchUserPermissions(client, existingSession.user.id);
+            }
+          } catch (permError) {
+            console.error('Error handling user permissions:', permError);
+            // Don't block auth initialization for permission errors
+          }
+        } else {
+          console.log('👤 No authenticated user found');
+          // Ensure user and session are explicitly set to null
+          setUser(null);
+          setSession(null);
+        }
+        
+        // Always clear loading state
+        if (mounted) {
+          console.log('✅ Auth initialization complete, clearing loading state');
+          setLoading(false);
+        }
       } catch (error) {
-        console.error('Failed to get Supabase client from backend, using fallback:', error);
-        // Use fallback client
-        const fallbackClient = getFallbackSupabaseClient();
-        setSupabase(fallbackClient);
-        
-        const { data: { subscription } } = fallbackClient.auth.onAuthStateChange(
-          (event, session) => {
-            handleAuthStateChange(event, session, fallbackClient);
-          }
-        );
-
-        const { data: { session: existingSession } } = await fallbackClient.auth.getSession();
-        if (existingSession?.user) {
-          // Check if existing user is still active
-          const isActive = await checkUserStatus(fallbackClient, existingSession.user.id);
-          if (!isActive) {
-            await handleDeactivation(fallbackClient);
-            return;
-          }
-          await fetchUserPermissions(fallbackClient, existingSession.user.id);
+        console.error('❌ Auth initialization failed:', error);
+        if (mounted) {
+          console.log('✅ Setting loading to false due to error');
+          setLoading(false);
         }
-        
-        setSession(existingSession);
-        setUser(existingSession?.user ?? null);
-        setLoading(false);
-
-        return () => subscription.unsubscribe();
+      } finally {
+        performanceMonitor.endTimer('auth-initialize');
       }
     };
 
+    // Safety timeout to ensure loading state is cleared
+    const loadingTimeout = setTimeout(() => {
+      if (mounted) {
+        console.warn('⏰ Auth initialization timeout - clearing loading state');
+        setLoading(false);
+      }
+    }, 5000); // 5 second timeout
+
     initializeAuth();
-  }, [handleAuthStateChange, checkUserStatus, handleDeactivation, fetchUserPermissions]);
+
+    return () => {
+      console.log(`🧹 Cleaning up useAuth instance ${instanceId.current}`);
+      mounted = false;
+      clearTimeout(loadingTimeout);
+      if (subscription) {
+        subscription.unsubscribe();
+      }
+    };
+  }, []);
 
   // Reduced frequency of status checks (every 5 minutes instead of every minute)
   useEffect(() => {
@@ -213,11 +282,18 @@ export const useAuth = () => {
     }
 
     permissionCheckInterval.current = setInterval(async () => {
-      const isActive = await checkUserStatus(supabase, user.id);
-      if (!isActive) {
-        await handleDeactivation(supabase);
+      performanceMonitor.startTimer('auth-periodic-status-check');
+      try {
+        const isActive = await checkUserStatus(supabase, user.id);
+        if (!isActive) {
+          await handleDeactivation(supabase);
+        }
+      } catch (error) {
+        console.error('Periodic status check failed:', error);
+      } finally {
+        performanceMonitor.endTimer('auth-periodic-status-check');
       }
-    }, 5 * 60 * 1000); // Check every 5 minutes
+    }, 10 * 60 * 1000); // Check every 10 minutes instead of 5
 
     return () => {
       if (permissionCheckInterval.current) {
@@ -234,10 +310,12 @@ export const useAuth = () => {
   // Memoized permission checker to prevent unnecessary re-renders
   const hasPermission = useMemo(() => {
     return (perm: string) => {
+      performanceMonitor.startTimer('auth-permission-check');
       console.log('Checking permission:', perm);
       console.log('Available permissions:', permissions);
       const hasPerm = permissions.includes(perm);
       console.log('Has permission:', hasPerm);
+      performanceMonitor.endTimer('auth-permission-check');
       return hasPerm;
     };
   }, [permissions]);
@@ -249,7 +327,18 @@ export const useAuth = () => {
     }
   }, [user]);
 
+  // Cleanup function to prevent memory leaks
+  useEffect(() => {
+    return () => {
+      // Clear the permission check interval
+      if (permissionCheckInterval.current) {
+        clearInterval(permissionCheckInterval.current);
+      }
+    };
+  }, []);
+
   const signUp = async (email: string, password: string, userData?: { username?: string; full_name?: string; role?: string }) => {
+    performanceMonitor.startTimer('auth-signup');
     if (!supabase) {
       toast.error('Supabase client not initialized');
       return { error: new Error('Supabase client not initialized') };
@@ -272,62 +361,83 @@ export const useAuth = () => {
     }
 
     toast.success('Account created successfully!');
+    performanceMonitor.endTimer('auth-signup');
     return { error: null };
   };
 
   const signIn = async (email: string, password: string) => {
+    performanceMonitor.startTimer('auth-signin');
+    
+    // Prevent concurrent sign-in attempts
+    if (activeRequests.has('signin')) {
+      toast.error('Sign-in already in progress');
+      return { error: new Error('Sign-in already in progress') };
+    }
+    
     if (!supabase) {
       toast.error('Supabase client not initialized');
       return { error: new Error('Supabase client not initialized') };
     }
+    
+    activeRequests.add('signin');
 
-    const { data, error } = await supabase.auth.signInWithPassword({
-      email,
-      password
-    });
+    try {
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email,
+        password
+      });
 
-    if (error) {
-      toast.error(error.message);
-      return { error };
-    }
+      if (error) {
+        toast.error(error.message);
+        return { error };
+      }
 
-    // Check if user is active after successful authentication
-    if (data.user) {
-      try {
-        const { data: profileData, error: profileError } = await supabase
-          .from('profiles')
-          .select('is_active')
-          .eq('id', data.user.id)
-          .single();
+      // Check if user is active after successful authentication
+      if (data.user) {
+        try {
+          const { data: profileData, error: profileError } = await supabase
+            .from('profiles')
+            .select('is_active')
+            .eq('id', data.user.id)
+            .single();
 
-        if (profileError) {
-          console.error('Error fetching user profile:', profileError);
+          if (profileError) {
+            console.error('Error fetching user profile:', profileError);
+            toast.error('Error checking user status');
+            // Sign out the user since we can't verify their status
+            await supabase.auth.signOut();
+            return { error: new Error('Error checking user status') };
+          }
+
+          if (!profileData.is_active) {
+            toast.error('Your account has been deactivated. Please contact an administrator.');
+            // Sign out the inactive user
+            await supabase.auth.signOut();
+            return { error: new Error('Account is inactive') };
+          }
+        } catch (error) {
+          console.error('Error checking user status:', error);
           toast.error('Error checking user status');
           // Sign out the user since we can't verify their status
           await supabase.auth.signOut();
           return { error: new Error('Error checking user status') };
         }
-
-        if (!profileData.is_active) {
-          toast.error('Your account has been deactivated. Please contact an administrator.');
-          // Sign out the inactive user
-          await supabase.auth.signOut();
-          return { error: new Error('Account is inactive') };
-        }
-      } catch (error) {
-        console.error('Error checking user status:', error);
-        toast.error('Error checking user status');
-        // Sign out the user since we can't verify their status
-        await supabase.auth.signOut();
-        return { error: new Error('Error checking user status') };
       }
-    }
 
-    toast.success('Signed in successfully!');
-    return { error: null };
+      toast.success('Signed in successfully!');
+      return { error: null };
+    } catch (unexpectedError) {
+      console.error('Unexpected error during sign-in:', unexpectedError);
+      toast.error('An unexpected error occurred during sign-in');
+      return { error: unexpectedError };
+    } finally {
+      activeRequests.delete('signin');
+      performanceMonitor.endTimer('auth-signin');
+    }
   };
 
   const signOut = async () => {
+    performanceMonitor.startTimer('auth-signout');
     if (!supabase) {
       toast.error('Supabase client not initialized');
       return;
@@ -342,18 +452,31 @@ export const useAuth = () => {
     } else {
       toast.success('Signed out successfully!');
     }
+    performanceMonitor.endTimer('auth-signout');
   };
 
+  // Debug logging for authentication state
+  console.log(`🔍 useAuth state for instance ${instanceId.current}:`, { 
+    user: user?.id, 
+    session: !!session, 
+    loading, 
+    isAuthenticated: !!user 
+  });
+  
   return {
     user,
     session,
+    supabase,
     loading,
     isAuthenticated: !!user,
     signUp,
     signIn,
     signOut,
+    checkUserStatus,
+    fetchUserPermissions,
+    hasPermission,
     permissions,
     role,
-    hasPermission,
+    _instanceId: instanceId.current, // Debug: expose instance ID
   };
 };
