@@ -1,0 +1,34 @@
+_format_version: "2.1"
+_transform: true
+
+services:
+  - name: auth
+    url: http://supabase-auth:9999/
+    routes:
+      - name: auth-route
+        paths:
+          - /auth
+  - name: rest
+    url: http://supabase-rest:3000/
+    routes:
+      - name: rest-route
+        paths:
+          - /rest
+  - name: realtime
+    url: http://supabase-realtime:4000/
+    routes:
+      - name: realtime-route
+        paths:
+          - /realtime
+  - name: storage
+    url: http://supabase-storage:5000/
+    routes:
+      - name: storage-route
+        paths:
+          - /storage
+  - name: meta
+    url: http://supabase-meta:8080/
+    routes:
+      - name: meta-route
+        paths:
+          - /meta
