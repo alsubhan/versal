@@ -52,20 +52,22 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_URL = os.getenv("SUPABASE_URL")  # Backward compat: treated as PUBLIC if INTERNAL not set
+SUPABASE_INTERNAL_URL = os.getenv("SUPABASE_INTERNAL_URL", SUPABASE_URL)
+SUPABASE_PUBLIC_URL = os.getenv("SUPABASE_PUBLIC_URL", SUPABASE_URL)
 SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY")
 
-if not SUPABASE_URL:
-    raise ValueError("SUPABASE_URL environment variable is not set")
+if not SUPABASE_INTERNAL_URL:
+    raise ValueError("SUPABASE_INTERNAL_URL (or SUPABASE_URL) environment variable is not set")
 
 if not SUPABASE_SERVICE_KEY:
     raise ValueError("SUPABASE_SERVICE_KEY environment variable is not set")
 
-SUPABASE_JWKS_URL = f"{SUPABASE_URL}/auth/v1/.well-known/jwks.json"
+SUPABASE_JWKS_URL = f"{SUPABASE_INTERNAL_URL}/auth/v1/.well-known/jwks.json"
 
 def get_supabase_client():
     """Get a fresh Supabase client to avoid connection reuse issues"""
-    return create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+    return create_client(SUPABASE_INTERNAL_URL, SUPABASE_SERVICE_KEY)
 
 # Keep a global client for backward compatibility
 supabase: Client = get_supabase_client()
@@ -2174,7 +2176,7 @@ def debug_stock_levels():
 @app.get("/config/supabase")
 def get_supabase_config():
     return {
-        "url": SUPABASE_URL,
+        "url": SUPABASE_PUBLIC_URL,
         "publishable_key": os.getenv("SUPABASE_ANON_KEY")
     }
 
