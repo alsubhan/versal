@@ -25,7 +25,7 @@ import { type GoodsReceiveNote, type GoodsReceiveNoteItem } from "@/types/grn";
 import { type PurchaseOrder } from "@/types/purchase-order";
 import { type Supplier } from "@/types/supplier";
 import { useCurrencyStore } from "@/stores/currencyStore";
-import { getGoodReceiveNote, getProducts, getTaxes, getPurchaseOrders, getSuppliers, getPurchaseOrder } from "@/lib/api";
+import { getGoodReceiveNote, getProducts, getTaxes, getPurchaseOrders, getAvailablePurchaseOrdersForGRN, getSuppliers, getPurchaseOrder, createGoodReceiveNote, updateGoodReceiveNote, listSerials } from "@/lib/api";
 import { ProductSearchDialog } from "@/components/shared/ProductSearchDialog";
 import { useSystemSettings } from "@/hooks/useSystemSettings";
 import { useAuthStore } from "@/stores/authStore";
@@ -79,6 +79,11 @@ export const GRNDialog = ({ open, onOpenChange, grn, onSave }: GRNDialogProps): 
       console.log('Items state updated:', items.length, items);
     }
   }, [items]);
+
+  // Debug showProductSearch state changes
+  useEffect(() => {
+    console.log('DEBUG: showProductSearch state changed to:', showProductSearch);
+  }, [showProductSearch]);
   
   // Load data when dialog opens
   useEffect(() => {
@@ -127,15 +132,12 @@ export const GRNDialog = ({ open, onOpenChange, grn, onSave }: GRNDialogProps): 
 
   const loadPurchaseOrders = async () => {
     try {
-      const data = await getPurchaseOrders();
-      // Filter to only show approved POs
-      const availablePOs = data.filter((po: PurchaseOrder) => 
-        po.status === 'approved' // Only approved POs
-      );
-      setPurchaseOrders(availablePOs);
+      // Use the new efficient endpoint that already filters out orders with GRNs
+      const data = await getAvailablePurchaseOrdersForGRN();
+      setPurchaseOrders(data);
     } catch (error) {
-      console.error('Error loading purchase orders:', error);
-      toast.error("Failed to load purchase orders");
+      console.error('Error loading available purchase orders:', error);
+      toast.error("Failed to load available purchase orders");
     }
   };
 
@@ -489,6 +491,10 @@ export const GRNDialog = ({ open, onOpenChange, grn, onSave }: GRNDialogProps): 
   };
 
   const handleProductSelect = (product: any) => {
+    console.log('DEBUG: handleProductSelect called with product:', product);
+    console.log('DEBUG: Product serial numbers:', product._serialNumbers);
+    console.log('DEBUG: Product is_serialized:', product.is_serialized);
+    
     // Validate that product has required information
     // Note: product.purchase_tax.rate can be 0 (valid), so we check for undefined/null
     if (product?.purchase_tax?.rate === undefined || product?.purchase_tax?.rate === null) {
@@ -519,9 +525,10 @@ export const GRNDialog = ({ open, onOpenChange, grn, onSave }: GRNDialogProps): 
       // Update existing item
       const index = parseInt(editingIndex);
       const newItems = [...items];
-      const receivedQuantity = newItems[index].receivedQuantity || 1;
-      const discount = newItems[index].discount || 0;
-      const calculatedTax = calculateTax(product, receivedQuantity, product.cost_price, discount);
+      const receivedQuantity = product._selectedQuantity ?? newItems[index].receivedQuantity ?? 1;
+      const discount = (product._selectedDiscount ?? newItems[index].discount ?? 0) as number;
+      const unitCost = product._selectedUnitPrice ?? product.cost_price;
+      const calculatedTax = calculateTax(product, receivedQuantity, unitCost, discount);
       
       newItems[index] = {
         ...newItems[index],
@@ -529,22 +536,26 @@ export const GRNDialog = ({ open, onOpenChange, grn, onSave }: GRNDialogProps): 
         productName: product.name,
         skuCode: product.sku_code,
         hsnCode: product.hsn_code,
-        unitCost: product.cost_price,
+        unitCost: unitCost,
         purchaseTaxType: product.purchase_tax_type,
         eanCode: product.ean_code || newItems[index].eanCode,
         tax: calculatedTax,
-        total: calculateTotal(product.purchase_tax_type, receivedQuantity, product.cost_price, discount, calculatedTax),
-        unitAbbreviation: product.units?.abbreviation || '',
+        total: calculateTotal(product.purchase_tax_type, receivedQuantity, unitCost, discount, calculatedTax),
+        unitAbbreviation: (product._selectedUnitLabel ?? (product.units?.abbreviation ?? '')),
       };
+      if (product._serialNumbers) {
+        (newItems[index] as any).serialNumbers = product._serialNumbers;
+      }
       
       setItems(newItems);
       calculateTotals(newItems);
       sessionStorage.removeItem('editingItemIndex');
     } else {
       // Add new item
-      const receivedQuantity = 1;
-      const discount = 0;
-      const calculatedTax = calculateTax(product, receivedQuantity, product.cost_price, discount);
+      const receivedQuantity = product._selectedQuantity ?? 1;
+      const discount = Number((product as any)._selectedDiscount ?? 0);
+      const unitCost = product._selectedUnitPrice ?? product.cost_price;
+      const calculatedTax = calculateTax(product, receivedQuantity, unitCost, discount);
       
       const newItem = {
         id: `temp-${Date.now()}`,
@@ -555,14 +566,17 @@ export const GRNDialog = ({ open, onOpenChange, grn, onSave }: GRNDialogProps): 
         hsnCode: product.hsn_code,
         orderedQuantity: 0,
         receivedQuantity: receivedQuantity,
-        unitCost: product.cost_price,
+        unitCost: unitCost,
         discount: discount,
         tax: calculatedTax,
-        total: calculateTotal(product.purchase_tax_type, receivedQuantity, product.cost_price, discount, calculatedTax),
+        total: calculateTotal(product.purchase_tax_type, receivedQuantity, unitCost, discount, calculatedTax),
         purchaseTaxType: product.purchase_tax_type,
         eanCode: product.ean_code,
-        unitAbbreviation: product.units?.abbreviation || '',
+        unitAbbreviation: (product._selectedUnitLabel ?? (product.units?.abbreviation ?? '')),
       };
+      if (product._serialNumbers) {
+        (newItem as any).serialNumbers = product._serialNumbers;
+      }
       
       setItems([...items, newItem]);
       calculateTotals([...items, newItem]);
@@ -741,19 +755,63 @@ export const GRNDialog = ({ open, onOpenChange, grn, onSave }: GRNDialogProps): 
           if (!item.receivedQuantity || item.receivedQuantity <= 0) {
             errors.push(`Item ${index + 1}: Received quantity must be greater than 0`);
           }
-          if (!item.unitCost || item.unitCost <= 0) {
-            errors.push(`Item ${index + 1}: Unit cost must be greater than 0`);
-          }
-          if (item.discount && item.discount < 0) {
-            errors.push(`Item ${index + 1}: Discount cannot be negative`);
+
+          // Serialized product constraints
+          const product = products.find(p => p.id === item.productId);
+          const isSerialized = !!product?.is_serialized;
+          if (isSerialized) {
+            // Force base unit by disallowing unitAbbreviation differing from base for serialized (UI ensures this via ProductSearchDialog; linked mode uses PO unit but received is in base)
+            const requiredCount = Number(item.receivedQuantity || 0);
+            const serials = ((item as any).serialNumbers || []).map((s: string) => (s || '').trim()).filter(Boolean);
+            if (creationMode === 'linked') {
+              if (serials.length !== requiredCount) {
+                errors.push(`Item ${index + 1}: Serial # required (${requiredCount}). Provided: ${serials.length}.`);
+              }
+              // Duplicate check
+              const set = new Set<string>();
+              const dup = serials.find((s: string) => {
+                if (set.has(s)) return true; set.add(s); return false;
+              });
+              if (dup) {
+                errors.push(`Item ${index + 1}: Duplicate serial detected (${dup})`);
+              }
+            }
           }
         });
       }
       
       // If there are validation errors, show them and return
       if (errors.length > 0) {
-        toast.error(errors.join(", "));
+        errors.forEach(msg => toast.error(msg));
+        setLoading(false);
         return;
+      }
+
+      // Backend existence check to prevent duplicates against existing inventory
+      for (let idx = 0; idx < items.length; idx += 1) {
+        const item = items[idx];
+        const product = products.find(p => p.id === item.productId);
+        const isSerialized = !!product?.is_serialized;
+        if (!isSerialized) continue;
+        const serials: string[] = ((item as any).serialNumbers || []).map((s: string) => (s || '').trim()).filter(Boolean);
+        if (serials.length === 0) continue;
+        try {
+          const res: any = await listSerials(item.productId);
+          const rows = Array.isArray(res) ? res : (res?.data || []);
+          const existing: Set<string> = new Set(
+            rows.map((r: any) => r.serial_number || r.serialNumber || r.serial).filter(Boolean)
+          );
+          const conflict = serials.find(s => existing.has(s));
+          if (conflict) {
+            toast.error(`Item ${idx + 1}: Serial '${conflict}' already exists for this product`);
+            setLoading(false);
+            return;
+          }
+        } catch (e) {
+          toast.error(`Item ${idx + 1}: Failed to validate serials against inventory`);
+          setLoading(false);
+          return;
+        }
       }
     
       const grnData = {
@@ -1020,7 +1078,7 @@ export const GRNDialog = ({ open, onOpenChange, grn, onSave }: GRNDialogProps): 
                 )}
                 {creationMode === 'linked' && (
                   <div className="text-sm text-gray-500 italic">
-                    Items are loaded from Purchase Order - only quantities can be edited
+                    Items are loaded from Purchase Order - click the search icon to edit details and add serial numbers
                   </div>
                 )}
               </div>
@@ -1040,6 +1098,7 @@ export const GRNDialog = ({ open, onOpenChange, grn, onSave }: GRNDialogProps): 
                       <TableHead className="font-medium text-gray-700">Discount</TableHead>
                       <TableHead className="font-medium text-gray-700">Tax</TableHead>
                       <TableHead className="font-medium text-gray-700">Batch #</TableHead>
+                      <TableHead className="font-medium text-gray-700">Serial #</TableHead>
                       <TableHead className="font-medium text-gray-700">Total</TableHead>
                       {creationMode === 'direct' && (
                         <TableHead className="w-[50px]"></TableHead>
@@ -1065,6 +1124,7 @@ export const GRNDialog = ({ open, onOpenChange, grn, onSave }: GRNDialogProps): 
                                     sessionStorage.setItem('editingItemIndex', index.toString());
                                   }}
                                   className="flex-shrink-0"
+                                  title={'Edit item'}
                                 >
                                   <Search className="h-3 w-3" />
                                 </Button>
@@ -1124,14 +1184,10 @@ export const GRNDialog = ({ open, onOpenChange, grn, onSave }: GRNDialogProps): 
                               type="number"
                               min={0}
                               value={item.discount}
-                              onChange={(e) => {
-                                const v = parseFloat(e.target.value);
-                                const safe = isNaN(v) ? 0 : Math.max(0, v);
-                                handleItemChange(index, "discount", safe);
-                              }}
-                              className="w-20"
-                              disabled={creationMode === 'linked'}
-                              title={creationMode === 'linked' ? "Discount cannot be changed in linked mode" : "Discount cannot be negative"}
+                              onChange={() => {}}
+                              className="w-20 bg-gray-50"
+                              disabled
+                              title="Discount is set in the product configuration and cannot be changed here"
                             />
                           </TableCell>
                           <TableCell>
@@ -1178,6 +1234,75 @@ export const GRNDialog = ({ open, onOpenChange, grn, onSave }: GRNDialogProps): 
                             />
                           </TableCell>
                           
+                          <TableCell className="text-sm">
+                            {(() => {
+                              const product = products.find(p => p.id === item.productId);
+                              const isSerialized = !!product?.is_serialized;
+                              if (!isSerialized) {
+                                return <span className="text-xs text-gray-400">N/A</span>;
+                              }
+                              // For linked GRN, allow inline per-unit serial entry
+                              if (creationMode === 'linked') {
+                                const count = Number(item.receivedQuantity || 0);
+                                const serials = Array.from({ length: count }, (_, i) => (item as any).serialNumbers?.[i] || '');
+                                const dupes = new Set<string>();
+                                const duplicates: Record<number, boolean> = {};
+                                serials.forEach((s, i) => {
+                                  const key = (s || '').trim();
+                                  if (!key) return;
+                                  if (dupes.has(key)) duplicates[i] = true; else dupes.add(key);
+                                });
+                                return (
+                                  <div className="flex flex-col gap-1">
+                                    {serials.length === 0 && (
+                                      <span className="text-xs text-gray-400">Enter {count} serial{count === 1 ? '' : 's'}</span>
+                                    )}
+                                    {serials.map((val, i) => (
+                                      <div key={i} className="flex items-center gap-2">
+                                        <span className="text-xs text-gray-500 w-6">{i + 1}.</span>
+                                        <Input
+                                          value={val}
+                                          placeholder="#"
+                                          onChange={(e) => {
+                                            // Alphanumeric only
+                                            const cleaned = e.target.value.replace(/[^a-zA-Z0-9]/g, '');
+                                            const updated = [...items];
+                                            const arr = [ ...(((updated[index] as any).serialNumbers) || []) ];
+                                            arr[i] = cleaned;
+                                            (updated[index] as any).serialNumbers = arr;
+                                            setItems(updated);
+                                          }}
+                                          className={`h-7 text-xs ${duplicates[i] ? 'border-red-500' : ''}`}
+                                        />
+                                      </div>
+                                    ))}
+                                    {serials.length > 0 && Object.keys(duplicates).length > 0 && (
+                                      <div className="text-xs text-red-600">Duplicate serials detected</div>
+                                    )}
+                                  </div>
+                                );
+                              }
+                              // Direct GRN: show a compact preview (serials supplied via dialog)
+                              return (
+                                <div className="max-w-32">
+                                  {(item as any).serialNumbers && (item as any).serialNumbers.length > 0 ? (
+                                    <>
+                                      <div className="text-xs text-gray-600 mb-1">
+                                        {(item as any).serialNumbers.length} serials
+                                      </div>
+                                      <div className="text-xs font-mono bg-gray-100 p-1 rounded truncate" title={(item as any).serialNumbers?.join(', ')}>
+                                        {(item as any).serialNumbers?.slice(0, 2).join(', ')}
+                                        {(item as any).serialNumbers?.length > 2 && '...'}
+                                      </div>
+                                    </>
+                                  ) : (
+                                    <span className="text-xs text-gray-400">No serials</span>
+                                  )}
+                                </div>
+                              );
+                            })()}
+                          </TableCell>
+                          
                           <TableCell className="font-mono text-sm font-medium">
                             {formatCurrency(item.total || 0, currency)}
                           </TableCell>
@@ -1196,14 +1321,14 @@ export const GRNDialog = ({ open, onOpenChange, grn, onSave }: GRNDialogProps): 
                         </TableRow>
                       ))
                     ) : (
-                      <TableRow>
-                        <TableCell colSpan={creationMode === 'linked' ? 9 : 10} className="text-center py-8 text-gray-500">
-                          {creationMode === 'linked' 
-                            ? 'No items found in the selected Purchase Order.'
-                            : 'No items added. Click "Add Item" to add products to this GRN.'
-                          }
-                        </TableCell>
-                      </TableRow>
+                                              <TableRow>
+                          <TableCell colSpan={creationMode === 'linked' ? 10 : 11} className="text-center py-8 text-gray-500">
+                            {creationMode === 'linked' 
+                              ? 'No items found in the selected Purchase Order.'
+                              : 'No items added. Click "Add Item" to add products to this GRN.'
+                            }
+                          </TableCell>
+                        </TableRow>
                     )}
                   </TableBody>
                 </Table>
@@ -1279,11 +1404,15 @@ export const GRNDialog = ({ open, onOpenChange, grn, onSave }: GRNDialogProps): 
       {/* Product Search Dialog */}
       <ProductSearchDialog
         open={showProductSearch}
-        onOpenChange={setShowProductSearch}
+        onOpenChange={(open) => {
+          console.log('DEBUG: ProductSearchDialog onOpenChange called with:', open);
+          setShowProductSearch(open);
+        }}
         products={products}
         onProductSelect={handleProductSelect}
         recentProducts={recentProducts}
         mode="purchase"
+        context="receiving"
       />
     </Dialog>
   );

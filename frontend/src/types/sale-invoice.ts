@@ -16,6 +16,7 @@ export interface SaleInvoiceItem {
   total: number;
   saleTaxType?: 'inclusive' | 'exclusive';
   unitAbbreviation?: string;
+  serialNumbers?: string[];
   createdBy?: string;
 }
 

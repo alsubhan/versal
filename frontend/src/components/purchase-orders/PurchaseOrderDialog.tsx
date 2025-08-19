@@ -307,15 +307,21 @@ export const PurchaseOrderDialog = ({ open, onOpenChange, purchaseOrder, onSave 
     }
     
     // Check if we're editing an existing item
-    const editingIndex = sessionStorage.getItem('editingItemIndex');
-    
-    if (editingIndex !== null) {
+    const editingIndexStr = sessionStorage.getItem('editingItemIndex');
+    const hasValidEditingIndex = (() => {
+      if (editingIndexStr === null) return false;
+      const idx = parseInt(editingIndexStr);
+      return Number.isFinite(idx) && idx >= 0 && idx < items.length;
+    })();
+
+    if (hasValidEditingIndex) {
       // Update existing item
-      const index = parseInt(editingIndex);
+      const index = parseInt(editingIndexStr as string);
       const newItems = [...items];
-      const quantity = newItems[index].quantity || 1;
-      const discount = newItems[index].discount || 0;
-      const calculatedTax = calculateTax(product, quantity, product.cost_price, discount);
+      const quantity = (product._selectedQuantity ?? newItems[index].quantity ?? 1) as number;
+      const discount = (product._selectedDiscount ?? newItems[index].discount ?? 0) as number;
+      const unitCost = (product._selectedUnitPrice ?? product.cost_price) as number;
+      const calculatedTax = calculateTax(product, quantity, unitCost, discount);
       
       newItems[index] = {
         ...newItems[index],
@@ -323,21 +329,22 @@ export const PurchaseOrderDialog = ({ open, onOpenChange, purchaseOrder, onSave 
         productName: product.name,
         skuCode: product.sku_code,
         hsnCode: product.hsn_code,
-        costPrice: product.cost_price,
+        costPrice: unitCost,
         purchaseTaxType: product.purchase_tax_type,
         tax: calculatedTax,
-        total: calculateTotal(product.purchase_tax_type, quantity, product.cost_price, discount, calculatedTax),
-        unitAbbreviation: product.units?.abbreviation || '',
-      };
+        total: calculateTotal(product.purchase_tax_type, quantity, unitCost, discount, calculatedTax),
+        unitAbbreviation: (product._selectedUnitLabel ?? (product.units?.abbreviation ?? '')),
+      } as any;
       
       setItems(newItems);
       calculateTotals(newItems);
       sessionStorage.removeItem('editingItemIndex');
     } else {
       // Add new item
-      const quantity = 1;
-      const discount = 0;
-      const calculatedTax = calculateTax(product, quantity, product.cost_price, discount);
+      const quantity = (product._selectedQuantity ?? 1) as number;
+      const discount = Number((product as any)._selectedDiscount ?? 0);
+      const unitCost = (product._selectedUnitPrice ?? product.cost_price) as number;
+      const calculatedTax = calculateTax(product, quantity, unitCost, discount);
       
       const newItem = {
         id: `temp-${Date.now()}`,
@@ -347,13 +354,13 @@ export const PurchaseOrderDialog = ({ open, onOpenChange, purchaseOrder, onSave 
         skuCode: product.sku_code,
         hsnCode: product.hsn_code,
         quantity: quantity,
-        costPrice: product.cost_price,
+        costPrice: unitCost,
         discount: discount,
         tax: calculatedTax,
-        total: calculateTotal(product.purchase_tax_type, quantity, product.cost_price, discount, calculatedTax),
+        total: calculateTotal(product.purchase_tax_type, quantity, unitCost, discount, calculatedTax),
         purchaseTaxType: product.purchase_tax_type,
-        unitAbbreviation: product.units?.abbreviation || '',
-      };
+        unitAbbreviation: (product._selectedUnitLabel ?? (product.units?.abbreviation ?? '')),
+      } as any;
       
       setItems([...items, newItem]);
       calculateTotals([...items, newItem]);
@@ -762,13 +769,10 @@ export const PurchaseOrderDialog = ({ open, onOpenChange, purchaseOrder, onSave 
                           type="number"
                           min={0}
                           value={item.discount}
-                          onChange={(e) => {
-                            const v = parseFloat(e.target.value);
-                            const safe = isNaN(v) ? 0 : Math.max(0, v);
-                            handleItemChange(index, "discount", safe);
-                          }}
-                          className="w-20"
-                          title="Discount cannot be negative"
+                          onChange={() => {}}
+                          className="w-20 bg-gray-50"
+                          disabled
+                          title="Discount is set in the product configuration and cannot be changed here"
                         />
                       </TableCell>
                       <TableCell>
@@ -904,6 +908,7 @@ export const PurchaseOrderDialog = ({ open, onOpenChange, purchaseOrder, onSave 
         onProductSelect={handleProductSelect}
         recentProducts={recentProducts}
         mode="purchase"
+        context="planning"
       />
     </Dialog>
   );

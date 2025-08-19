@@ -300,7 +300,7 @@ export const SaleOrderDialog = ({ open, onOpenChange, salesOrder, onSave }: Sale
       if (editingIndex !== null) {
         // Update existing item
         const index = parseInt(editingIndex);
-        
+
         // Validate that the index is within bounds and the item exists
         if (isNaN(index) || index < 0 || index >= items.length) {
           console.error('Invalid editing index:', editingIndex, 'items length:', items.length);
@@ -320,9 +320,10 @@ export const SaleOrderDialog = ({ open, onOpenChange, salesOrder, onSave }: Sale
           return;
         }
         
-        const quantity = existingItem.quantity || 1;
-        const discount = existingItem.discount || 0;
-        const calculatedTax = calculateTax(product, quantity, product.sale_price, discount);
+        const quantity = (product._selectedQuantity ?? existingItem.quantity ?? 1) as number;
+        const discount = (product._selectedDiscount ?? existingItem.discount ?? 0) as number;
+        const unitPrice = (product._selectedUnitPrice ?? product.sale_price) as number;
+        const calculatedTax = calculateTax(product, quantity, unitPrice, discount);
         
         newItems[index] = {
           ...newItems[index],
@@ -330,11 +331,11 @@ export const SaleOrderDialog = ({ open, onOpenChange, salesOrder, onSave }: Sale
           productName: product.name,
           skuCode: product.sku_code,
           hsnCode: product.hsn_code,
-          unitPrice: product.sale_price,
+          unitPrice: unitPrice,
           saleTaxType: product.sale_tax_type,
           tax: calculatedTax,
-          total: calculateTotal(product.sale_tax_type, quantity, product.sale_price, discount, calculatedTax),
-          unitAbbreviation: product.units?.abbreviation || '',
+          total: calculateTotal(product.sale_tax_type, quantity, unitPrice, discount, calculatedTax),
+          unitAbbreviation: (product._selectedUnitLabel ?? (product.units?.abbreviation ?? '')),
         };
         
         setItems(newItems);
@@ -342,9 +343,10 @@ export const SaleOrderDialog = ({ open, onOpenChange, salesOrder, onSave }: Sale
         sessionStorage.removeItem('editingItemIndex');
       } else {
         // Add new item
-        const quantity = 1;
-        const discount = 0;
-        const calculatedTax = calculateTax(product, quantity, product.sale_price, discount);
+        const quantity = (product._selectedQuantity ?? 1) as number;
+        const discount = Number((product as any)._selectedDiscount ?? 0);
+        const unitPrice = (product._selectedUnitPrice ?? product.sale_price) as number;
+        const calculatedTax = calculateTax(product, quantity, unitPrice, discount);
         
         const newItem = {
           id: `temp-${Date.now()}`,
@@ -354,12 +356,12 @@ export const SaleOrderDialog = ({ open, onOpenChange, salesOrder, onSave }: Sale
           skuCode: product.sku_code,
           hsnCode: product.hsn_code,
           quantity: quantity,
-          unitPrice: product.sale_price,
+          unitPrice: unitPrice,
           discount: discount,
           tax: calculatedTax,
-          total: calculateTotal(product.sale_tax_type, quantity, product.sale_price, discount, calculatedTax),
+          total: calculateTotal(product.sale_tax_type, quantity, unitPrice, discount, calculatedTax),
           saleTaxType: product.sale_tax_type,
-          unitAbbreviation: product.units?.abbreviation || '',
+          unitAbbreviation: (product._selectedUnitLabel ?? (product.units?.abbreviation ?? '')),
         };
         
         setItems([...items, newItem]);
@@ -804,13 +806,10 @@ export const SaleOrderDialog = ({ open, onOpenChange, salesOrder, onSave }: Sale
                               type="number"
                               min={0}
                               value={item.discount}
-                              onChange={(e) => {
-                                const v = parseFloat(e.target.value);
-                                const safe = isNaN(v) ? 0 : Math.max(0, v);
-                                handleItemChange(index, "discount", safe);
-                              }}
-                              className="w-20"
-                              title="Discount cannot be negative"
+                              onChange={() => {}}
+                              className="w-20 bg-gray-50"
+                              disabled
+                              title="Discount is set in the product configuration and cannot be changed here"
                             />
                           </TableCell>
                           <TableCell>
@@ -944,6 +943,7 @@ export const SaleOrderDialog = ({ open, onOpenChange, salesOrder, onSave }: Sale
         onProductSelect={handleProductSelect}
         recentProducts={recentProducts}
         mode="sale"
+        context="planning"
       />
     </Dialog>
   );

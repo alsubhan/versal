@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-from fastapi import FastAPI, Depends, HTTPException, status, Security, Body
+from fastapi import FastAPI, Depends, HTTPException, status, Security, Body, Request, UploadFile, File
 import os
 import json
 import random
@@ -15,6 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import httpx
 import uvicorn
 import sys
+from typing import Optional, List, Dict, Any
 
 load_dotenv()  # Load environment variables from .env file
 
@@ -32,6 +33,172 @@ app = FastAPI(
     version="1.0.0",
     debug=DEBUG_MODE
 )
+
+def _create_serials_for_grn_item(product_id: str, serial_numbers: List[str], grn_item_id: str):
+    print(f"DEBUG: _create_serials_for_grn_item called with product_id: {product_id}, serial_numbers: {serial_numbers}, grn_item_id: {grn_item_id}")
+    if not serial_numbers:
+        print("DEBUG: No serial numbers provided")
+        return
+    
+    # Note: We don't need product info for inventory transactions anymore
+    # since the table only stores product_id, not product_name/sku_code
+    
+    payload_rows = []
+    seen = set()
+    for s in serial_numbers:
+        s_norm = (s or "").strip()
+        if not s_norm or s_norm in seen:
+            continue
+        seen.add(s_norm)
+        payload_rows.append({
+            "product_id": product_id,
+            "serial_number": s_norm,
+            "status": "available",
+            "grn_item_id": grn_item_id,
+        })
+    print(f"DEBUG: Prepared {len(payload_rows)} serial rows to insert")
+    if payload_rows:
+        result = supabase.table("product_serials").insert(payload_rows).execute()
+        print(f"DEBUG: Serial insert result: {result.data if result else 'No result'}")
+        
+        # Create inventory transaction for RECEIPT of serialized products
+        # Since these are new serials being created, we create a single transaction for the batch
+        _create_inventory_transaction_for_serial_status_change(
+            product_id, 
+            "BATCH",  # Special identifier for batch operations
+            "none",   # No previous status
+            "available", 
+            "grn_item", 
+            grn_item_id,
+            f"Serialized products received - {len(payload_rows)} units with serials: {', '.join([row['serial_number'] for row in payload_rows])}",
+            None  # GRN doesn't have user context in this function
+        )
+    else:
+        print("DEBUG: No payload rows to insert")
+
+def _create_inventory_transaction_for_serial_status_change(
+    product_id: str, 
+    serial_number: str, 
+    old_status: str, 
+    new_status: str, 
+    reference_type: str, 
+    reference_id: str,
+    notes: str = None,
+    created_by: str = None
+):
+    """
+    Create inventory transaction for serial status changes.
+    This ensures all serialized product movements are tracked in the ledger.
+    """
+    try:
+        # Note: We don't need product info for inventory transactions anymore
+        # since the table only stores product_id, not product_name/sku_code
+        
+        # Determine transaction type and quantity change based on status transition
+        transaction_type = None
+        quantity_change = 0
+        
+        # Special case for batch receipts (new serials being created)
+        if old_status == "none" and new_status == "available":
+            transaction_type = "receipt"
+            quantity_change = +1  # Positive for receipts (addition to inventory)
+        elif old_status == "available" and new_status == "reserved":
+            transaction_type = "reservation"
+            quantity_change = -1  # Reduce available inventory
+        elif old_status == "reserved" and new_status == "sold":
+            transaction_type = "sale"
+            quantity_change = -1  # Reduce reserved inventory
+        elif old_status == "available" and new_status == "sold":
+            transaction_type = "sale"
+            quantity_change = -1  # Reduce available inventory
+        elif old_status == "sold" and new_status == "returned":
+            transaction_type = "return"
+            quantity_change = +1  # Increase available inventory
+        elif old_status == "reserved" and new_status == "available":
+            transaction_type = "reservation_release"
+            quantity_change = +1  # Increase available inventory
+        elif old_status in ["available", "reserved", "sold"] and new_status == "scrapped":
+            transaction_type = "scrap"
+            quantity_change = -1  # Reduce inventory (any status)
+        elif old_status == "available" and new_status == "available":
+            # This might be a location change or other update
+            return
+        
+        if transaction_type is None:
+            print(f"Warning: No transaction type defined for status change {old_status} -> {new_status}")
+            return
+        
+        # Create inventory transaction
+        transaction_data = {
+            "product_id": product_id,
+            "transaction_type": transaction_type,
+            "quantity_change": quantity_change,
+            "reference_type": reference_type,
+            "reference_id": reference_id,
+            "notes": notes or f"Serial {serial_number} status changed from {old_status} to {new_status}",
+            "created_by": created_by  # Set from the calling function
+        }
+        
+        supabase.table("inventory_transactions").insert(transaction_data).execute()
+        print(f"Created inventory transaction for serial {serial_number}: {old_status} -> {new_status}")
+        
+    except Exception as e:
+        print(f"Warning: Failed to create inventory transaction for serial {serial_number}: {e}")
+        # Don't fail the main operation if transaction creation fails
+
+def _reserve_or_sell_serials_for_invoice_item(product_id: str, serial_numbers: List[str], sale_invoice_item_id: str, finalize: bool = False, created_by: str = None):
+    if not serial_numbers:
+        return
+    
+    # Note: We don't need product info for inventory transactions anymore
+    # since the table only stores product_id, not product_name/sku_code
+    
+    for s in serial_numbers:
+        s_norm = (s or "").strip()
+        if not s_norm:
+            raise HTTPException(status_code=400, detail="Invalid serial number")
+        
+        res = supabase.table("product_serials").select("id, status").eq("product_id", product_id).eq("serial_number", s_norm).execute()
+        if not res.data:
+            raise HTTPException(status_code=400, detail=f"Serial '{s_norm}' not found for product")
+        
+        status_val = res.data[0]["status"]
+        
+        if finalize:
+            if status_val not in ["available", "reserved"]:
+                raise HTTPException(status_code=400, detail=f"Serial '{s_norm}' not available to sell")
+            
+            # Update serial status to sold
+            supabase.table("product_serials").update({
+                "status": "sold",
+                "sale_invoice_item_id": sale_invoice_item_id,
+            }).eq("id", res.data[0]["id"]).execute()
+            
+            # Create inventory transaction for status change
+            _create_inventory_transaction_for_serial_status_change(
+                product_id, s_norm, status_val, "sold", 
+                "sale_invoice_item", sale_invoice_item_id,
+                f"Serialized product sold - Serial: {s_norm}",
+                created_by
+            )
+        else:
+            if status_val != "available":
+                raise HTTPException(status_code=400, detail=f"Serial '{s_norm}' not available")
+            
+            # Update serial status to reserved
+            supabase.table("product_serials").update({
+                "status": "reserved",
+                "sale_invoice_item_id": sale_invoice_item_id,
+            }).eq("id", res.data[0]["id"]).execute()
+            
+            # Create inventory transaction for status change
+            _create_inventory_transaction_for_serial_status_change(
+                product_id, s_norm, status_val, "reserved", 
+                "sale_invoice_item", sale_invoice_item_id,
+                f"Serialized product reserved - Serial: {s_norm}",
+                created_by
+            )
+
 
 # Add CORS middleware
 app.add_middleware(
@@ -65,6 +232,12 @@ if not SUPABASE_SERVICE_KEY:
 
 SUPABASE_JWKS_URL = f"{SUPABASE_INTERNAL_URL}/auth/v1/.well-known/jwks.json"
 
+# GitHub integration configuration
+GITHUB_OWNER = os.getenv("GITHUB_OWNER")
+GITHUB_REPO = os.getenv("GITHUB_REPO")
+GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
+# Labels are now fully dynamic from GitHub; no static defaults injected
+
 def get_supabase_client():
     """Get a fresh Supabase client to avoid connection reuse issues"""
     return create_client(SUPABASE_INTERNAL_URL, SUPABASE_SERVICE_KEY)
@@ -93,6 +266,38 @@ def require_debug_mode():
             return func(*args, **kwargs)
         return wrapper
     return decorator
+
+"""
+===================== SERIAL INVENTORY ENDPOINTS =====================
+Note: verify_jwt is defined below; FastAPI evaluates dependencies at runtime,
+but some static analyzers complain. Keep these after app and before verify_jwt
+or disable lint warnings if needed.
+"""
+
+@app.get("/inventory/serials")
+def list_serials(product_id: Optional[str] = None, status: Optional[str] = None, payload=Depends(lambda cred=Security(bearer_scheme): verify_jwt(cred))):
+    query = supabase.table("product_serials").select("*")
+    if product_id:
+        query = query.eq("product_id", product_id)
+    if status:
+        query = query.eq("status", status)
+    res = query.execute()
+    return JSONResponse(content=res.data)
+
+@app.get("/inventory/serials/lookup")
+def lookup_serial(serial: str, payload=Depends(lambda cred=Security(bearer_scheme): verify_jwt(cred))):
+    if not serial or not serial.strip():
+        raise HTTPException(status_code=400, detail="Serial is required")
+    res = supabase.table("product_serials").select("*, products(*)").eq("serial_number", serial.strip()).execute()
+    if not res.data:
+        return JSONResponse(content={"found": False}, status_code=404)
+    row = res.data[0]
+    return JSONResponse(content={
+        "found": True,
+        "productId": row.get("product_id"),
+        "status": row.get("status"),
+        "product": row.get("products")
+    })
 
 def get_jwk_set():
     global _jwk_set
@@ -217,6 +422,64 @@ def require_permission(required_permission):
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Error checking permissions: {str(e)}")
 
     return decorator
+
+
+def _get_request_context_info(payload: dict) -> Dict[str, Any]:
+    """Extract lightweight user context for auditing in issue creation."""
+    user_id = payload.get("sub")
+    if not user_id:
+        return {"userId": None, "email": None, "role": None, "fullName": None}
+
+    # Try to get full name from profiles table
+    full_name = None
+    try:
+        client = get_supabase_client()
+        profile_data = client.table("profiles").select("full_name").eq("id", user_id).execute()
+        if profile_data.data:
+            full_name = profile_data.data[0].get("full_name")
+    except Exception:
+        # If profile lookup fails, continue without full name
+        pass
+
+    return {
+        "userId": user_id,
+        "email": payload.get("email") or payload.get("user_metadata", {}).get("email"),
+        "role": payload.get("user_metadata", {}).get("role") or payload.get("role_name"),
+        "fullName": full_name,
+    }
+
+
+def ensure_storage_bucket(client: Client, bucket_id: str) -> None:
+    """Ensure a public storage bucket exists. Raise on failure."""
+    try:
+        # Check if bucket exists
+        try:
+            buckets = client.storage.list_buckets()  # type: ignore[attr-defined]
+        except Exception:
+            buckets = []
+        bucket_names = set()
+        for b in buckets or []:
+            # storage3 returns dicts with 'name' or 'id'
+            name = b.get("name") if isinstance(b, dict) else None
+            if not name and hasattr(b, "name"):
+                name = getattr(b, "name")
+            if not name and isinstance(b, dict):
+                name = b.get("id")
+            if name:
+                bucket_names.add(str(name))
+
+        if bucket_id not in bucket_names:
+            try:
+                # Create bucket without unsupported keyword arguments; visibility handled by signed URLs
+                client.storage.create_bucket(bucket_id)  # type: ignore[attr-defined]
+            except Exception as e:
+                # If create still fails, surface a clear error
+                raise HTTPException(status_code=500, detail=f"Failed to create bucket '{bucket_id}': {str(e)}")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Bucket setup failed: {str(e)}")
 
 # Utility functions for camelCase conversion
 def to_camel_case_unit(unit):
@@ -404,6 +667,202 @@ def to_camel_case_stock_level(stock_level):
         "reorderPoint": 0,   # Not in schema, default to 0
         "lastUpdated": stock_level.get("last_updated")
     }
+
+
+# --- Feedback and Issue Reporting ---
+@app.post("/feedback/github-issue")
+def create_github_issue(feedback: dict = Body(...), payload=Depends(verify_jwt)):
+    """Create a GitHub issue in the configured repository from user feedback.
+
+    Expected body: {
+      title: string,
+      description: string,
+      pageUrl?: string,
+      severity?: 'low'|'medium'|'high',
+      stepsToReproduce?: string,
+      expected?: string,
+      actual?: string,
+      labels?: string[]
+    }
+    """
+    if not (GITHUB_OWNER and GITHUB_REPO and GITHUB_TOKEN):
+        raise HTTPException(status_code=500, detail="GitHub integration not configured on server")
+
+    title = feedback.get("title") or "User feedback"
+    description = feedback.get("description") or ""
+    page_url = feedback.get("pageUrl")
+    severity = feedback.get("severity")
+    steps = feedback.get("stepsToReproduce")
+    expected = feedback.get("expected")
+    actual = feedback.get("actual")
+    user_ctx = _get_request_context_info(payload)
+    screenshot_url = feedback.get("screenshotUrl")
+
+    # Compose issue body
+    body_lines: List[str] = []
+    if description:
+        body_lines.append(description)
+    body_lines.append("")
+    body_lines.append("---")
+    body_lines.append("Context")
+    body_lines.append("")
+    if page_url:
+        body_lines.append(f"- Page: {page_url}")
+    if severity:
+        body_lines.append(f"- Severity: {severity}")
+    if steps:
+        body_lines.append("")
+        body_lines.append("Steps to reproduce:")
+        body_lines.append(steps)
+    if expected or actual:
+        body_lines.append("")
+        body_lines.append("Expected vs actual:")
+        if expected:
+            body_lines.append(f"- Expected: {expected}")
+        if actual:
+            body_lines.append(f"- Actual: {actual}")
+    body_lines.append("")
+    if screenshot_url:
+        body_lines.append("Screenshot")
+        body_lines.append("")
+        body_lines.append(f"![screenshot]({screenshot_url})")
+        body_lines.append("")
+    body_lines.append("Reporter")
+    body_lines.append("")
+    if user_ctx.get("fullName"):
+        body_lines.append(f"- Name: {user_ctx.get('fullName')}")
+    if user_ctx.get("email"):
+        body_lines.append(f"- Email: {user_ctx.get('email')}")
+    if user_ctx.get("role"):
+        body_lines.append(f"- Role: {user_ctx.get('role')}")
+
+    issue_body = "\n".join(body_lines)
+
+    labels = feedback.get("labels") or []
+    if not isinstance(labels, list):
+        labels = []
+    # Merge with defaults; de-duplicate
+    merged_labels = list({
+        *(l for l in (label.strip() for label in labels if isinstance(label, str)) if l),
+    })
+    # Optionally add severity tag if it exists in repo; keep simple and always include
+    if severity in ["low", "medium", "high"]:
+        merged_labels.append(f"severity:{severity}")
+
+    api_url = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/issues"
+    headers = {
+        "Authorization": f"Bearer {GITHUB_TOKEN}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "versal-app",
+    }
+
+    try:
+        resp = requests.post(api_url, headers=headers, json={
+            "title": title[:250] if title else "Feedback",
+            "body": issue_body,
+            "labels": merged_labels,
+        })
+        if resp.status_code >= 300:
+            try:
+                detail = resp.json()
+            except Exception:
+                detail = {"message": resp.text}
+            raise HTTPException(status_code=resp.status_code, detail=detail)
+        data = resp.json()
+        return {"html_url": data.get("html_url"), "number": data.get("number")}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to create GitHub issue: {str(e)}")
+
+
+@app.get("/feedback/github-labels")
+def get_github_labels(payload=Depends(verify_jwt)):
+    if not (GITHUB_OWNER and GITHUB_REPO and GITHUB_TOKEN):
+        raise HTTPException(status_code=500, detail="GitHub integration not configured on server")
+
+    api_url = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/labels?per_page=100"
+    headers = {
+        "Authorization": f"Bearer {GITHUB_TOKEN}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "versal-app",
+    }
+    try:
+        resp = requests.get(api_url, headers=headers, timeout=15)
+        if resp.status_code >= 300:
+            try:
+                detail = resp.json()
+            except Exception:
+                detail = {"message": resp.text}
+            raise HTTPException(status_code=resp.status_code, detail=detail)
+        data = resp.json()
+        # Return simplified label info
+        return [{"name": l.get("name"), "color": l.get("color"), "default": l.get("default", False)} for l in data]
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch labels: {str(e)}")
+
+
+@app.post("/feedback/upload-screenshot")
+def upload_screenshot(file: UploadFile = File(...), payload=Depends(verify_jwt)):
+    """Upload a screenshot to Supabase Storage and return a public URL."""
+    try:
+        client = get_supabase_client()
+        bucket = "issue-screenshots"
+        # Ensure bucket exists and is public
+        ensure_storage_bucket(client, bucket)
+
+        # Build object path
+        safe_filename = (file.filename or "screenshot.png").replace("/", "_").replace("\\", "_")
+        timestamp = datetime.utcnow().isoformat().replace(":", "-")
+        user_id = payload.get("sub") or "anonymous"
+        path = f"{user_id}/{timestamp}-{safe_filename}"
+
+        # Upload file
+        try:
+            # Read entire file content into bytes
+            contents = file.file.read()
+            if contents is None:
+                contents = b""
+            client.storage.from_(bucket).upload(
+                path=path,
+                file=contents,
+                file_options={
+                    "content-type": file.content_type or "image/png",
+                    "x-upsert": "true",
+                },
+            )  # type: ignore[attr-defined]
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
+
+        # Construct public URL (works if bucket is public)
+        # Prefer a signed URL so bucket does not have to be public
+        signed = None
+        try:
+            signed = client.storage.from_(bucket).create_signed_url(path=path, expires_in=31536000)  # type: ignore[attr-defined]
+        except Exception:
+            signed = None
+
+        if isinstance(signed, dict):
+            signed_url = signed.get("signedURL") or signed.get("signed_url")
+            if signed_url:
+                # Some clients return a path starting with "/storage/..."; if so, prepend base
+                if signed_url.startswith("http://") or signed_url.startswith("https://"):
+                    return {"url": signed_url, "path": path}
+                public_base = SUPABASE_PUBLIC_URL or SUPABASE_INTERNAL_URL
+                return {"url": f"{public_base}{signed_url}", "path": path}
+
+        # Fallback: construct public-style URL (may require bucket to be public)
+        public_base = SUPABASE_PUBLIC_URL or SUPABASE_INTERNAL_URL
+        public_url = f"{public_base}/storage/v1/object/public/{bucket}/{path}"
+        return {"url": public_url, "path": path}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to upload screenshot: {str(e)}")
 
 def to_camel_case_inventory_movement(movement):
     return {
@@ -1242,17 +1701,56 @@ def get_inventory(payload=Depends(require_permission("inventory_view"))):
 # Stock Levels endpoints
 @app.get("/inventory/stock-levels")
 def get_stock_levels(payload=Depends(require_permission("inventory_stock_view"))):
-    # Join with products and locations to get product and location names
+    # Get all stock levels (non-serialized products)
     data = supabase.table("stock_levels").select(
-        "*, products(name, sku_code), locations(name)"
+        "*, products(name, sku_code, is_serialized), locations(name)"
     ).execute()
     
+    # Get serialized product counts from product_serials table
+    serialized_data = supabase.table("product_serials").select(
+        "product_id, status, products(name, sku_code)"
+    ).execute()
+    
+    # Aggregate serialized product counts
+    serialized_counts = {}
+    for serial in serialized_data.data:
+        product_id = serial["product_id"]
+        status = serial["status"]
+        product = serial.get("products", {})
+        
+        if product_id not in serialized_counts:
+            serialized_counts[product_id] = {
+                "product_id": product_id,
+                "product_name": product.get("name", "Unknown Product"),
+                "sku_code": product.get("sku_code", "Unknown SKU"),
+                "is_serialized": True,
+                "quantity_on_hand": 0,
+                "quantity_reserved": 0,
+                "quantity_available": 0
+            }
+        
+        if status == "available":
+            serialized_counts[product_id]["quantity_available"] += 1
+            serialized_counts[product_id]["quantity_on_hand"] += 1
+        elif status == "reserved":
+            serialized_counts[product_id]["quantity_reserved"] += 1
+            serialized_counts[product_id]["quantity_on_hand"] += 1
+        elif status == "sold":
+            serialized_counts[product_id]["quantity_on_hand"] += 1
+        # Note: returned and scrapped items are not counted in on-hand
+    
     stock_levels = []
+    
+    # Add non-serialized stock levels
     for level in data.data:
-        # Extract product and location info from the joined data
         product = level.get("products", {})
         location = level.get("locations", {})
+        is_serialized = product.get("is_serialized", False)
         
+        # Skip serialized products as they're handled separately
+        if is_serialized:
+            continue
+            
         stock_level = {
             "id": level.get("id"),
             "productId": level.get("product_id"),
@@ -1266,7 +1764,28 @@ def get_stock_levels(payload=Depends(require_permission("inventory_stock_view"))
             "minStockLevel": 0,  # Not in schema, default to 0
             "maxStockLevel": 0,  # Not in schema, default to 0
             "reorderPoint": 0,   # Not in schema, default to 0
-            "lastUpdated": level.get("last_updated")
+            "lastUpdated": level.get("last_updated"),
+            "isSerialized": False
+        }
+        stock_levels.append(stock_level)
+    
+    # Add aggregated serialized product stock levels
+    for product_id, counts in serialized_counts.items():
+        stock_level = {
+            "id": f"serialized_{product_id}",  # Virtual ID for serialized products
+            "productId": product_id,
+            "productName": counts["product_name"],
+            "skuCode": counts["sku_code"],
+            "locationId": None,  # Serialized products don't have specific locations in stock_levels
+            "locationName": "N/A",  # Serialized products show individual locations in product_serials
+            "quantity": counts["quantity_on_hand"],
+            "quantityReserved": counts["quantity_reserved"],
+            "quantityAvailable": counts["quantity_available"],
+            "minStockLevel": 0,
+            "maxStockLevel": 0,
+            "reorderPoint": 0,
+            "lastUpdated": None,  # Will be updated when serials change
+            "isSerialized": True
         }
         stock_levels.append(stock_level)
     
@@ -2388,8 +2907,8 @@ def create_credit_note_item(credit_note_id: str, item: dict = Body(...), payload
         "expiry_date": item.get("expiryDate"),
         "storage_location": item.get("storageLocation"),
         "quality_notes": item.get("qualityNotes"),
-        "sale_tax_type": item.get("saleTaxType", "exclusive"),
-        "unit_abbreviation": item.get("unitAbbreviation", ""),
+        "saleTaxType": item.get("saleTaxType", "exclusive"),
+        "unitAbbreviation": item.get("unitAbbreviation", ""),
         "created_by": payload["sub"]
     }
     data = supabase.table("credit_note_items").insert(item_data).execute()
@@ -2416,8 +2935,8 @@ def update_credit_note_item(item_id: str, item: dict = Body(...), payload=Depend
         "expiry_date": item.get("expiryDate"),
         "storage_location": item.get("storageLocation"),
         "quality_notes": item.get("qualityNotes"),
-        "sale_tax_type": item.get("saleTaxType", "exclusive"),
-        "unit_abbreviation": item.get("unitAbbreviation", "")
+        "saleTaxType": item.get("saleTaxType", "exclusive"),
+        "unitAbbreviation": item.get("unitAbbreviation", "")
     }
     data = supabase.table("credit_note_items").update(item_data).eq("id", item_id).execute()
     return JSONResponse(content=data.data)
@@ -3154,9 +3673,48 @@ def get_purchase_orders(payload=Depends(require_permission("purchase_orders_view
     except (httpx.RemoteProtocolError, httpx.ConnectError):
         client = get_supabase_client()
         data = client.table("purchase_orders").select("*, suppliers(*)").execute()
+    
+    # Filter out orders that already have GRNs (draft or completed)
+    available_orders = []
+    for order in data.data:
+        # Check if there are any GRNs for this purchase order
+        grn_check = client.table("good_receive_notes").select("id, status").eq("purchase_order_id", order["id"]).execute()
+        
+        # Only include orders that have no GRNs or only cancelled GRNs
+        has_active_grns = any(grn["status"] in ["draft", "completed", "partial"] for grn in grn_check.data)
+        
+        if not has_active_grns:
+            available_orders.append(order)
+    
     # Transform to camelCase
-    transformed_data = [to_camel_case_purchase_order(order) for order in data.data]
+    transformed_data = [to_camel_case_purchase_order(order) for order in available_orders]
     return JSONResponse(content=transformed_data)
+
+@app.get("/purchase-orders/available")
+def get_available_purchase_orders_for_grn(payload=Depends(require_permission("purchase_orders_view"))):
+    """Get purchase orders that are available for GRN creation (no existing GRNs)"""
+    try:
+        client = get_supabase_client()
+        data = client.table("purchase_orders").select("*, suppliers(*)").execute()
+    except (httpx.RemoteProtocolError, httpx.ConnectError):
+        client = get_supabase_client()
+        data = client.table("purchase_orders").select("*, suppliers(*)").execute()
+    
+    # Filter out orders that already have GRNs (draft or completed) and exclude non-approved
+    available_orders = []
+    for order in data.data:
+        # Only include approved orders (exclude sent/cancelled)
+        if order.get("status") not in ["approved"]:
+            continue
+        # Check if there are any GRNs for this purchase order
+        grn_check = client.table("good_receive_notes").select("id, status").eq("purchase_order_id", order["id"]).execute()
+        # Exclude orders that already have active GRNs
+        has_active_grns = any(grn.get("status") in ["draft", "completed", "partial"] for grn in (grn_check.data or []))
+        if not has_active_grns:
+            available_orders.append(order)
+    
+    transformed = [to_camel_case_purchase_order(po) for po in available_orders]
+    return JSONResponse(content=transformed)
 
 @app.get("/purchase-orders/{purchase_order_id}")
 def get_purchase_order(purchase_order_id: str, payload=Depends(require_permission("purchase_orders_view"))):
@@ -3388,8 +3946,47 @@ def to_camel_case_sales_order_item(item):
 def get_sales_orders(payload=Depends(require_permission("sale_orders_view"))):
     # Join with customers to get customer names
     data = supabase.table("sales_orders").select("*, customers(*)").execute()
+    
+    # Filter out orders that already have invoices (draft or sent)
+    available_orders = []
+    for order in data.data:
+        # Check if there are any invoices for this sales order
+        invoice_check = supabase.table("sale_invoices").select("id, status").eq("sales_order_id", order["id"]).execute()
+        
+        # Only include orders that have no invoices or only cancelled invoices
+        has_active_invoices = any(inv["status"] in ["draft", "sent", "partial", "paid"] for inv in invoice_check.data)
+        
+        if not has_active_invoices:
+            available_orders.append(order)
+    
     # Transform to camelCase
-    transformed_data = [to_camel_case_sales_order(order) for order in data.data]
+    transformed_data = [to_camel_case_sales_order(order) for order in available_orders]
+    return JSONResponse(content=transformed_data)
+
+@app.get("/sales-orders/available")
+def get_available_sales_orders_for_invoice(payload=Depends(require_permission("sale_orders_view"))):
+    """Get sales orders that are available for invoice creation (no existing invoices)"""
+    # Join with customers to get customer names
+    data = supabase.table("sales_orders").select("*, customers(*)").execute()
+    
+    # Filter out orders that already have invoices (draft or sent)
+    available_orders = []
+    for order in data.data:
+        # Only include approved orders (not sent, not cancelled)
+        if order["status"] not in ["approved"]:
+            continue
+            
+        # Check if there are any invoices for this sales order
+        invoice_check = supabase.table("sale_invoices").select("id, status").eq("sales_order_id", order["id"]).execute()
+        
+        # Only include orders that have no invoices or only cancelled invoices
+        has_active_invoices = any(inv["status"] in ["draft", "sent", "partial", "paid"] for inv in invoice_check.data)
+        
+        if not has_active_invoices:
+            available_orders.append(order)
+    
+    # Transform to camelCase
+    transformed_data = [to_camel_case_sales_order(order) for order in available_orders]
     return JSONResponse(content=transformed_data)
 
 @app.get("/sales-orders/{sales_order_id}")
@@ -3789,6 +4386,26 @@ def create_sale_invoice(sale_invoice: dict = Body(...), payload=Depends(require_
     # Insert items if they exist
     items = sale_invoice.get("items", [])
     if items and len(items) > 0:
+        # Validate serial numbers BEFORE creating items_data
+        for item in items:
+            serials = item.get("serialNumbers") or []
+            if serials and item.get("productId"):
+                try:
+                    operation = "sell" if sale_invoice.get("status") == "sent" else "reserve"
+                    validated_serials = _validate_serials_for_product(
+                        item["productId"], 
+                        serials, 
+                        operation=operation
+                    )
+                    # Also validate that quantity matches serial count
+                    if len(validated_serials) != item.get("quantity", 0):
+                        raise HTTPException(
+                            status_code=400, 
+                            detail=f"Quantity ({item.get('quantity', 0)}) must match serial count ({len(validated_serials)}) for serialized product"
+                        )
+                except Exception as e:
+                    raise HTTPException(status_code=400, detail=f"Serial validation failed: {str(e)}")
+        
         items_data = []
         for item in items:
             item_data = {
@@ -3817,7 +4434,18 @@ def create_sale_invoice(sale_invoice: dict = Body(...), payload=Depends(require_
         
         # Insert all items
         if items_data:
-            supabase.table("sale_invoice_items").insert(items_data).execute()
+            result = supabase.table("sale_invoice_items").insert(items_data).execute()
+            # Reserve serials on draft, or mark sold on sent (finalized)
+            if result and result.data:
+                finalize_now = (created_sale_invoice.get("status") == "sent")
+                for idx, inserted in enumerate(result.data):
+                    try:
+                        raw_item = items[idx]
+                        serials = raw_item.get("serialNumbers") or []
+                        if serials and raw_item.get("productId"):
+                            _reserve_or_sell_serials_for_invoice_item(raw_item["productId"], serials, inserted["id"], finalize=finalize_now, created_by=payload["sub"])
+                    except Exception as _:
+                        pass
     
     # Update linked sales order status if invoice is created with "sent" status
     if created_sale_invoice["status"] == "sent" and created_sale_invoice["sales_order_id"]:
@@ -3878,6 +4506,26 @@ def update_sale_invoice(sale_invoice_id: str, sale_invoice: dict = Body(...), pa
         # Delete existing items
         supabase.table("sale_invoice_items").delete().eq("invoice_id", sale_invoice_id).execute()
         
+        # Validate serial numbers BEFORE creating items_data
+        for item in items:
+            serials = item.get("serialNumbers") or []
+            if serials and item.get("productId"):
+                try:
+                    operation = "sell" if sale_invoice_data.get("status") == "sent" else "reserve"
+                    validated_serials = _validate_serials_for_product(
+                        item["productId"], 
+                        serials, 
+                        operation=operation
+                    )
+                    # Also validate that quantity matches serial count
+                    if len(validated_serials) != item.get("quantity", 0):
+                        raise HTTPException(
+                            status_code=400, 
+                            detail=f"Quantity ({item.get('quantity', 0)}) must match serial count ({len(validated_serials)}) for serialized product"
+                        )
+                except Exception as e:
+                    raise HTTPException(status_code=400, detail=f"Serial validation failed: {str(e)}")
+        
         # Insert new items
         items_data = []
         for item in items:
@@ -3906,7 +4554,19 @@ def update_sale_invoice(sale_invoice_id: str, sale_invoice: dict = Body(...), pa
             items_data.append(item_data)
         
         if items_data:
-            supabase.table("sale_invoice_items").insert(items_data).execute()
+            result = supabase.table("sale_invoice_items").insert(items_data).execute()
+            # If invoice is sent now, mark serials sold; otherwise reserve
+            if result and result.data:
+                finalize_now = (sale_invoice_data.get("status") == "sent")
+                for idx, inserted in enumerate(result.data):
+                    try:
+                        raw_item = items[idx]
+                        serials = raw_item.get("serialNumbers") or []
+                        if serials and raw_item.get("productId"):
+                            _reserve_or_sell_serials_for_invoice_item(raw_item["productId"], serials, inserted["id"], finalize=finalize_now, created_by=payload["sub"])
+                    except Exception as e:
+                        # If serial handling fails, the entire update should fail
+                        raise HTTPException(status_code=400, detail=f"Serial handling failed: {str(e)}")
     
     # Update linked sales order status based on invoice status changes
     new_status = sale_invoice["status"]
@@ -4383,7 +5043,28 @@ def create_good_receive_note(good_receive_note: dict = Body(...), payload=Depend
         # Insert all items
         if items_data:
             try:
-                supabase.table("good_receive_note_items").insert(items_data).execute()
+                result = supabase.table("good_receive_note_items").insert(items_data).execute()
+                # If serial numbers provided for any item, persist them to product_serials
+                if result and result.data:
+                    # Map back by position
+                    for idx, inserted in enumerate(result.data):
+                        try:
+                            raw_item = items[idx]
+                            serials = raw_item.get("serialNumbers") or []
+                            print(f"DEBUG: Processing GRN item {idx}, raw serials: {serials}")
+                            # Accept string input: comma/newline separated
+                            if isinstance(serials, str):
+                                serials = [s.strip() for s in serials.replace('\r', '\n').replace(',', '\n').split('\n') if s.strip()]
+                                print(f"DEBUG: Parsed string serials: {serials}")
+                            if serials and raw_item.get("productId"):
+                                print(f"DEBUG: Creating serials for product {raw_item['productId']}: {serials}")
+                                _create_serials_for_grn_item(raw_item["productId"], serials, inserted["id"])
+                            else:
+                                print(f"DEBUG: No serials to create for item {idx}. Serials: {serials}, ProductId: {raw_item.get('productId')}")
+                        except Exception as e:
+                            # Do not fail entire GRN if serial insert fails; surface later via validation if needed
+                            print(f"DEBUG: Error creating serials for item {idx}: {str(e)}")
+                            pass
             except Exception as e:
                 print(f"Error inserting GRN items: {str(e)}")
                 # If items fail to insert, we should still return the created GRN
@@ -4811,6 +5492,155 @@ def add_invoice_payment(sale_invoice_id: str, payment: dict = Body(...), payload
         return JSONResponse(content=transformed_payment, status_code=201)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+def _validate_serials_for_product(product_id: str, serial_numbers: List[str], operation: str = "reserve") -> List[str]:
+    """
+    Validate that serial numbers exist and are available for the given product.
+    
+    Args:
+        product_id: The product ID
+        serial_numbers: List of serial numbers to validate
+        operation: The operation being performed ("reserve", "sell", "order")
+    
+    Returns:
+        List of validated serial numbers
+    
+    Raises:
+        HTTPException: If validation fails
+    """
+    if not serial_numbers:
+        return []
+    
+    # Check if product is serialized
+    product_data = supabase.table("products").select("is_serialized").eq("id", product_id).execute()
+    if not product_data.data:
+        raise HTTPException(status_code=400, detail="Product not found")
+    
+    product = product_data.data[0]
+    if not product.get("is_serialized"):
+        # If product is not serialized, no serials should be provided
+        if serial_numbers:
+            raise HTTPException(status_code=400, detail=f"Product is not serialized, but serial numbers were provided")
+        return []
+    
+    # Validate each serial number exists and is available
+    validated_serials = []
+    for serial in serial_numbers:
+        serial_norm = (serial or "").strip()
+        if not serial_norm:
+            continue
+            
+        # Check if serial exists for this product
+        serial_data = supabase.table("product_serials").select("id, status").eq("product_id", product_id).eq("serial_number", serial_norm).execute()
+        
+        if not serial_data.data:
+            raise HTTPException(status_code=400, detail=f"Serial number '{serial_norm}' not found for product")
+        
+        serial_info = serial_data.data[0]
+        current_status = serial_info["status"]
+        
+        # Validate status based on operation
+        if operation == "order":
+            # For Sales Orders, serials should be available
+            if current_status != "available":
+                raise HTTPException(status_code=400, detail=f"Serial number '{serial_norm}' is not available (current status: {current_status})")
+        elif operation == "reserve":
+            # For draft invoices, serials should be available
+            if current_status != "available":
+                raise HTTPException(status_code=400, detail=f"Serial number '{serial_norm}' is not available (current status: {current_status})")
+        elif operation == "sell":
+            # For finalized invoices, serials can be available or reserved
+            if current_status not in ["available", "reserved"]:
+                raise HTTPException(status_code=400, detail=f"Serial number '{serial_norm}' cannot be sold (current status: {current_status})")
+        
+        validated_serials.append(serial_norm)
+    
+    # Check if quantity matches serial count
+    if validated_serials:
+        # This will be validated by the calling function with the actual quantity
+        pass
+    
+    return validated_serials
+
+@app.get("/debug/inventory-transactions")
+@require_debug_mode()
+def debug_inventory_transactions():
+    """Debug endpoint to check inventory transactions"""
+    try:
+        # Get recent inventory transactions
+        transactions = supabase.table("inventory_transactions").select("*").order("created_at", desc=True).limit(10).execute()
+        
+        # Get recent product_serials changes
+        serials = supabase.table("product_serials").select("*").order("updated_at", desc=True).limit(10).execute()
+        
+        # Get recent sale invoices
+        invoices = supabase.table("sale_invoices").select("id, invoice_number, status, created_at").order("created_at", desc=True).limit(5).execute()
+        
+        return {
+            "recent_transactions": transactions.data,
+            "recent_serials": serials.data,
+            "recent_invoices": invoices.data,
+            "total_transactions": len(transactions.data),
+            "total_serials": len(serials.data)
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+@app.get("/sales-orders/available")
+def get_available_sales_orders_for_invoice(payload=Depends(require_permission("sale_orders_view"))):
+    """Get sales orders that are available for invoice creation (no existing invoices)"""
+    # Join with customers to get customer names
+    data = supabase.table("sales_orders").select("*, customers(*)").execute()
+    
+    # Filter out orders that already have invoices (draft or sent)
+    available_orders = []
+    for order in data.data:
+        # Only include approved orders (not sent, not cancelled)
+        if order["status"] not in ["approved"]:
+            continue
+            
+        # Check if there are any invoices for this sales order
+        invoice_check = supabase.table("sale_invoices").select("id, status").eq("sales_order_id", order["id"]).execute()
+        
+        # Only include orders that have no invoices or only cancelled invoices
+        has_active_invoices = any(inv["status"] in ["draft", "sent", "partial", "paid"] for inv in invoice_check.data)
+        
+        if not has_active_invoices:
+            available_orders.append(order)
+    
+    # Transform to camelCase
+    transformed_data = [to_camel_case_sales_order(order) for order in available_orders]
+    return JSONResponse(content=transformed_data)
+
+@app.get("/purchase-orders/available")
+def get_available_purchase_orders_for_grn(payload=Depends(require_permission("purchase_orders_view"))):
+    """Get purchase orders that are available for GRN creation (no existing GRNs)"""
+    try:
+        client = get_supabase_client()
+        data = client.table("purchase_orders").select("*, suppliers(*)").execute()
+    except (httpx.RemoteProtocolError, httpx.ConnectError):
+        client = get_supabase_client()
+        data = client.table("purchase_orders").select("*, suppliers(*)").execute()
+    
+    # Filter out orders that already have GRNs (draft or completed)
+    available_orders = []
+    for order in data.data:
+        # Only include approved orders (not sent, not cancelled)
+        if order["status"] not in ["approved"]:
+            continue
+            
+        # Check if there are any GRNs for this purchase order
+        grn_check = client.table("good_receive_notes").select("id, status").eq("purchase_order_id", order["id"]).execute()
+        
+        # Only include orders that have no GRNs or only cancelled GRNs
+        has_active_grns = any(grn["status"] in ["draft", "completed", "partial"] for grn in grn_check.data)
+        
+        if not has_active_grns:
+            available_orders.append(order)
+    
+    # Transform to camelCase
+    transformed_data = [to_camel_case_purchase_order(order) for order in available_orders]
+    return JSONResponse(content=transformed_data)
 
 if __name__ == "__main__":
     print(f"Starting server with DEBUG_MODE: {DEBUG_MODE}")

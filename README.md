@@ -192,6 +192,11 @@ VITE_API_URL=http://localhost:8000
 ```env
 SUPABASE_URL=your_supabase_url
 SUPABASE_SERVICE_KEY=your_supabase_service_key
+# Optional: Enable in-app issue reporting to GitHub
+GITHUB_OWNER=your_github_username_or_org
+GITHUB_REPO=your_repo_name
+GITHUB_TOKEN=github_pat_with_repo_scope
+GITHUB_DEFAULT_LABELS=bug,from-app
 ```
 
 ### Supabase Configuration

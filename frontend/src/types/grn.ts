@@ -20,6 +20,7 @@ export interface GoodsReceiveNoteItem {
   total: number;
   purchaseTaxType?: 'inclusive' | 'exclusive';
   unitAbbreviation?: string;
+  serialNumbers?: string[];
   batchNumber?: string;
   expiryDate?: Date;
   manufacturingDate?: Date;

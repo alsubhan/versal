@@ -850,6 +850,7 @@ export const CreditNoteDialog = ({ open, onOpenChange, creditNote, onSave, custo
                       <TableHead className="font-medium text-gray-700">Unit Price</TableHead>
                       <TableHead className="font-medium text-gray-700">Discount</TableHead>
                       <TableHead className="font-medium text-gray-700">Tax</TableHead>
+                      <TableHead className="font-medium text-gray-700">Serial #</TableHead>
                       <TableHead className="font-medium text-gray-700">Total</TableHead>
                       <TableHead className="w-[50px]"></TableHead>
                     </TableRow>
@@ -963,6 +964,23 @@ export const CreditNoteDialog = ({ open, onOpenChange, creditNote, onSave, custo
                               )}
                             </div>
                           </TableCell>
+                          
+                          <TableCell className="text-sm">
+                            {(item as any).serialNumbers && (item as any).serialNumbers.length > 0 ? (
+                              <div className="max-w-32">
+                                <div className="text-xs text-gray-600 mb-1">
+                                  {Array.isArray((item as any).serialNumbers) ? (item as any).serialNumbers.length : 0} serials
+                                </div>
+                                <div className="text-xs font-mono bg-gray-100 p-1 rounded truncate" title={(item as any).serialNumbers?.join(', ')}>
+                                  {(item as any).serialNumbers?.slice(0, 2).join(', ')}
+                                  {(item as any).serialNumbers?.length > 2 && '...'}
+                                </div>
+                              </div>
+                            ) : (
+                              <span className="text-xs text-gray-400">No serials</span>
+                            )}
+                          </TableCell>
+                          
                           <TableCell className="font-mono text-sm font-medium">
                             {formatCurrency(item.total || 0, currency)}
                           </TableCell>
@@ -980,7 +998,7 @@ export const CreditNoteDialog = ({ open, onOpenChange, creditNote, onSave, custo
                       ))
                     ) : (
                       <TableRow>
-                        <TableCell colSpan={9} className="text-center py-8 text-gray-500">
+                        <TableCell colSpan={10} className="text-center py-8 text-gray-500">
                           No items added. Click "Add Item" to add products to this credit note.
                         </TableCell>
                       </TableRow>
@@ -1064,6 +1082,7 @@ export const CreditNoteDialog = ({ open, onOpenChange, creditNote, onSave, custo
         onProductSelect={handleProductSelect}
         recentProducts={recentProducts}
         mode="sale"
+        context="selling"
       />
     </Dialog>
   );

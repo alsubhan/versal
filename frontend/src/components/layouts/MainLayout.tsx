@@ -4,6 +4,7 @@ import { Navigate, useLocation, Outlet } from "react-router-dom";
 import { Sidebar } from "@/components/layouts/Sidebar";
 import { useAuth } from "@/hooks/useAuth";
 import { ConfigIndicator } from '@/components/ConfigIndicator';
+import { IssueReporter } from '@/components/shared/IssueReporter';
 import { PerformanceDashboard } from '@/components/PerformanceDashboard';
 
 export const MainLayout: React.FC = () => {
@@ -39,6 +40,7 @@ export const MainLayout: React.FC = () => {
         </main>
       </div>
       <ConfigIndicator />
+      <IssueReporter />
       {isPerformanceDashboardVisible && (
         <PerformanceDashboard 
           isVisible={isPerformanceDashboardVisible}
