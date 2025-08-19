@@ -68,6 +68,33 @@ export async function apiFetch(path: string, options: RequestInit = {}) {
   return res.json();
 }
 
+export async function apiUpload(path: string, file: File) {
+  let supabase;
+  try {
+    supabase = await getSupabaseClient();
+  } catch (error) {
+    supabase = getFallbackSupabaseClient();
+  }
+  const { data } = await supabase.auth.getSession();
+  const accessToken = data.session?.access_token;
+
+  const formData = new FormData();
+  formData.append('file', file);
+
+  const res = await fetch(`${API_BASE_URL}${path}`, {
+    method: 'POST',
+    body: formData,
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+    },
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || `HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
 // User management API functions
 export async function getUsers() {
   return apiFetch('/users');
@@ -415,6 +442,20 @@ export async function deleteStockLevel(id: string) {
 export async function getInventoryTransactions() {
   return apiFetch('/inventory/transactions');
 }
+// Serials API
+export async function lookupSerial(serial: string) {
+  const params = new URLSearchParams({ serial });
+  return apiFetch(`/inventory/serials/lookup?${params.toString()}`);
+}
+
+export async function listSerials(productId?: string, status?: string) {
+  const params = new URLSearchParams();
+  if (productId) params.set('product_id', productId);
+  if (status) params.set('status', status);
+  const qs = params.toString();
+  return apiFetch(`/inventory/serials${qs ? `?${qs}` : ''}`);
+}
+
 
 export async function createInventoryTransaction(transaction: any) {
   return apiFetch('/inventory/transactions', { method: 'POST', body: JSON.stringify(transaction) });
@@ -539,6 +580,10 @@ export async function getPurchaseOrders() {
   return apiFetch('/purchase-orders');
 }
 
+export async function getAvailablePurchaseOrdersForGRN() {
+  return apiFetch('/purchase-orders/available');
+}
+
 export async function getPurchaseOrder(id: string) {
   return apiFetch(`/purchase-orders/${id}`);
 }
@@ -591,6 +636,10 @@ export async function deletePurchaseOrderItem(itemId: string) {
 // Sales Orders API functions
 export async function getSalesOrders() {
   return apiFetch('/sales-orders');
+}
+
+export async function getAvailableSalesOrdersForInvoice() {
+  return apiFetch('/sales-orders/available');
 }
 
 export async function getSalesOrder(id: string) {

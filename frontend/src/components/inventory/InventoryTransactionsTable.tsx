@@ -47,12 +47,24 @@ export const InventoryTransactionsTable = () => {
     switch (type) {
       case "purchase":
         return <Badge className="bg-green-100 text-green-800">Purchase</Badge>;
+      case "receipt":
+        return <Badge className="bg-green-100 text-green-800">Receipt</Badge>;
       case "sale":
         return <Badge className="bg-red-100 text-red-800">Sale</Badge>;
+      case "reservation":
+        return <Badge className="bg-orange-100 text-orange-800">Reservation</Badge>;
+      case "reservation_release":
+        return <Badge className="bg-blue-100 text-blue-800">Reservation Release</Badge>;
+      case "return":
+        return <Badge className="bg-green-100 text-green-800">Return</Badge>;
+      case "scrap":
+        return <Badge className="bg-red-100 text-red-800">Scrap</Badge>;
       case "adjustment":
         return <Badge className="bg-blue-100 text-blue-800">Adjustment</Badge>;
       case "transfer":
         return <Badge className="bg-purple-100 text-purple-800">Transfer</Badge>;
+      case "initial_stock":
+        return <Badge className="bg-gray-100 text-gray-800">Initial Stock</Badge>;
       default:
         return <Badge className="bg-gray-100 text-gray-800">{type}</Badge>;
     }

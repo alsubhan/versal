@@ -163,11 +163,22 @@ export default function SaleInvoicesPage() {
       }
       setDialogOpen(false);
       loadData();
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error saving sale invoice:', error);
-      toast.error("Failed to save sale invoice");
+      const msg = (error?.message || '').toString();
+      if (msg.toLowerCase().includes('insufficient credit limit') || msg.toLowerCase().includes('credit limit exceeded')) {
+        toast.error('Credit limit exceeded. Cannot complete invoice on credit. Choose a non-credit payment method or reduce the total.');
+        // Keep dialog open and focus payment method
+        setDialogOpen(true);
+        setFocusPaymentMethodTick((t) => t + 1);
+      } else {
+        toast.error("Failed to save sale invoice");
+      }
     }
   };
+
+  // Tick to request focus of payment method inside dialog
+  const [focusPaymentMethodTick, setFocusPaymentMethodTick] = useState(0);
 
   const handlePrintInvoice = async (invoice: SaleInvoice) => {
     try {
@@ -251,6 +262,7 @@ export default function SaleInvoicesPage() {
         onOpenChange={setDialogOpen}
         saleInvoice={selectedInvoice}
         onSave={handleSave}
+        focusPaymentMethodTick={focusPaymentMethodTick}
       />
 
       <SaleInvoiceView

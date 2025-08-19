@@ -14,6 +14,8 @@ export interface SalesOrderItem {
   total: number;
   saleTaxType?: 'inclusive' | 'exclusive';
   unitAbbreviation?: string;
+  // Note: Serial numbers are not stored in Sales Orders
+  // They are selected at invoice time from available inventory
 }
 
 export interface SalesOrder {

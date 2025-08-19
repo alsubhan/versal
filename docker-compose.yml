@@ -97,7 +97,7 @@ services:
       - PG_META_DB_PASSWORD=${SUPABASE_DB_PASSWORD:-postgres}
 
   supabase-storage:
-    image: supabase/storage-api:v2.8.8
+    image: supabase/storage-api:latest
     container_name: supabase-storage
     depends_on:
       - supabase-rest
@@ -134,7 +134,7 @@ services:
     restart: unless-stopped
 
   supabase-studio:
-    image: supabase/studio:20240528-106c43d
+    image: supabase/studio:latest
     container_name: supabase-studio
     depends_on:
       - supabase-kong

@@ -15,6 +15,8 @@ export interface PurchaseOrderItem {
   total: number;
   purchaseTaxType?: 'inclusive' | 'exclusive';
   unitAbbreviation?: string;
+  // Note: Serial numbers are not stored in Purchase Orders
+  // They are created at GRN time and stored in product_serials table
 }
 
 export interface PurchaseOrder {

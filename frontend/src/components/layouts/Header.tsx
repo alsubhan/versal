@@ -1,7 +1,7 @@
 
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { Bell, ChevronDown, LogOut, Settings, User, Key } from 'lucide-react';
+import { Bell, ChevronDown, LogOut, Settings, User, Key, Bug } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { 
@@ -78,6 +78,12 @@ export const Header = () => {
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-56">
+              <DropdownMenuItem asChild>
+                <a href="#" onClick={(e) => { e.preventDefault(); const el = document.querySelector('[title="Report an issue"]') as HTMLElement | null; el?.click(); }} className="flex items-center">
+                  <Bug className="mr-2 h-4 w-4" />
+                  Report issue
+                </a>
+              </DropdownMenuItem>
               <DropdownMenuItem asChild>
                 <Link to="/profile" className="flex items-center">
                   <User className="mr-2 h-4 w-4" />
