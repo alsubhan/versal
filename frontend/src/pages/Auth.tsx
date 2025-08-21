@@ -348,7 +348,7 @@ export default function Auth() {
           </CardContent>
         </Card>
 
-        {/* Demo Credentials */}
+        {/* Demo Credentials 
         <Card className="border-dashed">
           <CardContent className="pt-6">
             <div className="text-center space-y-2">
@@ -360,7 +360,7 @@ export default function Auth() {
               </div>
             </div>
           </CardContent>
-        </Card>
+        </Card> */}
       </div>
     </div>
   );
