@@ -1087,8 +1087,8 @@ def create_product(product: dict = Body(...), payload=Depends(require_permission
         if check_duplicate_sku_code(sku_code):
             raise HTTPException(status_code=409, detail=f"A product with SKU code '{sku_code}' already exists")
         
-        if check_duplicate_hsn_code(hsn_code):
-            raise HTTPException(status_code=409, detail=f"A product with HSN code '{hsn_code}' already exists")
+        # if check_duplicate_hsn_code(hsn_code):
+        #     raise HTTPException(status_code=409, detail=f"A product with HSN code '{hsn_code}' already exists")
         
         if ean_code and check_duplicate_ean_code(ean_code):
             raise HTTPException(status_code=409, detail=f"A product with EAN code '{ean_code}' already exists")
@@ -1264,8 +1264,8 @@ def update_product(product_id: str, product: dict = Body(...), payload=Depends(r
         if check_duplicate_sku_code(sku_code, product_id):
             raise HTTPException(status_code=409, detail=f"A product with SKU code '{sku_code}' already exists")
         
-        if check_duplicate_hsn_code(hsn_code, product_id):
-            raise HTTPException(status_code=409, detail=f"A product with HSN code '{hsn_code}' already exists")
+        # if check_duplicate_hsn_code(hsn_code, product_id):
+        #    raise HTTPException(status_code=409, detail=f"A product with HSN code '{hsn_code}' already exists")
         
         if ean_code and check_duplicate_ean_code(ean_code, product_id):
             raise HTTPException(status_code=409, detail=f"A product with EAN code '{ean_code}' already exists")
