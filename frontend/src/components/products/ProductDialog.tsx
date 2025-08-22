@@ -528,21 +528,21 @@ export const ProductDialog: React.FC<ProductDialogProps> = ({ open, onOpenChange
                     <Label htmlFor="hsnCode">HSN Code *</Label>
                     <Input 
                       id="hsnCode" 
-                      placeholder="123456" 
-                      maxLength={6}
-                      pattern="[0-9]{6}"
-                      title="HSN Code must be exactly 6 digits"
+                      placeholder="12345678" 
+                      maxLength={8}
+                      pattern="[0-9]{8}"
+                      title="HSN Code must be exactly 8 digits"
                       value={formData.hsnCode}
                       onChange={(e) => handleValidatedInputChange('hsnCode', e.target.value)}
                     />
-                    <p className="text-xs text-gray-500">Numeric characters only (6 digits)</p>
+                    <p className="text-xs text-gray-500">Numeric characters only (8 digits)</p>
                   </div>
                   
                   <div className="space-y-2">
                     <Label htmlFor="eanCode">EAN Code</Label>
                     <Input 
                       id="eanCode" 
-                      placeholder="123456789012" 
+                      placeholder="1234567890123" 
                       value={formData.eanCode}
                       onChange={(e) => handleValidatedInputChange('eanCode', e.target.value)}
                     />
