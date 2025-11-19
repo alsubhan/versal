@@ -755,8 +755,8 @@ export const ProductSearchDialog = ({
                       const clamped = val > max ? max : val;
                       setConfigUnitPrice(clamped);
                     }}
-                    disabled={!(mode === 'sale' && configProduct.allow_override_price)}
-                    title={mode === 'sale' && configProduct.allow_override_price ? 'Price override enabled for this product' : 'Price override not allowed'}
+                    disabled={mode === 'sale' ? !configProduct.allow_override_price : false}
+                    title={mode === 'sale' ? (configProduct.allow_override_price ? 'Price override enabled for this product' : 'Price override not allowed') : 'Editable in purchase mode'}
                   />
                   {mode === 'sale' && typeof configProduct.mrp === 'number' && configProduct.mrp > 0 && (
                     <div className="text-xs text-gray-500">Max allowed: {formatCurrency(getMaxAllowedUnitPrice(configProduct, configUnitMultiplier), currency)} (MRP limit)</div>
