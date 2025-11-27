@@ -441,8 +441,10 @@ set +a
 # Validate compose config
 echo ""
 echo "Validating docker-compose configuration..."
+set +e
 VALIDATION_OUTPUT=$(run_compose config 2>&1)
 VALIDATION_EXIT=$?
+set -e
 if [[ $VALIDATION_EXIT -ne 0 ]]; then
   echo "Error: docker-compose configuration validation failed." >&2
   echo "Error details:" >&2
