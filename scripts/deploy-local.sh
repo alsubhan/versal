@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Local Docker deployment script for macOS
-# Usage: ./deploy-local.sh [--target api|web|supabase|all] [--services "svc1 svc2 ..."]
+# Usage: ./deploy-local.sh [--target api|app|supabase|all] [--services "svc1 svc2 ..."]
 
 # Resolve repo root regardless of where this script is run from
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -13,10 +13,10 @@ cd "${REPO_ROOT}"
 
 show_help() {
   cat <<USAGE
-Usage: $(basename "$0") [--target api|web|supabase|all] [--services "svc1 svc2 ..."] [--skip-env-check] [--blank-db] [--project-name NAME] [--core] [--force]
+Usage: $(basename "$0") [--target api|app|supabase|all] [--services "svc1 svc2 ..."] [--skip-env-check] [--blank-db] [--project-name NAME] [--core] [--force]
 
 Parameters:
-    --target          Target deployment group: api, web, supabase, or all
+    --target          Target deployment group: api, app, supabase, or all
     --services        Space-separated list of specific service names
     --skip-env-check  Skip .env file validation and creation prompts (useful for automation)
     --blank-db        Initialize database as blank (no schema or data, only auth prerequisites)
@@ -29,7 +29,7 @@ Deployment Order:
     1. Official Supabase Docker setup is cloned/updated from GitHub (if needed)
     2. Supabase services are deployed first (if needed)
     3. Keys are extracted/generated and .env is updated
-    4. Other services (api, web) are deployed after Supabase is ready
+    4. Other services (api, app) are deployed after Supabase is ready
 
 Environment Variables:
     The script will check for a .env file in the repository root. If not found, it will
@@ -38,7 +38,7 @@ Environment Variables:
     For Supabase deployment, JWT_SECRET is required (or will be generated).
     ANON_KEY and SERVICE_ROLE_KEY will be generated from JWT_SECRET.
     The script uses the official Supabase Docker setup from GitHub and merges
-    your custom services (api, web) with it.
+    your custom services (api, app) with it.
 
 Examples:
     ./deploy-local.sh --target supabase
@@ -49,7 +49,7 @@ Examples:
     ./deploy-local.sh --target all
     ./deploy-local.sh --target all --core
     ./deploy-local.sh --target api
-    ./deploy-local.sh --services "api web"
+    ./deploy-local.sh --services "api app"
     
 Note: To run multiple Supabase instances, use --project-name with different names
       and ensure ports don't conflict (update KONG_HTTP_PORT in .env).
@@ -100,6 +100,142 @@ update_env_key() {
     # Add new key
     echo "${key}=${value}" >> "${env_file}"
   fi
+}
+
+set_enable_signup_flag() {
+  local container="$1"
+  [[ -z "${container}" ]] && return 0
+
+  echo "Setting enable_signup = true in system_settings..."
+  
+  # First check if table exists
+  local table_exists
+  table_exists=$(docker exec "${container}" psql -U postgres -d postgres -t -c "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'system_settings');" 2>/dev/null | tr -d ' ' || echo "f")
+  
+  if [[ "${table_exists}" != "t" ]]; then
+    echo "Warning: system_settings table does not exist yet (master data may not have been inserted)" >&2
+    return 0
+  fi
+  
+  # Use a direct UPDATE first, then INSERT if needed
+  # PostgreSQL UPDATE returns "UPDATE N" where N is the number of rows affected
+  # Use a temp file to avoid heredoc quoting issues with nested quotes
+  local temp_sql=$(mktemp)
+  cat > "${temp_sql}" <<'EOFSQL'
+DO $$
+DECLARE
+  rows_updated INTEGER;
+BEGIN
+  UPDATE public.system_settings 
+  SET 
+    setting_value = 'true'::jsonb,
+    setting_type = 'boolean',
+    is_public = true,
+    updated_at = NOW()
+  WHERE setting_key = 'enable_signup';
+  
+  GET DIAGNOSTICS rows_updated = ROW_COUNT;
+  
+  IF rows_updated = 0 THEN
+    INSERT INTO public.system_settings (
+      id, setting_key, setting_value, setting_type, description,
+      is_public, created_by, created_at, updated_at
+    )
+    VALUES (
+      gen_random_uuid(),
+      'enable_signup',
+      'true'::jsonb,
+      'boolean',
+      'Enable user signup feature',
+      true,
+      NULL,
+      NOW(),
+      NOW()
+    );
+  END IF;
+END $$;
+EOFSQL
+  
+  local update_output
+  update_output=$(docker exec -i "${container}" psql -U postgres -d postgres < "${temp_sql}" 2>&1)
+  local exit_code=$?
+  rm -f "${temp_sql}" 2>/dev/null || true
+  local output="${update_output}"
+
+  # Check if the operation was successful
+  if [[ ${exit_code} -eq 0 ]]; then
+    # Wait a moment for the transaction to commit
+    sleep 0.1
+    
+    # Verify the value was actually set (setting_value is JSONB)
+    local current_value
+    current_value=$(docker exec "${container}" psql -U postgres -d postgres -t -c "SELECT setting_value::text FROM public.system_settings WHERE setting_key = 'enable_signup';" 2>/dev/null | tr -d ' \n\r' || echo "")
+    
+    # JSONB value should be stored as true (JSON boolean), but might be stored as "true" (JSON string) in old data
+    # Check various possible formats
+    if [[ "${current_value}" == "true" ]] || [[ "${current_value}" == '"true"' ]] || [[ "${current_value}" == "t" ]]; then
+      echo "✓ enable_signup set to true"
+      return 0
+    else
+      # If still false, try a more direct update
+      echo "Warning: enable_signup value is '${current_value}', attempting direct update..." >&2
+      docker exec "${container}" psql -U postgres -d postgres <<'SQL' >/dev/null 2>&1
+UPDATE public.system_settings 
+SET setting_value = 'true'::jsonb 
+WHERE setting_key = 'enable_signup';
+SQL
+      
+      # Verify again
+      sleep 0.1
+      current_value=$(docker exec "${container}" psql -U postgres -d postgres -t -c "SELECT setting_value::text FROM public.system_settings WHERE setting_key = 'enable_signup';" 2>/dev/null | tr -d ' \n\r' || echo "")
+      
+      if [[ "${current_value}" == "true" ]] || [[ "${current_value}" == '"true"' ]] || [[ "${current_value}" == "t" ]]; then
+        echo "✓ enable_signup set to true (after retry)"
+        return 0
+      else
+        echo "Warning: enable_signup is still '${current_value}' after update attempt" >&2
+        echo "  Expected 'true' (JSON boolean) but got '${current_value}'" >&2
+        echo "  This might indicate a constraint or trigger issue." >&2
+        return 1
+      fi
+    fi
+  else
+    echo "Warning: Could not set enable_signup (exit code: ${exit_code})" >&2
+    if echo "${output}" | grep -qi "error"; then
+      echo "Error details:" >&2
+      echo "${output}" | grep -i "error" | head -3 >&2
+    else
+      echo "Output: ${output}" >&2
+    fi
+    return 1
+  fi
+}
+
+ensure_triggers_enabled() {
+  local container="$1"
+  [[ -z "${container}" ]] && return 0
+  docker exec "${container}" psql -U postgres -d postgres -c "SET session_replication_role = DEFAULT;" >/dev/null 2>&1 || true
+}
+
+fix_init_sql_master_data() {
+  local init_file="$1"
+  [[ ! -f "${init_file}" ]] && return 0
+
+  # Fix missing semicolon before locations INSERT using perl (handles multiline)
+  # Pattern: find ', 'exclusive', 'exclusive', 0),' followed by newline and 'INSERT INTO "public"."locations"'
+  # Read entire file (-0777), replace pattern, write back
+  # This is idempotent - if already fixed (has semicolon), pattern won't match and nothing changes
+  # Save original file to compare
+  local temp_file="${init_file}.tmp"
+  cp "${init_file}" "${temp_file}" 2>/dev/null || return 0
+  
+  perl -i -0777 -pe "s/, 'exclusive', 'exclusive', 0\),\s*\n\s*INSERT INTO \"public\".\"locations\"/, 'exclusive', 'exclusive', 0);\nINSERT INTO \"public\".\"locations\"/" "${init_file}" 2>/dev/null
+  
+  # Check if file was modified
+  if ! cmp -s "${init_file}" "${temp_file}" 2>/dev/null; then
+    echo "Fixed master data delimiter issue in ${init_file}"
+  fi
+  rm -f "${temp_file}" 2>/dev/null || true
 }
 
 ensure_auth_factor_type() {
@@ -224,7 +360,7 @@ if [[ ! -f "${SUPABASE_ENV_FILE}" ]]; then
   fi
 fi
 
-# Create custom compose file for our services (api, web) if it doesn't exist
+# Create custom compose file for our services (api, app) if it doesn't exist
 if [[ ! -f "${CUSTOM_COMPOSE_FILE}" ]]; then
   # Use absolute paths since we're running compose from a different directory
   cat > "${CUSTOM_COMPOSE_FILE}" <<EOF
@@ -576,7 +712,7 @@ if [[ -z "${COMPOSE_SERVICES}" && -n "${TARGET_OPTS}" ]]; then
     api|backend)
       COMPOSE_SERVICES="api"
       ;;
-    web|frontend)
+    app|frontend)
       COMPOSE_SERVICES="web"
       ;;
     supabase)
@@ -713,6 +849,7 @@ echo ""
   
   # Find database container
   db_container=""
+  set +e  # Temporarily disable exit on error for container detection
   if docker ps --format '{{.Names}}' | grep -q "^supabase-db$"; then
     db_container="supabase-db"
   elif docker ps --format '{{.Names}}' | grep -qE "^.*-db-.*$|^db$"; then
@@ -720,16 +857,19 @@ echo ""
   else
     db_container=$(docker ps --format '{{.Names}}' | grep -i postgres | head -1)
   fi
+  set -e  # Re-enable exit on error
   
   # Check if database is initialized by checking if master data exists
   # We check if system_settings table has data, not just if it exists
   DB_INITIALIZED=false
   if [[ -n "${db_container}" ]]; then
+    echo "  Found database container: ${db_container}"
+    set +e  # Temporarily disable exit on error for database checks
     # Check if system_settings table exists AND has data
-    TABLE_EXISTS=$(docker exec "${db_container}" psql -U postgres -d postgres -t -c "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'system_settings');" 2>/dev/null | tr -d ' ')
+    TABLE_EXISTS=$(docker exec "${db_container}" psql -U postgres -d postgres -t -c "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'system_settings');" 2>/dev/null | tr -d ' ' || echo "f")
     if [[ "${TABLE_EXISTS}" == "t" ]]; then
       # Check if it has data
-      ROW_COUNT=$(docker exec "${db_container}" psql -U postgres -d postgres -t -c "SELECT COUNT(*) FROM system_settings;" 2>/dev/null | tr -d ' ')
+      ROW_COUNT=$(docker exec "${db_container}" psql -U postgres -d postgres -t -c "SELECT COUNT(*) FROM system_settings;" 2>/dev/null | tr -d ' ' || echo "0")
       if [[ -n "${ROW_COUNT}" ]] && [[ "${ROW_COUNT}" -gt 0 ]]; then
         DB_INITIALIZED=true
         echo "✓ Database is already initialized (system_settings has ${ROW_COUNT} rows)"
@@ -739,8 +879,30 @@ echo ""
     else
       echo "Database is not initialized - will run initialization"
     fi
+    set -e  # Re-enable exit on error
   else
     echo "Database container not found - will attempt initialization"
+  fi
+  
+  # Always fix init.sql if it exists (even if DB is already initialized, in case it was regenerated)
+  INIT_SQL_FILE="${REPO_ROOT}/supabase/init.sql"
+  if [[ -f "${INIT_SQL_FILE}" ]]; then
+    # Ensure function is available (define it if somehow missing)
+    if ! declare -f fix_init_sql_master_data >/dev/null 2>&1; then
+      echo "Warning: fix_init_sql_master_data function not found, defining it..." >&2
+      fix_init_sql_master_data() {
+        local init_file="$1"
+        [[ ! -f "${init_file}" ]] && return 0
+        local temp_file="${init_file}.tmp"
+        cp "${init_file}" "${temp_file}" 2>/dev/null || return 0
+        perl -i -0777 -pe "s/, 'exclusive', 'exclusive', 0\),\s*\n\s*INSERT INTO \"public\".\"locations\"/, 'exclusive', 'exclusive', 0);\nINSERT INTO \"public\".\"locations\"/" "${init_file}" 2>/dev/null
+        if ! cmp -s "${init_file}" "${temp_file}" 2>/dev/null; then
+          echo "Fixed master data delimiter issue in ${init_file}"
+        fi
+        rm -f "${temp_file}" 2>/dev/null || true
+      }
+    fi
+    fix_init_sql_master_data "${INIT_SQL_FILE}"
   fi
   
   # Initialize database if not already initialized
@@ -755,7 +917,6 @@ echo ""
       echo "Blank database mode: Skipping schema and data initialization"
       echo "Database will be left empty (auth prerequisites will still be created for GoTrue)"
     else
-      INIT_SQL_FILE="${REPO_ROOT}/supabase/init.sql"
       EXTRACT_SCRIPT="${SCRIPT_DIR}/extract-supabase-data.sh"
       
       # Check if init.sql exists, if not, extract from Supabase
@@ -767,6 +928,22 @@ echo ""
         if [[ -f "${EXTRACT_SCRIPT}" ]]; then
           if bash "${EXTRACT_SCRIPT}"; then
             echo "✓ Schema and master data extracted successfully"
+            # Fix the newly extracted file
+            # Ensure function is available
+            if ! declare -f fix_init_sql_master_data >/dev/null 2>&1; then
+              fix_init_sql_master_data() {
+                local init_file="$1"
+                [[ ! -f "${init_file}" ]] && return 0
+                local temp_file="${init_file}.tmp"
+                cp "${init_file}" "${temp_file}" 2>/dev/null || return 0
+                perl -i -0777 -pe "s/, 'exclusive', 'exclusive', 0\),\s*\n\s*INSERT INTO \"public\".\"locations\"/, 'exclusive', 'exclusive', 0);\nINSERT INTO \"public\".\"locations\"/" "${init_file}" 2>/dev/null
+                if ! cmp -s "${init_file}" "${temp_file}" 2>/dev/null; then
+                  echo "Fixed master data delimiter issue in ${init_file}"
+                fi
+                rm -f "${temp_file}" 2>/dev/null || true
+              }
+            fi
+            fix_init_sql_master_data "${INIT_SQL_FILE}"
           else
             echo "Warning: Extraction script had issues. You may need to run it manually:" >&2
             echo "  ./scripts/extract-supabase-data.sh" >&2
@@ -971,6 +1148,9 @@ PYTHON
               fi
               # Show summary of what was inserted
               # Verify all master tables (same list as in extract-supabase-data.sh)
+              # Ensure enable_signup is set after master data insertion
+              set_enable_signup_flag "${db_container}"
+
               echo ""
               echo "Verifying inserted data..."
               MASTER_TABLES_TO_VERIFY=(system_settings roles taxes categories units locations suppliers customers products product_serials profiles user_roles user_settings)
@@ -1117,37 +1297,9 @@ PYTHON
             else
               echo "✓ Data inserted successfully"
             fi
-          fi
-          
-          # Ensure enable_signup is set to true in system_settings
-          if [[ -n "${db_container}" ]]; then
-            echo ""
-            echo "Setting enable_signup = true in system_settings..."
-            SIGNUP_UPDATE_OUTPUT=$(docker exec "${db_container}" psql -U postgres -d postgres 2>&1 <<'SQL'
--- Update enable_signup to true if system_settings table exists
-DO $$
-BEGIN
-  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'system_settings') THEN
-    UPDATE system_settings SET value = 'true' WHERE key = 'enable_signup';
-    
-    -- If no row was updated, insert it
-    IF NOT FOUND THEN
-      INSERT INTO system_settings (key, value, description) 
-      VALUES ('enable_signup', 'true', 'Enable user signup')
-      ON CONFLICT (key) DO UPDATE SET value = 'true';
-    END IF;
-    
-    RAISE NOTICE 'enable_signup set to true';
-  END IF;
-END $$;
-SQL
-)
-            
-            if echo "${SIGNUP_UPDATE_OUTPUT}" | grep -qi "enable_signup set to true"; then
-              echo "✓ enable_signup set to true"
-            else
-              echo "Warning: Could not set enable_signup (table may not exist yet)" >&2
-            fi
+
+            # Ensure enable_signup flag is set before triggers are re-enabled
+            set_enable_signup_flag "${db_container}"
           fi
           
           rm -f "${FILTERED_INIT_SQL}"
@@ -1160,331 +1312,9 @@ SQL
       fi
     fi
 
-    # Insert auth.users data if it exists in init.sql (after auth migrations have run)
-    if [[ -n "${db_container}" ]] && docker ps --format '{{.Names}}' | grep -q "^${db_container}$"; then
       echo ""
-      echo "Checking for auth.users data to import..."
-      
-      # Extract auth users section (from "-- Auth Users Data" to "-- Master Data" or end)
-      AUTH_USERS_START=$(grep -n "^-- Auth Users Data" "${INIT_SQL_FILE}" 2>/dev/null | cut -d: -f1 || echo "")
-      
-      if [[ -n "${AUTH_USERS_START}" ]]; then
-        # Find the end of auth users section (next major section or end of file)
-        AUTH_USERS_END=$(awk -v start="${AUTH_USERS_START}" 'NR > start && /^-- Master Data|^-- =/ {print NR; exit}' "${INIT_SQL_FILE}" 2>/dev/null || echo "")
-        
-        if [[ -z "${AUTH_USERS_END}" ]]; then
-          # If no end marker, use end of file
-          AUTH_USERS_END=$(wc -l < "${INIT_SQL_FILE}" | tr -d ' ')
-        fi
-        
-        # Extract the section (skip comment lines)
-        AUTH_USERS_SECTION=$(sed -n "${AUTH_USERS_START},${AUTH_USERS_END}p" "${INIT_SQL_FILE}" 2>/dev/null | grep -v "^--" | grep -v "^$" || true)
-        
-        # Check if there's actual data (not just "No auth.users data to import")
-        if [[ -n "${AUTH_USERS_SECTION}" ]] && ! echo "${AUTH_USERS_SECTION}" | grep -qi "No auth.users data"; then
-          if echo "${AUTH_USERS_SECTION}" | grep -qiE "(INSERT|COPY).*auth.*users"; then
-          echo "Found auth.users data in init.sql. Inserting after auth migrations..."
-          
-          # Wait for auth migrations to complete (check if auth.users table exists)
-          MAX_WAIT=30
-          WAIT_COUNT=0
-          while [[ ${WAIT_COUNT} -lt ${MAX_WAIT} ]]; do
-            if docker exec "${db_container}" psql -U postgres -d postgres -t -c "SELECT 1 FROM information_schema.tables WHERE table_schema = 'auth' AND table_name = 'users' LIMIT 1;" 2>/dev/null | grep -q "1"; then
-              break
-            fi
-            sleep 1
-            WAIT_COUNT=$((WAIT_COUNT + 1))
-          done
-          
-          if docker exec "${db_container}" psql -U postgres -d postgres -t -c "SELECT 1 FROM information_schema.tables WHERE table_schema = 'auth' AND table_name = 'users' LIMIT 1;" 2>/dev/null | grep -q "1"; then
-            echo "Inserting auth.users data..."
-            
-            # Insert auth users data with error handling
-            INSERT_RESULT=$(docker exec -i "${db_container}" psql -U postgres -d postgres 2>&1 <<SQL
-BEGIN;
-SET session_replication_role = replica;
-${AUTH_USERS_SECTION}
-SET session_replication_role = DEFAULT;
-COMMIT;
-SQL
-)
-            
-            if echo "${INSERT_RESULT}" | grep -qE "(INSERT|COPY)"; then
-              USER_COUNT=$(docker exec "${db_container}" psql -U postgres -d postgres -t -c "SELECT COUNT(*) FROM auth.users;" 2>/dev/null | tr -d ' ' || echo "0")
-              echo "✓ Auth users imported (${USER_COUNT} users)"
-            elif echo "${INSERT_RESULT}" | grep -qi "duplicate\|already exists"; then
-              USER_COUNT=$(docker exec "${db_container}" psql -U postgres -d postgres -t -c "SELECT COUNT(*) FROM auth.users;" 2>/dev/null | tr -d ' ' || echo "0")
-              echo "✓ Auth users already exist (${USER_COUNT} users)"
-            else
-              echo "Warning: Auth users insertion had issues" >&2
-              echo "${INSERT_RESULT}" | grep -i "error" | head -3 >&2 || true
-            fi
-          else
-            echo "Warning: auth.users table not found after waiting (migrations may have failed)" >&2
-          fi
-          else
-            echo "No auth.users data found in init.sql (skipping - section exists but is empty)"
-          fi
-        else
-          echo "Auth users section exists but contains no data (skipping)"
-        fi
-      else
-        echo "No auth.users section found in init.sql (skipping)"
-      fi
-    fi
-
-    # Insert default users (admin, staff, manager) if they don't exist
-    if [[ -n "${db_container}" ]] && docker ps --format '{{.Names}}' | grep -q "^${db_container}$"; then
-      echo ""
-      echo "Creating default users (admin, staff, manager)..."
-      
-      # Wait for auth migrations to complete
-      MAX_WAIT=30
-      WAIT_COUNT=0
-      while [[ ${WAIT_COUNT} -lt ${MAX_WAIT} ]]; do
-        if docker exec "${db_container}" psql -U postgres -d postgres -t -c "SELECT 1 FROM information_schema.tables WHERE table_schema = 'auth' AND table_name = 'users' LIMIT 1;" 2>/dev/null | grep -q "1"; then
-          break
-        fi
-        sleep 1
-        WAIT_COUNT=$((WAIT_COUNT + 1))
-      done
-      
-      if docker exec "${db_container}" psql -U postgres -d postgres -t -c "SELECT 1 FROM information_schema.tables WHERE table_schema = 'auth' AND table_name = 'users' LIMIT 1;" 2>/dev/null | grep -q "1"; then
-        # Check if users already exist in auth.users (not just profiles)
-        ADMIN_EXISTS=$(docker exec "${db_container}" psql -U postgres -d postgres -t -c "SELECT COUNT(*) FROM auth.users WHERE email = 'admin@versal.com';" 2>/dev/null | tr -d ' ' || echo "0")
-        STAFF_EXISTS=$(docker exec "${db_container}" psql -U postgres -d postgres -t -c "SELECT COUNT(*) FROM auth.users WHERE email = 'staff@versal.com';" 2>/dev/null | tr -d ' ' || echo "0")
-        MANAGER_EXISTS=$(docker exec "${db_container}" psql -U postgres -d postgres -t -c "SELECT COUNT(*) FROM auth.users WHERE email = 'manager@versal.com';" 2>/dev/null | tr -d ' ' || echo "0")
-        
-        # Debug: Show what we found
-        if [[ "${ADMIN_EXISTS}" != "1" ]] || [[ "${STAFF_EXISTS}" != "1" ]] || [[ "${MANAGER_EXISTS}" != "1" ]]; then
-          echo "Creating missing users (admin: ${ADMIN_EXISTS}, staff: ${STAFF_EXISTS}, manager: ${MANAGER_EXISTS})..."
-        fi
-        
-        if [[ "${ADMIN_EXISTS}" == "1" ]] && [[ "${STAFF_EXISTS}" == "1" ]] && [[ "${MANAGER_EXISTS}" == "1" ]]; then
-          echo "✓ Default users already exist in auth.users"
-        else
-          # Insert default users using PostgreSQL crypt function (requires pgcrypto)
-          # Default password for all users: "password123"
-          DEFAULT_USERS_RESULT=$(docker exec -i "${db_container}" psql -U postgres -d postgres 2>&1 <<'SQL'
--- Enable pgcrypto if not already enabled
-CREATE EXTENSION IF NOT EXISTS pgcrypto;
-
--- Default password: password123
--- Using bcrypt with cost factor 10 (Supabase standard)
-DO $$
-DECLARE
-  admin_id UUID;
-  staff_id UUID;
-  manager_id UUID;
-  admin_role_id UUID := '977228e3-a283-43a5-b7c8-37cce50fc160';
-  manager_role_id UUID := '34956656-03e8-4ea0-a408-f6d343f2225a';
-  staff_role_id UUID := 'a3ef37b6-25cc-456b-a4a1-7e550b20a267';
-  password_hash TEXT;
-  now_ts TIMESTAMPTZ := NOW();
-BEGIN
-  -- Generate bcrypt hash for password "password123"
-  -- Note: crypt() with 'bf' uses bcrypt, cost factor 10
-  password_hash := crypt('password123', gen_salt('bf', 10));
-  
-  -- Insert admin user (check if exists first, then insert or update)
-  -- Get existing user ID if email exists
-  SELECT id INTO admin_id FROM auth.users WHERE email = 'admin@versal.com' LIMIT 1;
-  
-  -- If user doesn't exist, insert new user
-  IF admin_id IS NULL THEN
-    admin_id := gen_random_uuid();
-    INSERT INTO auth.users (
-      id, instance_id, email, encrypted_password, email_confirmed_at,
-      created_at, updated_at, raw_app_meta_data, raw_user_meta_data,
-      is_super_admin, role, aud
-    ) VALUES (
-      admin_id,
-      '00000000-0000-0000-0000-000000000000'::uuid,
-      'admin@versal.com',
-      password_hash,
-      now_ts,
-      now_ts,
-      now_ts,
-      '{"provider": "email", "providers": ["email"]}'::jsonb,
-      '{"username": "admin", "full_name": "Administrator", "role": "admin"}'::jsonb,
-      false,
-      'authenticated',
-      'authenticated'
-    );
-  ELSE
-    -- Update existing user's password
-    UPDATE auth.users SET
-      encrypted_password = password_hash,
-      updated_at = now_ts
-    WHERE id = admin_id;
-  END IF;
-  
-  -- admin_id is now set above (either from existing user or newly generated)
-  
-  -- Delete existing profile with same username but different id (if any)
-  DELETE FROM public.profiles WHERE username = 'admin' AND id != admin_id;
-  
-  -- Insert or update profile
-  INSERT INTO public.profiles (
-    id, username, full_name, is_active, role_id, created_at, updated_at
-  ) VALUES (
-    admin_id,
-    'admin',
-    'Administrator',
-    true,
-    admin_role_id,
-    now_ts,
-    now_ts
-  ) ON CONFLICT (id) DO UPDATE SET 
-    role_id = EXCLUDED.role_id,
-    username = EXCLUDED.username,
-    full_name = EXCLUDED.full_name;
-  
-  -- Insert staff user (check if exists first)
-  SELECT id INTO staff_id FROM auth.users WHERE email = 'staff@versal.com' LIMIT 1;
-  
-  IF staff_id IS NULL THEN
-    staff_id := gen_random_uuid();
-    INSERT INTO auth.users (
-      id, instance_id, email, encrypted_password, email_confirmed_at,
-      created_at, updated_at, raw_app_meta_data, raw_user_meta_data,
-      is_super_admin, role, aud
-    ) VALUES (
-      staff_id,
-      '00000000-0000-0000-0000-000000000000'::uuid,
-      'staff@versal.com',
-      password_hash,
-      now_ts,
-      now_ts,
-      now_ts,
-      '{"provider": "email", "providers": ["email"]}'::jsonb,
-      '{"username": "staff", "full_name": "Staff User", "role": "staff"}'::jsonb,
-      false,
-      'authenticated',
-      'authenticated'
-    );
-  ELSE
-    UPDATE auth.users SET
-      encrypted_password = password_hash,
-      updated_at = now_ts
-    WHERE id = staff_id;
-  END IF;
-  
-  -- staff_id is now set above (either from existing user or newly generated)
-  
-  -- Delete existing profile with same username but different id (if any)
-  DELETE FROM public.profiles WHERE username = 'staff' AND id != staff_id;
-  
-  -- Insert or update profile
-  INSERT INTO public.profiles (
-    id, username, full_name, is_active, role_id, created_at, updated_at
-  ) VALUES (
-    staff_id,
-    'staff',
-    'Staff User',
-    true,
-    staff_role_id,
-    now_ts,
-    now_ts
-  ) ON CONFLICT (id) DO UPDATE SET 
-    role_id = EXCLUDED.role_id,
-    username = EXCLUDED.username,
-    full_name = EXCLUDED.full_name;
-  
-  -- Insert manager user (check if exists first)
-  SELECT id INTO manager_id FROM auth.users WHERE email = 'manager@versal.com' LIMIT 1;
-  
-  IF manager_id IS NULL THEN
-    manager_id := gen_random_uuid();
-    INSERT INTO auth.users (
-      id, instance_id, email, encrypted_password, email_confirmed_at,
-      created_at, updated_at, raw_app_meta_data, raw_user_meta_data,
-      is_super_admin, role, aud
-    ) VALUES (
-      manager_id,
-      '00000000-0000-0000-0000-000000000000'::uuid,
-      'manager@versal.com',
-      password_hash,
-      now_ts,
-      now_ts,
-      now_ts,
-      '{"provider": "email", "providers": ["email"]}'::jsonb,
-      '{"username": "manager", "full_name": "Manager", "role": "manager"}'::jsonb,
-      false,
-      'authenticated',
-      'authenticated'
-    );
-  ELSE
-    UPDATE auth.users SET
-      encrypted_password = password_hash,
-      updated_at = now_ts
-    WHERE id = manager_id;
-  END IF;
-  
-  -- manager_id is now set above (either from existing user or newly generated)
-  
-  -- Delete existing profile with same username but different id (if any)
-  DELETE FROM public.profiles WHERE username = 'manager' AND id != manager_id;
-  
-  -- Insert or update profile
-  INSERT INTO public.profiles (
-    id, username, full_name, is_active, role_id, created_at, updated_at
-  ) VALUES (
-    manager_id,
-    'manager',
-    'Manager',
-    true,
-    manager_role_id,
-    now_ts,
-    now_ts
-  ) ON CONFLICT (id) DO UPDATE SET 
-    role_id = EXCLUDED.role_id,
-    username = EXCLUDED.username,
-    full_name = EXCLUDED.full_name;
-  
-  RAISE NOTICE 'Default users created successfully';
-END $$;
-
--- Verify users were created
-SELECT 
-  'admin' as username, 
-  COUNT(*) as auth_count 
-FROM auth.users 
-WHERE email = 'admin@versal.com'
-UNION ALL
-SELECT 'staff', COUNT(*) FROM auth.users WHERE email = 'staff@versal.com'
-UNION ALL
-SELECT 'manager', COUNT(*) FROM auth.users WHERE email = 'manager@versal.com';
-SQL
-)
-        
-          if echo "${DEFAULT_USERS_RESULT}" | grep -q "NOTICE.*Default users created" || echo "${DEFAULT_USERS_RESULT}" | grep -q "INSERT 0"; then
-            echo "✓ Default users created successfully"
-            echo "  Default password for all users: password123"
-            echo "  Users:"
-            echo "    - admin@versal.com (Administrator)"
-            echo "    - staff@versal.com (Staff User)"
-            echo "    - manager@versal.com (Manager)"
-          elif echo "${DEFAULT_USERS_RESULT}" | grep -qi "duplicate\|already exists"; then
-            echo "✓ Default users already exist"
-          else
-            # Check if users were actually created despite errors
-            FINAL_ADMIN_COUNT=$(docker exec "${db_container}" psql -U postgres -d postgres -t -c "SELECT COUNT(*) FROM auth.users WHERE email = 'admin@versal.com';" 2>/dev/null | tr -d ' ' || echo "0")
-            FINAL_STAFF_COUNT=$(docker exec "${db_container}" psql -U postgres -d postgres -t -c "SELECT COUNT(*) FROM auth.users WHERE email = 'staff@versal.com';" 2>/dev/null | tr -d ' ' || echo "0")
-            FINAL_MANAGER_COUNT=$(docker exec "${db_container}" psql -U postgres -d postgres -t -c "SELECT COUNT(*) FROM auth.users WHERE email = 'manager@versal.com';" 2>/dev/null | tr -d ' ' || echo "0")
-            
-            if [[ "${FINAL_ADMIN_COUNT}" == "1" ]] && [[ "${FINAL_STAFF_COUNT}" == "1" ]] && [[ "${FINAL_MANAGER_COUNT}" == "1" ]]; then
-              echo "✓ Default users exist (some warnings during creation are expected)"
-            else
-              echo "Warning: Issues creating default users" >&2
-              echo "${DEFAULT_USERS_RESULT}" | grep -i "error" | head -5 >&2 || true
-            fi
-          fi
-        fi
-      else
-        echo "Warning: auth.users table not found (migrations may not have completed)" >&2
-      fi
-    fi
+    echo "Ensuring triggers are enabled..."
+    ensure_triggers_enabled "${db_container}"
 
   fi
   
@@ -1568,7 +1398,7 @@ echo "Building and starting containers..."
     echo ""
     echo "Deploying remaining services..."
     
-    # Determine which services to deploy (only api and web from custom compose)
+    # Determine which services to deploy (only api and app from custom compose)
     REMAINING_SERVICES="api web"
     
     # Pull images for remaining services
@@ -1583,7 +1413,7 @@ echo "Building and starting containers..."
     fi
     echo "✓ Image pull completed"
     
-    # Deploy remaining services (only api and web)
+    # Deploy remaining services (only api and app)
 echo ""
     echo "Building and starting containers..."
     set +e  # Temporarily disable exit on error

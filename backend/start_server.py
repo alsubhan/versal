@@ -11,8 +11,21 @@ before starting the uvicorn server.
 import os
 import sys
 import subprocess
+from pathlib import Path
 
 def main():
+    # Try to find the venv's Python if we're in a venv
+    venv_python = None
+    script_dir = Path(__file__).parent
+    venv_python_path = script_dir / "venv" / "bin" / "python3"
+    
+    if venv_python_path.exists():
+        venv_python = str(venv_python_path)
+        print(f"✅ Using venv Python: {venv_python}")
+    else:
+        # Fall back to current interpreter
+        venv_python = sys.executable
+        print(f"⚠️  Using system Python: {venv_python}")
     # Check if --debug flag is provided
     debug_mode = "--debug" in sys.argv
     
@@ -29,12 +42,13 @@ def main():
         if "DEBUG" in os.environ:
             del os.environ["DEBUG"]
     
-    # Build uvicorn command
+    # Build uvicorn command - use python -m uvicorn to ensure we use the venv's uvicorn
     uvicorn_cmd = [
-        "uvicorn", 
+        venv_python,  # Use the venv's Python interpreter
+        "-m", "uvicorn",
         "main:app", 
         "--reload", 
-        "--port", "8000"
+        "--port", "7001"
     ]
     
     # Add any additional arguments that were passed

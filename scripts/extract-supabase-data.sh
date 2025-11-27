@@ -109,11 +109,9 @@ cleanup() {
 trap cleanup EXIT
 
 SCHEMA_SQL="${TEMP_DIR}/schema.sql"
-AUTH_SCHEMA_SQL="${TEMP_DIR}/auth_schema.sql"
 DATA_DUMP_SQL="${TEMP_DIR}/data_dump.sql"
-AUTH_USERS_SQL="${TEMP_DIR}/auth_users.sql"
 MASTER_DATA_SQL="${TEMP_DIR}/master_data.sql"
-export DATA_DUMP_SQL MASTER_DATA_SQL AUTH_USERS_SQL
+export DATA_DUMP_SQL MASTER_DATA_SQL
 
 # Backup existing init.sql
 if [[ -f "${INIT_SQL_FILE}" ]]; then
@@ -159,130 +157,16 @@ fi
 
 echo ""
 echo "=========================================="
-echo "Step 1.5: Exporting Auth Schema (if needed)"
+echo "Step 2: Exporting Master Data"
 echo "=========================================="
 
-echo "Checking if auth schema exists..."
-# Extract auth schema separately (it's usually created by migrations, but we check)
-if [[ -n "${SUPABASE_DB_PASSWORD:-}" ]]; then
-  run_supabase db dump --schema auth --file "${AUTH_SCHEMA_SQL}" -p "${SUPABASE_DB_PASSWORD}" >/dev/null 2>&1 || true
-else
-  run_supabase db dump --schema auth --file "${AUTH_SCHEMA_SQL}" >/dev/null 2>&1 || true
-fi
-
-if [[ -f "${AUTH_SCHEMA_SQL}" ]] && [[ -s "${AUTH_SCHEMA_SQL}" ]]; then
-  AUTH_SCHEMA_LINES=$(wc -l < "${AUTH_SCHEMA_SQL}" | tr -d ' ')
-  echo "✓ Auth schema exported (${AUTH_SCHEMA_LINES} lines)"
-else
-  echo "Note: Auth schema will be created by Supabase Auth migrations (this is normal)"
-  echo "-- Auth schema will be created by migrations" > "${AUTH_SCHEMA_SQL}"
-fi
-
-echo ""
-echo "=========================================="
-echo "Step 2: Exporting Auth Users Data"
-echo "=========================================="
-
-echo "Extracting auth.users table data..."
-echo "This may take a moment..."
-
-# Dump all auth schema data, then filter for users table
-AUTH_DATA_DUMP="${TEMP_DIR}/auth_data_dump.sql"
-set +e  # Don't exit on error
-if [[ -n "${SUPABASE_DB_PASSWORD:-}" ]]; then
-  run_supabase db dump --data-only --schema auth --file "${AUTH_DATA_DUMP}" -p "${SUPABASE_DB_PASSWORD}" >/tmp/auth_dump_output.log 2>&1
-else
-  run_supabase db dump --data-only --schema auth --file "${AUTH_DATA_DUMP}" >/tmp/auth_dump_output.log 2>&1
-fi
-AUTH_DUMP_EXIT=$?
-AUTH_DUMP_OUTPUT=$(cat /tmp/auth_dump_output.log 2>/dev/null || echo "")
-set -e
-
-  # Filter for users table data
-if [[ $AUTH_DUMP_EXIT -eq 0 ]] && [[ -f "${AUTH_DATA_DUMP}" ]] && [[ -s "${AUTH_DATA_DUMP}" ]]; then
-  # Extract users table data (handles both INSERT and COPY formats)
-  if grep -qE "(INSERT INTO|COPY).*auth.*users|auth\.users" "${AUTH_DATA_DUMP}"; then
-    # Extract users table section
-    export AUTH_DATA_DUMP AUTH_USERS_SQL
-    python3 <<PY > "${AUTH_USERS_SQL}"
-import sys
-import re
-import os
-from pathlib import Path
-
-auth_dump = Path(os.environ["AUTH_DATA_DUMP"])
-auth_users = Path(os.environ["AUTH_USERS_SQL"])
-
-with auth_dump.open("r", encoding="utf-8") as src, auth_users.open("w", encoding="utf-8") as dst:
-    dst.write("-- Auth Users Data\n")
-    dst.write("-- Extracted from auth schema dump\n\n")
-    
-    printing = False
-    in_users_insert = False
-    
-    for line in src:
-        stripped = line.strip()
-        
-        # Handle COPY format
-        if re.match(r'COPY\s+auth\.users', line, re.IGNORECASE):
-            printing = True
-            dst.write(line)
-            continue
-        
-        # Handle INSERT format
-        if re.match(r'INSERT INTO\s+auth\.users', line, re.IGNORECASE):
-            in_users_insert = True
-            dst.write(line)
-            continue
-        
-        # Continue writing if in users INSERT
-        if in_users_insert:
-            dst.write(line)
-            if ";" in line:
-                in_users_insert = False
-            continue
-        
-        # Continue writing if in COPY block
-        if printing:
-            dst.write(line)
-            if stripped == r"\." or stripped == "\\.":
-                printing = False
-            continue
-
-PY
-    
-    if [[ -s "${AUTH_USERS_SQL}" ]] && ! grep -q "^-- Auth Users Data$" "${AUTH_USERS_SQL}" || grep -qE "(INSERT|COPY)" "${AUTH_USERS_SQL}"; then
-      AUTH_USERS_LINES=$(wc -l < "${AUTH_USERS_SQL}" | tr -d ' ')
-      echo "✓ Auth users data exported (${AUTH_USERS_LINES} lines)"
-      # Show sample
-      echo "Sample of auth users dump (first 5 lines):"
-      head -5 "${AUTH_USERS_SQL}" | sed 's/^/  /'
-    else
-      echo "Note: No auth.users data found in dump (table may be empty)"
-      echo "-- No auth.users data to import" > "${AUTH_USERS_SQL}"
-    fi
-  else
-    echo "Note: No auth.users data found in dump (table may be empty)"
-    echo "-- No auth.users data to import" > "${AUTH_USERS_SQL}"
-  fi
-else
-  echo "Note: Could not dump auth schema data"
-  echo "-- No auth.users data to import" > "${AUTH_USERS_SQL}"
-  if [[ -n "${AUTH_DUMP_OUTPUT}" ]]; then
-    echo "Dump output: ${AUTH_DUMP_OUTPUT}" | head -3
-  fi
-fi
-
-echo ""
-echo "=========================================="
-echo "Step 3: Exporting Master Data"
-echo "=========================================="
-
-MASTER_TABLES=(system_settings roles taxes categories units locations suppliers customers products product_serials profiles user_roles user_settings)
+MASTER_TABLES=(system_settings roles taxes categories units locations suppliers customers products product_serials)
 MASTER_TABLES_JOINED=$(IFS=,; echo "${MASTER_TABLES[*]}")
+echo "Master tables selected: ${MASTER_TABLES_JOINED}"
 
 echo "Running data dump..."
 echo "This may take 2-5 minutes depending on data size..."
+echo "Tables being extracted: ${MASTER_TABLES_JOINED}"
 echo "Note: Circular foreign-key constraints may cause warnings (this is normal)"
 # Try dumping data - capture both stdout and stderr
 # Use password flag if available (some CLI versions support it)
@@ -324,12 +208,29 @@ else
   DUMP_SIZE=$(wc -l < "${DATA_DUMP_SQL}" | tr -d ' ')
   echo "✓ Data dump created (${DUMP_SIZE} lines)"
   
+  # Verify product count in raw dump before filtering
+  echo ""
+  echo "Verifying product data in dump..."
+  PRODUCT_INSERT_COUNT=$(grep -c "INSERT INTO.*products\|COPY public.products" "${DATA_DUMP_SQL}" 2>/dev/null || echo "0")
+  if [[ "${PRODUCT_INSERT_COUNT}" -gt 0 ]]; then
+    # Try to count rows in products INSERT/COPY
+    PRODUCT_ROWS=$(awk '/INSERT INTO.*products|COPY public.products/{flag=1; next} flag && /INSERT INTO|COPY public\./{flag=0} flag && /^[[:space:]]*\(/{count++} END {print count+0}' "${DATA_DUMP_SQL}" 2>/dev/null || echo "0")
+    if [[ "${PRODUCT_ROWS}" -gt 0 ]]; then
+      echo "  Found ${PRODUCT_ROWS} product row(s) in dump file"
+    else
+      echo "  Found products INSERT/COPY statement(s) but row count unavailable"
+    fi
+  else
+    echo "  Warning: No products INSERT/COPY found in dump file"
+  fi
+  
   # Show a sample of the dump to help debug
   echo "Sample of dump file (first 10 lines):"
   head -10 "${DATA_DUMP_SQL}" | sed 's/^/  /'
     
     # Filter master data using Python
     echo "Filtering master data from dump..."
+    echo "Note: Checking for multiple INSERT statements per table..."
     MASTER_TABLES_CSV="${MASTER_TABLES_JOINED}" python3 <<'PY'
 import os
 import re
@@ -342,9 +243,30 @@ master_path = Path(os.environ["MASTER_DATA_SQL"])
 printing = False
 rows_captured = 0
 tables_found = set()
-current_insert_table = None
-
 with data_path.open("r", encoding="utf-8") as src, master_path.open("w", encoding="utf-8") as dst:
+    # Use mutable containers so we can modify them from nested function
+    insert_state = {"table": None, "lines": []}
+    table_row_counts = {}  # Track row counts per table
+    
+    def flush_current_insert():
+        """Write the buffered INSERT statement and reset"""
+        if insert_state["table"] and insert_state["lines"]:
+            # Write all buffered lines except the last one
+            for i, buffered_line in enumerate(insert_state["lines"][:-1]):
+                dst.write(buffered_line)
+            # Handle the last line - ensure it ends with semicolon
+            if insert_state["lines"]:
+                last_line = insert_state["lines"][-1].rstrip()
+                if last_line.endswith(';'):
+                    dst.write(insert_state["lines"][-1])
+                elif last_line.endswith(','):
+                    # Remove trailing comma and add semicolon
+                    dst.write(last_line.rstrip(',') + ';\n')
+                else:
+                    # Add semicolon
+                    dst.write(insert_state["lines"][-1].rstrip() + ';\n')
+            insert_state["lines"] = []
+            insert_state["table"] = None
     dst.write("-- Master Data from Supabase\n")
     dst.write(f"-- Extracted on: {os.popen('date').read().strip()}\n\n")
     
@@ -353,6 +275,8 @@ with data_path.open("r", encoding="utf-8") as src, master_path.open("w", encodin
         
         # Handle COPY format: COPY public.table_name (columns) FROM stdin;
         if line.startswith("COPY public."):
+            # Flush any pending INSERT
+            flush_current_insert()
             # Extract table name from: COPY public.table_name (col1, col2) FROM stdin;
             match = re.match(r'COPY public\.(\w+)', line)
             if match:
@@ -366,39 +290,86 @@ with data_path.open("r", encoding="utf-8") as src, master_path.open("w", encodin
                     printing = False
             continue
         
+        # Check if this line starts a new INSERT statement
+        insert_match = re.match(r'INSERT INTO\s+(?:"?public"?\.)?"?(\w+)"?', line, re.IGNORECASE)
+        
+        # If we're in the middle of an INSERT and encounter a new INSERT for a different table,
+        # flush the current INSERT first (it should be complete by now)
+        if insert_state["table"] and insert_match:
+            new_table_name = insert_match.group(1)
+            if new_table_name != insert_state["table"]:
+                # Different table - flush current INSERT (add semicolon if missing)
+                flush_current_insert()
+                # Now process the new INSERT below (fall through)
+        
+        # If we're in the middle of an INSERT for a master table, continue buffering
+        if insert_state["table"]:
+            # Check if this line is a new INSERT for a different table
+            if insert_match and insert_match.group(1) != insert_state["table"]:
+                # Different table - should have been flushed above, but handle it here too
+                flush_current_insert()
+                # Fall through to process the new INSERT
+            elif insert_match and insert_match.group(1) == insert_state["table"]:
+                # Same table - this is a new INSERT statement for the same table
+                # Flush the previous INSERT first, then start the new one
+                flush_current_insert()
+                # Fall through to process the new INSERT below
+            else:
+                # This is a continuation line of the current INSERT - buffer it
+                insert_state["lines"].append(line)
+                # Count additional rows (lines starting with opening parenthesis are new rows)
+                if re.match(r'^\s*\(', line):
+                    table_row_counts[insert_state["table"]] += 1
+                # Check if this line completes the INSERT (ends with semicolon)
+                if ";" in line:
+                    flush_current_insert()
+                continue
+        
         # Handle INSERT format: INSERT INTO "public"."table_name" or INSERT INTO public.table_name
         # Match both quoted and unquoted formats
-        insert_match = re.match(r'INSERT INTO\s+(?:"?public"?\.)?"?(\w+)"?', line, re.IGNORECASE)
         if insert_match:
             table_name = insert_match.group(1)
             if table_name in tables:
-                current_insert_table = table_name
+                # If we're already buffering an INSERT for this table, flush it first
+                # (this handles multiple INSERT statements for the same table)
+                if insert_state["table"] == table_name:
+                    flush_current_insert()
+                # Start buffering this new INSERT
+                insert_state["table"] = table_name
                 tables_found.add(table_name)
-                dst.write(line)
+                if table_name not in table_row_counts:
+                    table_row_counts[table_name] = 0
+                # Count VALUES rows in this INSERT (look for opening parenthesis with values)
+                if re.search(r'VALUES\s*\(', line, re.IGNORECASE):
+                    table_row_counts[table_name] += 1
+                insert_state["lines"] = [line]  # Start buffering
                 rows_captured += 1
             else:
-                current_insert_table = None
-            continue
-        
-        # If we're in the middle of an INSERT for a master table, continue writing
-        if current_insert_table:
-            dst.write(line)
-            # Check if this line completes the INSERT (ends with semicolon)
-            if ";" in line:
-                current_insert_table = None
+                insert_state["table"] = None
+                insert_state["lines"] = []
             continue
         
         # If we're in a COPY block, continue writing until we see the terminator
         if printing:
             dst.write(line)
-            if stripped == r"\." or stripped == "\\.":
+            if stripped in ("\\\\.", r"\."):
                 dst.write("\n")
                 printing = False
             continue
     
+    # Flush any pending INSERT at end of file
+    flush_current_insert()
+    
     # Write summary (inside the with block, after processing all lines)
     if rows_captured > 0:
-        dst.write(f"\n-- Summary: Found data for {len(tables_found)} table(s): {', '.join(sorted(tables_found))}\n")
+        summary_lines = [f"\n-- Summary: Found data for {len(tables_found)} table(s):"]
+        for table in sorted(tables_found):
+            row_count = table_row_counts.get(table, 0)
+            if row_count > 0:
+                summary_lines.append(f"--   {table}: {row_count} row(s)")
+            else:
+                summary_lines.append(f"--   {table}: data found (row count not available)")
+        dst.write("\n".join(summary_lines) + "\n")
     else:
         dst.write("\n-- Warning: No data rows found for master tables\n")
         dst.write(f"-- Tables searched: {', '.join(sorted(tables))}\n")
@@ -417,6 +388,8 @@ PY
     else
       TABLES_FOUND=$(grep -oE "Found data for [0-9]+ table" "${MASTER_DATA_SQL}" | head -1 || echo "")
       echo "✓ Filtered master data for key tables ${TABLES_FOUND}"
+      echo "Row counts per table:"
+      grep -E "^--   [a-z_]+: [0-9]+ row" "${MASTER_DATA_SQL}" | sed 's/^--   /  /' || echo "  (Row counts not available)"
     fi
 fi
 
@@ -437,33 +410,6 @@ echo "=========================================="
   echo "-- =========================================="
   echo ""
   cat "${SCHEMA_SQL}"
-  echo ""
-  echo "-- =========================================="
-  echo "-- Auth Schema (if needed)"
-  echo "-- =========================================="
-  echo "-- Note: Auth schema is usually created by Supabase Auth migrations"
-  echo "-- This section is included for reference only"
-  echo ""
-  # Only include auth schema if it has actual content (not just the placeholder)
-  if grep -qv "will be created by migrations" "${AUTH_SCHEMA_SQL}" 2>/dev/null; then
-    cat "${AUTH_SCHEMA_SQL}"
-  else
-    echo "-- Auth schema will be created by Supabase Auth service migrations"
-  fi
-  echo ""
-  echo "-- =========================================="
-  echo "-- Auth Users Data"
-  echo "-- =========================================="
-  echo "-- Note: Auth users should be inserted AFTER auth schema is created"
-  echo "-- The Supabase Auth service will create the schema via migrations"
-  echo "-- This data will be inserted after migrations complete"
-  echo ""
-  # Only include auth users if there's actual data
-  if grep -qv "No auth.users data" "${AUTH_USERS_SQL}" 2>/dev/null && [[ -s "${AUTH_USERS_SQL}" ]]; then
-    cat "${AUTH_USERS_SQL}"
-  else
-    echo "-- No auth.users data to import"
-  fi
   echo ""
   echo "-- =========================================="
   echo "-- Master Data (public schema)"

@@ -304,27 +304,67 @@ def get_jwk_set():
     global _jwk_set
     if _jwk_set is None:
         try:
-            resp = requests.get(SUPABASE_JWKS_URL)
+            print(f"🔍 Fetching JWKS from: {SUPABASE_JWKS_URL}")
+            resp = requests.get(SUPABASE_JWKS_URL, timeout=5)
             resp.raise_for_status()
             jwk_data = resp.json()
             # Ensure we return the keys array, not the entire response
             if isinstance(jwk_data, dict) and "keys" in jwk_data:
                 _jwk_set = jwk_data
+                print(f"✅ JWKS fetched successfully. Found {len(_jwk_set.get('keys', []))} keys")
             else:
                 _jwk_set = jwk_data
+                print(f"⚠️ JWKS response format unexpected: {type(jwk_data)}")
         except Exception as e:
+            print(f"❌ Failed to fetch JWKS from {SUPABASE_JWKS_URL}: {str(e)}")
             # If JWK fetch fails, return a minimal valid JWK set
             _jwk_set = {"keys": []}
     return _jwk_set
 
 def verify_jwt(credentials: HTTPAuthorizationCredentials = Security(bearer_scheme)):
     token = credentials.credentials
+    if not token:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="No token provided")
+    
+    # Try HS256 first (Supabase default for local development)
+    SUPABASE_JWT_SECRET = os.getenv("SUPABASE_JWT_SECRET") or os.getenv("JWT_SECRET")
+    if SUPABASE_JWT_SECRET:
+        try:
+            payload = jose_jwt.decode(token, SUPABASE_JWT_SECRET, algorithms=["HS256"], options={"verify_aud": False})
+            debug_log(f"✅ JWT verified successfully (HS256) for user: {payload.get('sub')}")
+            return payload
+        except JWTError as e:
+            debug_log(f"HS256 verification failed: {str(e)}, trying ES256 with JWKS...")
+    
+    # Fallback to ES256 with JWKS (for production/cloud Supabase)
     jwk_set = get_jwk_set()
+    
+    # Check if JWKS is available
+    if not jwk_set or not jwk_set.get("keys") or len(jwk_set.get("keys", [])) == 0:
+        debug_log(f"⚠️ WARNING: JWKS set is empty or unavailable. JWKS URL: {SUPABASE_JWKS_URL}")
+        # Try to refresh JWKS
+        global _jwk_set
+        _jwk_set = None
+        jwk_set = get_jwk_set()
+        if not jwk_set or not jwk_set.get("keys") or len(jwk_set.get("keys", [])) == 0:
+            if not SUPABASE_JWT_SECRET:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"JWKS unavailable and no JWT_SECRET configured. Check SUPABASE_INTERNAL_URL: {SUPABASE_INTERNAL_URL}"
+                )
+            # If we have JWT_SECRET but HS256 failed, the token might be invalid
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token: Could not verify with HS256 or ES256"
+            )
+    
     try:
         # python-jose will automatically select the correct key from the set
         payload = jose_jwt.decode(token, jwk_set, algorithms=["ES256"], options={"verify_aud": False})
+        debug_log(f"✅ JWT verified successfully (ES256) for user: {payload.get('sub')}")
         return payload
     except JWTError as e:
+        debug_log(f"❌ JWT verification failed (ES256): {str(e)}")
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=f"Invalid token: {str(e)}")
 
 def to_camel_case_category(category):

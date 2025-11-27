@@ -113,6 +113,7 @@ MASTER_TABLES=(
   "suppliers"
   "customers"
   "products"
+  "product_serials"
 )
 
 echo "-- Master Data from Supabase" > "${MASTER_DATA_SQL}"
