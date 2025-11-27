@@ -744,6 +744,12 @@ if [[ -n "${COMPOSE_SERVICES}" ]]; then
   for svc in ${COMPOSE_SERVICES}; do
     if ! echo "${SUPABASE_GROUP}" | grep -qw "${svc}"; then
       DEPLOY_OTHER_SERVICES=true
+      # Check if requested service depends on Supabase services
+      # api depends on kong, web depends on api (which depends on kong)
+      if [[ "${svc}" == "api" ]] || [[ "${svc}" == "web" ]]; then
+        NEEDS_SUPABASE=true
+        echo "Note: ${svc} service depends on Supabase services - Supabase will be deployed first"
+      fi
       break
     fi
   done
@@ -1378,19 +1384,30 @@ if [[ "${DEPLOY_OTHER_SERVICES}" == "true" ]]; then
     echo ""
     echo "Deploying services: ${OTHER_SERVICES}"
     
-    # Pull images
+    # Pull images (if any are from registries, not just built)
+    # Note: Services configured with 'build:' don't need to be pulled
+    # Skip pull step for build-only services to avoid hanging
     echo ""
-    echo "Pulling images..."
-    run_compose pull ${OTHER_SERVICES} || true
+    echo "Skipping image pull (services will be built from source)..."
+    echo "  (If you have pre-built images, they will be used during build)"
     
     # Deploy services
 echo ""
 echo "Building and starting containers..."
-    if ! run_compose up -d --build ${OTHER_SERVICES}; then
-    echo "Error: Failed to start services" >&2
+    echo "  This may take several minutes for the first build..."
+    set +e  # Temporarily disable exit on error to capture output
+    BUILD_OUTPUT=$(run_compose up -d --build ${OTHER_SERVICES} 2>&1)
+    BUILD_EXIT=$?
+    set -e  # Re-enable exit on error
+    
+    if [[ ${BUILD_EXIT} -eq 0 ]]; then
+      echo "✓ Containers started"
+    else
+      echo "Error: Failed to start services (exit code: ${BUILD_EXIT})" >&2
+      echo "Build output:" >&2
+      echo "${BUILD_OUTPUT}" | tail -30 >&2
     exit 1
   fi
-    echo "✓ Containers started"
     echo ""
     echo "Other services deployed successfully!"
   elif [[ -z "${COMPOSE_SERVICES}" ]]; then

@@ -1757,13 +1757,13 @@ def get_stock_levels(payload=Depends(require_permission("inventory_stock_view"))
     for serial in serialized_data.data:
         product_id = serial["product_id"]
         status = serial["status"]
-        product = serial.get("products", {})
+        product = serial.get("products") or {}
         
         if product_id not in serialized_counts:
             serialized_counts[product_id] = {
                 "product_id": product_id,
-                "product_name": product.get("name", "Unknown Product"),
-                "sku_code": product.get("sku_code", "Unknown SKU"),
+                "product_name": product.get("name", "Unknown Product") if product else "Unknown Product",
+                "sku_code": product.get("sku_code", "Unknown SKU") if product else "Unknown SKU",
                 "is_serialized": True,
                 "quantity_on_hand": 0,
                 "quantity_reserved": 0,
@@ -1784,9 +1784,9 @@ def get_stock_levels(payload=Depends(require_permission("inventory_stock_view"))
     
     # Add non-serialized stock levels
     for level in data.data:
-        product = level.get("products", {})
-        location = level.get("locations", {})
-        is_serialized = product.get("is_serialized", False)
+        product = level.get("products") or {}
+        location = level.get("locations") or {}
+        is_serialized = product.get("is_serialized", False) if product else False
         
         # Skip serialized products as they're handled separately
         if is_serialized:

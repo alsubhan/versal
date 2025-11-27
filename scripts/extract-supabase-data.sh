@@ -160,7 +160,7 @@ echo "=========================================="
 echo "Step 2: Exporting Master Data"
 echo "=========================================="
 
-MASTER_TABLES=(system_settings roles taxes categories units locations suppliers customers products product_serials)
+MASTER_TABLES=(system_settings roles taxes categories units locations suppliers customers products)
 MASTER_TABLES_JOINED=$(IFS=,; echo "${MASTER_TABLES[*]}")
 echo "Master tables selected: ${MASTER_TABLES_JOINED}"
 

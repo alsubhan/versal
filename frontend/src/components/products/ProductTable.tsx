@@ -17,8 +17,8 @@ import { useAuth } from "@/hooks/useAuth";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from "@/components/ui/badge";
-import { useSupabaseQuery } from '@/hooks/useSupabaseQuery';
-import { supabase } from '@/integrations/supabase/client';
+import { useQuery } from '@tanstack/react-query';
+import { getProducts, deleteProduct } from '@/lib/api';
 import { performanceMonitor } from '@/lib/performance';
 import {
   AlertDialog,
@@ -138,23 +138,20 @@ export const ProductTable = ({ onEdit, onRefresh, searchTerm = "" }: ProductTabl
   // Calculate offset for pagination
   const offset = (currentPage - 1) * ITEMS_PER_PAGE;
 
-  // Test query to check if products table exists and has data
+  // Test query to check if backend API is working
   useEffect(() => {
     const testQuery = async () => {
       performanceMonitor.startTimer('product-table-test-query');
       try {
-        console.log('Testing basic products query...');
-        const testResult = await supabase
-          .from('products')
-          .select('id, name')
-          .limit(1);
+        console.log('Testing backend products API...');
+        const testResult = await getProducts();
         
         console.log('Test query result:', testResult);
         
-        if (testResult.error) {
-          console.error('Test query failed:', testResult.error);
+        if (Array.isArray(testResult)) {
+          console.log('Test query succeeded, found products:', testResult.length);
         } else {
-          console.log('Test query succeeded, found products:', testResult.data?.length || 0);
+          console.error('Test query returned invalid data:', testResult);
         }
       } catch (err) {
         console.error('Test query exception:', err);
@@ -166,217 +163,96 @@ export const ProductTable = ({ onEdit, onRefresh, searchTerm = "" }: ProductTabl
     testQuery();
   }, []);
 
-  // Fetch products with pagination and proper error handling
-  const { data: products, isLoading, error, refetch } = useSupabaseQuery(
-    ['products', currentPage.toString(), searchTerm, sortField, sortDirection],
-    async () => {
+  // Fetch products using backend API (bypasses RLS and works reliably)
+  const { data: productsData, isLoading, error, refetch } = useQuery({
+    queryKey: ['products', currentPage.toString(), searchTerm, sortField, sortDirection],
+    queryFn: async () => {
       performanceMonitor.startTimer('product-table-main-query');
       try {
-        console.log('Attempting to fetch products with relationships...');
-        let query = supabase
-          .from('products')
-          .select(`
-            id,
-            name,
-            description,
-            sku_code,
-            barcode,
-            category_id,
-            subcategory_id,
-            unit_id,
-            cost_price,
-            selling_price,
-            minimum_stock,
-            maximum_stock,
-            reorder_point,
-            is_active,
-            created_at,
-            updated_at,
-            hsn_code,
-            mrp,
-            sale_price,
-            initial_quantity,
-            supplier_id,
-            sale_tax_id,
-            sale_tax_type,
-            purchase_tax_id,
-            purchase_tax_type,
-            discount_percentage,
-            manufacturer,
-            brand,
-            manufacturer_part_number,
-            warranty_period,
-            warranty_unit,
-            product_tags,
-            is_serialized,
-            track_inventory,
-            allow_override_price,
-            warehouse_rack,
-            unit_conversions,
-            categories:category_id(name),
-            units:unit_id(name, abbreviation),
-            stock_levels(quantity_on_hand, quantity_available)
-          `);
-
-        // Apply search filter if search term exists
+        console.log('Fetching products from backend API...');
+        const allProducts = await getProducts();
+        
+        if (!Array.isArray(allProducts)) {
+          console.error('Invalid products data:', allProducts);
+          return [];
+        }
+        
+        // Apply client-side filtering for search term
+        let filteredProducts = allProducts;
         if (searchTerm.trim()) {
-          query = query.or(`name.ilike.%${searchTerm}%,sku_code.ilike.%${searchTerm}%`);
-        }
-
-        // Apply pagination with sorting
-        const result = await query
-          .order(sortField, { ascending: sortDirection === "asc" })
-          .range(offset, offset + ITEMS_PER_PAGE - 1);
-        
-        if (result.error) {
-          console.error('Full query failed with error:', result.error);
-          console.log('Trying basic query without relationships...');
-          // Fallback to basic query without relationships
-          let basicQuery = supabase
-            .from('products')
-            .select(`
-              id,
-              name,
-              description,
-              sku_code,
-              barcode,
-              category_id,
-              subcategory_id,
-              unit_id,
-              cost_price,
-              selling_price,
-              minimum_stock,
-              maximum_stock,
-              reorder_point,
-              is_active,
-              created_at,
-              updated_at,
-              hsn_code,
-              mrp,
-              sale_price,
-              initial_quantity,
-              supplier_id,
-              sale_tax_id,
-              sale_tax_type,
-              purchase_tax_id,
-              purchase_tax_type,
-              discount_percentage,
-              manufacturer,
-              brand,
-              manufacturer_part_number,
-              warranty_period,
-              warranty_unit,
-              product_tags,
-              is_serialized,
-              track_inventory,
-              allow_override_price,
-              warehouse_rack,
-              unit_conversions
-            `);
-          
-          if (searchTerm.trim()) {
-            basicQuery = basicQuery.or(`name.ilike.%${searchTerm}%,sku_code.ilike.%${searchTerm}%`);
-          }
-          
-          const basicResult = await basicQuery
-            .order(sortField, { ascending: sortDirection === "asc" })
-            .range(offset, offset + ITEMS_PER_PAGE - 1);
-          
-          if (basicResult.error) {
-            console.error('Basic query also failed with error:', basicResult.error);
-            console.log('Trying final fallback without ordering...');
-            // Final fallback - try without any ordering
-            let finalQuery = supabase.from('products').select(`
-              id,
-              name,
-              description,
-              sku_code,
-              barcode,
-              category_id,
-              subcategory_id,
-              unit_id,
-              cost_price,
-              selling_price,
-              minimum_stock,
-              maximum_stock,
-              reorder_point,
-              is_active,
-              created_at,
-              updated_at,
-              hsn_code,
-              mrp,
-              sale_price,
-              initial_quantity,
-              supplier_id,
-              sale_tax_id,
-              sale_tax_type,
-              purchase_tax_id,
-              purchase_tax_type,
-              discount_percentage,
-              manufacturer,
-              brand,
-              manufacturer_part_number,
-              warranty_period,
-              warranty_unit,
-              product_tags,
-              is_serialized,
-              track_inventory,
-              allow_override_price,
-              warehouse_rack,
-              unit_conversions
-            `);
-            
-            if (searchTerm.trim()) {
-              finalQuery = finalQuery.or(`name.ilike.%${searchTerm}%,sku_code.ilike.%${searchTerm}%`);
-            }
-            
-            const finalResult = await finalQuery.range(offset, offset + ITEMS_PER_PAGE - 1);
-            
-            if (finalResult.error) {
-              console.error('Final fallback also failed:', finalResult.error);
-              throw finalResult.error;
-            }
-            
-            console.log('Final fallback succeeded, returning basic data');
-            return finalResult;
-          }
-          
-          console.log('Basic query succeeded, returning data without relationships');
-          return basicResult;
+          const lowerSearch = searchTerm.toLowerCase();
+          filteredProducts = allProducts.filter((p: Product) => 
+            (p.name || '').toLowerCase().includes(lowerSearch) ||
+            (p.sku_code || '').toLowerCase().includes(lowerSearch) ||
+            (p.hsn_code || '').toLowerCase().includes(lowerSearch) ||
+            (p.barcode || '').toLowerCase().includes(lowerSearch)
+          );
         }
         
-        console.log('Full query succeeded with relationships');
-        return result;
+        // Apply client-side sorting
+        filteredProducts.sort((a: Product, b: Product) => {
+          const aVal = (a as any)[sortField];
+          const bVal = (b as any)[sortField];
+          
+          if (aVal === undefined || aVal === null) return 1;
+          if (bVal === undefined || bVal === null) return -1;
+          
+          if (typeof aVal === 'string' && typeof bVal === 'string') {
+            return sortDirection === 'asc' 
+              ? aVal.localeCompare(bVal)
+              : bVal.localeCompare(aVal);
+          }
+          
+          if (typeof aVal === 'number' && typeof bVal === 'number') {
+            return sortDirection === 'asc' ? aVal - bVal : bVal - aVal;
+          }
+          
+          return 0;
+        });
+        
+        // Apply pagination
+        const paginatedProducts = filteredProducts.slice(offset, offset + ITEMS_PER_PAGE);
+        
+        console.log(`Fetched ${allProducts.length} products, filtered to ${filteredProducts.length}, showing page ${currentPage}`);
+        return paginatedProducts;
       } catch (err) {
-        console.error('Query error:', err);
+        console.error('Error fetching products:', err);
         throw err;
       } finally {
         performanceMonitor.endTimer('product-table-main-query');
       }
     },
-    {
-      // Add caching and stale time to reduce unnecessary refetches
       staleTime: 30000, // 30 seconds
-      gcTime: 5 * 60 * 1000, // 5 minutes (fixed from cacheTime)
-    }
-  );
+    gcTime: 5 * 60 * 1000, // 5 minutes
+  });
+  
+  const products = productsData || [];
 
-  // Get total count for pagination
-  const { data: totalCount } = useSupabaseQuery(
-    ['products-count', searchTerm],
-    async () => {
+  // Get total count for pagination (client-side filtering)
+  const { data: totalCount } = useQuery({
+    queryKey: ['products-count', searchTerm],
+    queryFn: async () => {
       performanceMonitor.startTimer('product-table-count-query');
       try {
-        let query = supabase
-          .from('products')
-          .select('id', { count: 'exact', head: true });
-
-        if (searchTerm.trim()) {
-          query = query.or(`name.ilike.%${searchTerm}%,sku_code.ilike.%${searchTerm}%`);
+        const allProducts = await getProducts();
+        
+        if (!Array.isArray(allProducts)) {
+          return 0;
         }
-
-        const result = await query;
-        return result.count || 0;
+        
+        // Apply same search filter as main query
+        if (searchTerm.trim()) {
+          const lowerSearch = searchTerm.toLowerCase();
+          const filtered = allProducts.filter((p: Product) => 
+            (p.name || '').toLowerCase().includes(lowerSearch) ||
+            (p.sku_code || '').toLowerCase().includes(lowerSearch) ||
+            (p.hsn_code || '').toLowerCase().includes(lowerSearch) ||
+            (p.barcode || '').toLowerCase().includes(lowerSearch)
+          );
+          return filtered.length;
+        }
+        
+        return allProducts.length;
       } catch (err) {
         console.error('Count query error:', err);
         return 0;
@@ -384,11 +260,9 @@ export const ProductTable = ({ onEdit, onRefresh, searchTerm = "" }: ProductTabl
         performanceMonitor.endTimer('product-table-count-query');
       }
     },
-    {
       staleTime: 60000, // 1 minute
-      gcTime: 5 * 60 * 1000, // 5 minutes (fixed from cacheTime)
-    }
-  );
+    gcTime: 5 * 60 * 1000, // 5 minutes
+  });
 
   // Reset to first page when search term or sorting changes
   useEffect(() => {
@@ -416,20 +290,12 @@ export const ProductTable = ({ onEdit, onRefresh, searchTerm = "" }: ProductTabl
     if (!selectedProduct) return;
 
     try {
-      const { error } = await supabase
-        .from('products')
-        .delete()
-        .eq('id', selectedProduct.id);
-
-      if (error) {
-        console.error('Error deleting product:', error);
-        // You might want to show a toast notification here
-        return;
-      }
+      await deleteProduct(selectedProduct.id);
 
       // Close dialog and refresh data
       setDeleteDialogOpen(false);
       setSelectedProduct(null);
+      refetch(); // Refresh the query
       if (onRefresh) {
         onRefresh();
       }
