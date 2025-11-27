@@ -1,6 +1,13 @@
 import { getSupabaseClient, getFallbackSupabaseClient } from './supabase-config';
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+// Determine API base URL - check environment variable first, then default
+// If VITE_API_BASE_URL is set to /api, use it (for production with proxy)
+// Otherwise, default to localhost:7001 (backend default port)
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:7001';
+
+// Log the API base URL for debugging
+console.log('🔧 API_BASE_URL:', API_BASE_URL);
+console.log('🔧 VITE_API_BASE_URL env:', import.meta.env.VITE_API_BASE_URL);
 
 export async function apiFetch(path: string, options: RequestInit = {}) {
   let supabase;
@@ -11,8 +18,36 @@ export async function apiFetch(path: string, options: RequestInit = {}) {
     supabase = getFallbackSupabaseClient();
   }
 
-  const { data } = await supabase.auth.getSession();
-  const accessToken = data.session?.access_token;
+  // Get session and try to refresh if needed
+  let { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+  
+  // If no session or token expired, try to refresh
+  if (!sessionData?.session?.access_token || sessionError) {
+    console.log('⚠️ Session expired or missing, attempting to refresh...');
+    const { data: refreshData, error: refreshError } = await supabase.auth.refreshSession();
+    if (refreshError || !refreshData?.session) {
+      console.error('❌ Failed to refresh session:', refreshError);
+      throw new Error('Session expired. Please log in again.');
+    }
+    sessionData = refreshData;
+  }
+  
+  const accessToken = sessionData.session?.access_token;
+  
+  // Debug logging
+  if (!accessToken) {
+    console.error('⚠️ No access token found in session:', {
+      hasSession: !!sessionData.session,
+      sessionData: sessionData.session ? {
+        user: sessionData.session.user?.id,
+        expiresAt: sessionData.session.expires_at,
+        expiresIn: sessionData.session.expires_in
+      } : null
+    });
+    throw new Error('No access token available. Please log in again.');
+  }
+  
+  console.log('✅ Access token found, making request to:', `${API_BASE_URL}${path}`);
   
   const res = await fetch(`${API_BASE_URL}${path}`, {
     ...options,
@@ -75,8 +110,26 @@ export async function apiUpload(path: string, file: File) {
   } catch (error) {
     supabase = getFallbackSupabaseClient();
   }
-  const { data } = await supabase.auth.getSession();
-  const accessToken = data.session?.access_token;
+  
+  // Get session and try to refresh if needed
+  let { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+  
+  // If no session or token expired, try to refresh
+  if (!sessionData?.session?.access_token || sessionError) {
+    console.log('⚠️ Session expired or missing, attempting to refresh...');
+    const { data: refreshData, error: refreshError } = await supabase.auth.refreshSession();
+    if (refreshError || !refreshData?.session) {
+      console.error('❌ Failed to refresh session:', refreshError);
+      throw new Error('Session expired. Please log in again.');
+    }
+    sessionData = refreshData;
+  }
+  
+  const accessToken = sessionData.session?.access_token;
+  
+  if (!accessToken) {
+    throw new Error('No access token available. Please log in again.');
+  }
 
   const formData = new FormData();
   formData.append('file', file);
@@ -381,7 +434,7 @@ export async function getSystemSettings() {
 
 export async function getPublicSystemSettings(signal?: AbortSignal) {
   // This function doesn't use apiFetch since it doesn't require authentication
-  const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+  const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:7001';
   
   const res = await fetch(`${API_BASE_URL}/public/system-settings`, {
     method: 'GET',

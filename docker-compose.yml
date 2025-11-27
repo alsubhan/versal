@@ -1,5 +1,6 @@
 services:
   api:
+    container_name: versal-api
     build:
       context: ./backend
       dockerfile: Dockerfile
@@ -16,6 +17,7 @@ services:
     restart: unless-stopped
 
   web:
+    container_name: versal-app
     build:
       context: ./frontend
       dockerfile: Dockerfile
@@ -46,7 +48,8 @@ services:
     image: supabase/gotrue:v2.158.0
     container_name: supabase-auth
     depends_on:
-      - supabase-db
+      supabase-db:
+        condition: service_healthy
     environment:
       - GOTRUE_SITE_URL=${SUPABASE_PUBLIC_URL:-http://localhost:${SUPABASE_PUBLIC_PORT:-7001}}
       - GOTRUE_API_HOST=0.0.0.0
@@ -56,12 +59,14 @@ services:
       - GOTRUE_JWT_SECRET=${SUPABASE_JWT_SECRET:-super-secret-jwt}
       - GOTRUE_DISABLE_SIGNUP=${SUPABASE_DISABLE_SIGNUP:-false}
       - GOTRUE_MAILER_AUTOCONFIRM=${SUPABASE_MAILER_AUTOCONFIRM:-true}
+      - API_EXTERNAL_URL=${SUPABASE_PUBLIC_URL:-http://localhost:${SUPABASE_PUBLIC_PORT:-7001}}
 
   supabase-rest:
     image: postgrest/postgrest:v12.0.2
     container_name: supabase-rest
     depends_on:
-      - supabase-db
+      supabase-db:
+        condition: service_healthy
     environment:
       - PGRST_DB_URI=postgres://postgres:${SUPABASE_DB_PASSWORD:-postgres}@supabase-db:5432/postgres
       - PGRST_DB_SCHEMA=public,storage
@@ -73,7 +78,8 @@ services:
     image: supabase/realtime:v2.25.69
     container_name: supabase-realtime
     depends_on:
-      - supabase-db
+      supabase-db:
+        condition: service_healthy
     environment:
       - PORT=4000
       - DB_HOST=supabase-db
@@ -82,12 +88,23 @@ services:
       - DB_PASSWORD=${SUPABASE_DB_PASSWORD:-postgres}
       - DB_PORT=5432
       - JWT_SECRET=${SUPABASE_JWT_SECRET:-super-secret-jwt}
+      - SECRET_KEY_BASE=${SUPABASE_JWT_SECRET:-super-secret-jwt}
+      - FLY_APP_NAME=realtime
+    entrypoint:
+      - /bin/bash
+      - -c
+      - |
+        set -euo pipefail
+        ulimit -n 100000
+        export ERL_CRASH_DUMP=/tmp/erl_crash.dump
+        exec /app/bin/server
 
   supabase-meta:
     image: supabase/postgres-meta:v0.80.0
     container_name: supabase-meta
     depends_on:
-      - supabase-db
+      supabase-db:
+        condition: service_healthy
     environment:
       - PG_META_PORT=8080
       - PG_META_DB_HOST=supabase-db
@@ -111,6 +128,9 @@ services:
       - GLOBAL_S3_BUCKET=versal-local
       - TENANT_ID=local
       - PORT=5000
+      - FILE_STORAGE_BACKEND_PATH=/var/lib/storage/data
+    volumes:
+      - supabase-storage-data:/var/lib/storage
 
   supabase-kong:
     image: kong:2.8
@@ -153,3 +173,4 @@ networks:
 
 volumes:
   supabase-db-data:
+  supabase-storage-data:

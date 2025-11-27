@@ -204,6 +204,8 @@ def _reserve_or_sell_serials_for_invoice_item(product_id: str, serial_numbers: L
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
+        "http://localhost:7000",  # Frontend production port (Docker)
+        "http://127.0.0.1:7000",  # Alternative localhost (Docker)
         "http://localhost:8080",  # Frontend development server
         "http://localhost:5173",  # Vite default port
         "http://localhost:3000",  # React default port
@@ -212,7 +214,6 @@ app.add_middleware(
         "http://127.0.0.1:3000",  # Alternative localhost
         "http://localhost:4173",  # Vite preview port
         "http://127.0.0.1:4173",  # Vite preview port
-        "*",  # Allow all origins in development
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -941,7 +942,7 @@ def to_camel_case_system_setting(system_setting):
 
 @app.get("/")
 def read_root():
-    return {"message": "Hello, FastAPI!"}
+    return {"message": "Hello, Versal!"}
 
 @app.get("/debug/status")
 @require_debug_mode()

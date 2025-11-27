@@ -1,0 +1,34 @@
+services:
+  api:
+    container_name: versal-api
+    build:
+      context: /Users/ameera/Documents/versal/backend
+      dockerfile: Dockerfile
+    env_file:
+      - /Users/ameera/Documents/versal/.env
+    environment:
+      - DEBUG=false
+      # Official Supabase uses 'kong' as service name
+      - SUPABASE_INTERNAL_URL=${SUPABASE_INTERNAL_URL:-http://kong:8000}
+      - SUPABASE_PUBLIC_URL=${SUPABASE_PUBLIC_URL:-http://localhost:${SUPABASE_PUBLIC_PORT:-8000}}
+      # Use official Supabase env var names (ANON_KEY, SERVICE_ROLE_KEY)
+      - SUPABASE_SERVICE_KEY=${SERVICE_ROLE_KEY:-${SUPABASE_SERVICE_KEY}}
+      - SUPABASE_ANON_KEY=${ANON_KEY:-${SUPABASE_ANON_KEY}}
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    depends_on:
+      - kong
+    restart: unless-stopped
+
+  web:
+    container_name: versal-app
+    build:
+      context: /Users/ameera/Documents/versal/frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-/api}
+    ports:
+      - "${FRONTEND_PORT:-80}:80"
+    depends_on:
+      - api
+    restart: unless-stopped
