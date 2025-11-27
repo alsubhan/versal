@@ -189,8 +189,10 @@ if ! docker version >/dev/null 2>&1; then
 fi
 echo "Docker is running"
 
-# Check for official Supabase setup
-SUPABASE_DOCKER_DIR="${REPO_ROOT}/supabase-docker"
+# Check for official Supabase setup (stored outside repo under ~/Documents)
+SUPABASE_DATA_ROOT="${SUPABASE_DATA_ROOT:-${HOME}/Documents}"
+mkdir -p "${SUPABASE_DATA_ROOT}"
+SUPABASE_DOCKER_DIR="${SUPABASE_DATA_ROOT}/supabase-docker"
 SETUP_SCRIPT="${SCRIPT_DIR}/setup-official-supabase.sh"
 
 if [[ ! -d "${SUPABASE_DOCKER_DIR}" ]] || [[ ! -f "${SUPABASE_DOCKER_DIR}/docker-compose.yml" ]]; then
@@ -198,7 +200,7 @@ if [[ ! -d "${SUPABASE_DOCKER_DIR}" ]] || [[ ! -f "${SUPABASE_DOCKER_DIR}/docker
   echo "Official Supabase Docker setup not found."
   echo "Setting up official Supabase Docker files from GitHub..."
   if [[ -f "${SETUP_SCRIPT}" ]]; then
-    bash "${SETUP_SCRIPT}"
+    SUPABASE_DATA_ROOT="${SUPABASE_DATA_ROOT}" bash "${SETUP_SCRIPT}"
   else
     echo "Error: Setup script not found: ${SETUP_SCRIPT}" >&2
   exit 1
@@ -497,12 +499,12 @@ if [[ "${FORCE_REINIT}" == "true" ]]; then
   set +e  # Don't exit on error during cleanup
   
   # Stop and remove Supabase containers (use direct docker compose to avoid hanging)
-  if [[ -d "${REPO_ROOT}/supabase-docker" ]]; then
+  if [[ -d "${SUPABASE_DOCKER_DIR}" ]]; then
     local compose_cmd="docker compose"
     if [[ -n "${COMPOSE_PROJECT_NAME}" ]]; then
       compose_cmd="docker compose -p ${COMPOSE_PROJECT_NAME}"
     fi
-    (cd "${REPO_ROOT}/supabase-docker" && ${compose_cmd} down -v --remove-orphans 2>&1 | head -20) || true
+    (cd "${SUPABASE_DOCKER_DIR}" && ${compose_cmd} down -v --remove-orphans 2>&1 | head -20) || true
   fi
   
   # Also stop and remove custom services

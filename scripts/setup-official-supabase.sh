@@ -6,8 +6,10 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-SUPABASE_DOCKER_DIR="${REPO_ROOT}/supabase-docker"
-SUPABASE_REPO_DIR="${REPO_ROOT}/.supabase-repo"
+SUPABASE_DATA_ROOT="${SUPABASE_DATA_ROOT:-${HOME}/Documents}"
+mkdir -p "${SUPABASE_DATA_ROOT}"
+SUPABASE_DOCKER_DIR="${SUPABASE_DATA_ROOT}/supabase-docker"
+SUPABASE_REPO_DIR="${SUPABASE_DATA_ROOT}/.supabase-repo"
 SUPABASE_REPO_URL="https://github.com/supabase/supabase.git"
 
 cd "${REPO_ROOT}"
