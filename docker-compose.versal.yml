@@ -2,10 +2,10 @@ services:
   api:
     container_name: versal-api
     build:
-      context: /Users/ameera/Documents/versal/backend
+      context: ${PROJECT_ROOT:-${PWD:-${HOME}/Documents/versal}}/backend
       dockerfile: Dockerfile
     env_file:
-      - /Users/ameera/Documents/versal/.env
+      - ${PROJECT_ROOT:-${PWD:-${HOME}/Documents/versal}}/.env
     environment:
       - DEBUG=false
       # Official Supabase uses 'kong' as service name
@@ -23,7 +23,7 @@ services:
   web:
     container_name: versal-app
     build:
-      context: /Users/ameera/Documents/versal/frontend
+      context: ${PROJECT_ROOT:-${PWD:-${HOME}/Documents/versal}}/frontend
       dockerfile: Dockerfile
       args:
         VITE_API_BASE_URL: ${VITE_API_BASE_URL:-/api}
