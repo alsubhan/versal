@@ -26,4 +26,3 @@ dist-ssr
 
 # Supabase local stacks
 supabase/exports/
-supabase-docker/volumes/db/data/
