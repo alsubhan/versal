@@ -22,4 +22,8 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
-*.envsupabase/exports/
+*.env
+
+# Supabase local stacks
+supabase/exports/
+supabase-docker/volumes/db/data/
