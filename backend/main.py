@@ -1834,14 +1834,103 @@ def get_stock_levels(payload=Depends(require_permission("inventory_stock_view"))
 
 @app.post("/inventory/stock-levels")
 def create_stock_level(stock_level: dict = Body(...), payload=Depends(require_permission("inventory_stock_manage"))):
-    # Map camelCase to snake_case for the actual database schema
+    product_id = stock_level.get("productId")
+    location_id = stock_level.get("locationId")
+    quantity = stock_level.get("quantity", 0)
+    serial_numbers = stock_level.get("serialNumbers", [])
+    
+    if not product_id:
+        raise HTTPException(status_code=400, detail="Product ID is required")
+    
+    # Check if product is serialized
+    product_data = supabase.table("products").select("is_serialized").eq("id", product_id).execute()
+    if not product_data.data:
+        raise HTTPException(status_code=404, detail="Product not found")
+    
+    is_serialized = product_data.data[0].get("is_serialized", False)
+    
+    # Handle serialized products
+    if is_serialized:
+        if not serial_numbers or len(serial_numbers) == 0:
+            raise HTTPException(
+                status_code=400, 
+                detail="Serial numbers are required for serialized products"
+            )
+        
+        if len(serial_numbers) != quantity:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Serial count ({len(serial_numbers)}) must match quantity ({quantity})"
+            )
+        
+        # Validate serial numbers don't already exist
+        existing_serials = supabase.table("product_serials").select("serial_number").eq("product_id", product_id).in_("serial_number", serial_numbers).execute()
+        if existing_serials.data and len(existing_serials.data) > 0:
+            existing = [s["serial_number"] for s in existing_serials.data]
+            raise HTTPException(
+                status_code=400,
+                detail=f"Serial numbers already exist: {', '.join(existing)}"
+            )
+        
+        # Create product_serials entries
+        serial_payload = []
+        for serial in serial_numbers:
+            serial_norm = (serial or "").strip()
+            if not serial_norm:
+                continue
+            serial_payload.append({
+                "product_id": product_id,
+                "serial_number": serial_norm,
+                "status": "available",
+                "location_id": location_id,
+            })
+        
+        if serial_payload:
+            serial_result = supabase.table("product_serials").insert(serial_payload).execute()
+            
+            # Create inventory transaction for batch receipt
+            if serial_result.data:
+                _create_inventory_transaction_for_serial_status_change(
+                    product_id,
+                    "BATCH",
+                    "none",
+                    "available",
+                    "stock_level_creation",
+                    None,  # No specific reference ID for stock level creation
+                    f"Serialized products added via stock level - {len(serial_payload)} units with serials: {', '.join([s['serial_number'] for s in serial_payload])}",
+                    payload.get("sub")
+                )
+        
+        # For serialized products, stock_levels counters are updated automatically by triggers
+        # We still create a stock_levels record if it doesn't exist (for location tracking)
+        # But quantity_on_hand should be 0 as it's managed by serialized counters
+        mapped_data = {
+            "product_id": product_id,
+            "location_id": location_id,
+            "quantity_on_hand": 0,  # Serialized products use serialized_available counter
+            "created_by": payload.get("sub")
+        }
+        
+        # Check if stock level already exists
+        existing_stock = supabase.table("stock_levels").select("id").eq("product_id", product_id).eq("location_id", location_id).execute()
+        
+        if existing_stock.data:
+            # Update existing stock level (triggers will handle counters)
+            data = supabase.table("stock_levels").update(mapped_data).eq("id", existing_stock.data[0]["id"]).execute()
+        else:
+            # Create new stock level
+            data = supabase.table("stock_levels").insert(mapped_data).execute()
+        
+        return JSONResponse(content=data.data if data.data else [])
+    
+    # Handle non-serialized products (original logic)
     mapped_data = {}
-    if "productId" in stock_level:
-        mapped_data["product_id"] = stock_level["productId"]
-    if "locationId" in stock_level:
-        mapped_data["location_id"] = stock_level["locationId"]
-    if "quantity" in stock_level:
-        mapped_data["quantity_on_hand"] = stock_level["quantity"]
+    if product_id:
+        mapped_data["product_id"] = product_id
+    if location_id:
+        mapped_data["location_id"] = location_id
+    if quantity is not None:
+        mapped_data["quantity_on_hand"] = quantity
     
     # Add created_by field
     mapped_data["created_by"] = payload.get("sub")
@@ -1876,7 +1965,45 @@ def update_stock_level(stock_level_id: str, stock_level: dict = Body(...), paylo
         print(f"Starting update_stock_level for ID: {stock_level_id}")
         print(f"Received stock_level data: {stock_level}")
         
-        # Map camelCase to snake_case for the database schema
+        # Get current stock level to check product
+        current_stock = supabase.table("stock_levels").select("product_id, products(is_serialized)").eq("id", stock_level_id).execute()
+        
+        if not current_stock.data:
+            raise HTTPException(status_code=404, detail="Stock level not found")
+        
+        product_id = current_stock.data[0].get("product_id")
+        product_info = current_stock.data[0].get("products") or {}
+        is_serialized = product_info.get("is_serialized", False)
+        
+        # For serialized products, prevent direct quantity updates
+        # Stock levels for serialized products are managed through product_serials table
+        if is_serialized:
+            if "quantity" in stock_level or "quantityReserved" in stock_level:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Cannot directly update quantity for serialized products. Use GRN, adjustments, or other transactions to manage serialized inventory."
+                )
+            
+            # Only allow location updates for serialized products
+            mapped_data = {}
+            if "locationId" in stock_level:
+                mapped_data["location_id"] = stock_level["locationId"]
+            
+            if not mapped_data:
+                raise HTTPException(
+                    status_code=400,
+                    detail="No valid fields to update for serialized product stock level"
+                )
+            
+            # Update location only
+            data = supabase.table("stock_levels").update(mapped_data).eq("id", stock_level_id).execute()
+            
+            if not data.data:
+                raise HTTPException(status_code=404, detail="Stock level not found after update")
+            
+            return JSONResponse(content=data.data[0])
+        
+        # For non-serialized products, use original logic
         mapped_data = {
             "product_id": stock_level.get("productId"),
             "location_id": stock_level.get("locationId"),
@@ -1909,6 +2036,8 @@ def update_stock_level(stock_level_id: str, stock_level: dict = Body(...), paylo
         updated_stock_level = data.data[0]
         return JSONResponse(content=updated_stock_level)
         
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"Error updating stock level: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to update stock level: {str(e)}")
@@ -2503,7 +2632,25 @@ def create_user(user: dict = Body(...), payload=Depends(require_role(["admin"]))
         try:
             # Use the anon key for signup (like frontend does)
             from supabase import create_client
-            anon_supabase = create_client(SUPABASE_URL, os.getenv("SUPABASE_ANON_KEY"))
+            
+            # Validate environment variables
+            anon_key = os.getenv("SUPABASE_ANON_KEY")
+            if not anon_key:
+                raise HTTPException(
+                    status_code=500, 
+                    detail="SUPABASE_ANON_KEY environment variable is not set. Cannot create user."
+                )
+            
+            # Use PUBLIC URL if available (for external access), otherwise fall back to INTERNAL URL
+            # When running in Docker, INTERNAL URL should work for backend-to-backend calls
+            supabase_url_for_auth = SUPABASE_PUBLIC_URL or SUPABASE_INTERNAL_URL
+            if not supabase_url_for_auth:
+                raise HTTPException(
+                    status_code=500,
+                    detail="Neither SUPABASE_PUBLIC_URL nor SUPABASE_INTERNAL_URL is set. Cannot create user."
+                )
+            
+            anon_supabase = create_client(supabase_url_for_auth, anon_key)
             
             # Prepare user metadata (this will be used by the database trigger)
             user_metadata = {
@@ -2521,6 +2668,16 @@ def create_user(user: dict = Body(...), payload=Depends(require_role(["admin"]))
                 }
             })
             
+            # Check for auth errors
+            if not auth_response.user:
+                error_msg = "Failed to create user in Supabase Auth"
+                if hasattr(auth_response, 'error') and auth_response.error:
+                    error_msg += f": {auth_response.error.message}"
+                elif hasattr(auth_response, 'error') and auth_response.error:
+                    error_msg += f": {str(auth_response.error)}"
+                raise HTTPException(status_code=500, detail=error_msg)
+            
+            # User was created successfully
             if auth_response.user:
                 user_id = auth_response.user.id
                 
@@ -2568,8 +2725,6 @@ def create_user(user: dict = Body(...), payload=Depends(require_role(["admin"]))
                         
                 except Exception as profile_error:
                     raise HTTPException(status_code=500, detail=f"Error fetching created profile: {str(profile_error)}")
-            else:
-                raise HTTPException(status_code=500, detail="Failed to create user in Supabase Auth")
                 
         except Exception as auth_error:
             raise HTTPException(status_code=500, detail=f"Failed to create user: {str(auth_error)}")

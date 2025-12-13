@@ -195,6 +195,31 @@ export function SupplierDialog({ open, onOpenChange, supplier, onSubmit }: Suppl
       
       console.log("Supplier data to submit:", supplierData);
       await onSubmit(supplierData);
+      
+      // Reset form after successful creation (not update)
+      if (!supplier) {
+        form.reset({
+          name: "",
+          contactName: "",
+          email: "",
+          phone: "",
+          billingStreet: "",
+          billingCity: "",
+          billingState: "",
+          billingZipCode: "",
+          billingCountry: "",
+          shippingStreet: "",
+          shippingCity: "",
+          shippingState: "",
+          shippingZipCode: "",
+          shippingCountry: "",
+          useBillingAsShipping: false,
+          paymentTerms: "Net 30",
+          isActive: true,
+          taxId: "",
+          notes: "",
+        });
+      }
     } else {
       // Fallback to toast notification
       toast({

@@ -167,7 +167,7 @@ export const ProductDialog: React.FC<ProductDialogProps> = ({ open, onOpenChange
         purchaseTaxId: product.purchase_tax_id || '',
         purchaseTaxType: product.purchase_tax_type || 'exclusive',
         unitId: product.unit_id || '',
-        initialQty: product.initial_quantity?.toString() || stockLevels?.[0]?.quantity_on_hand?.toString() || '',
+        initialQty: product.is_serialized ? '0' : (product.initial_quantity?.toString() || stockLevels?.[0]?.quantity_on_hand?.toString() || ''),
         warehouseRack: product.warehouse_rack || '',
         reorderLevel: (product.reorder_point !== null && product.reorder_point !== undefined) ? product.reorder_point.toString() : (product.minimum_stock !== null && product.minimum_stock !== undefined) ? product.minimum_stock.toString() : '',
         brand: product.brand || '',
@@ -233,7 +233,14 @@ export const ProductDialog: React.FC<ProductDialogProps> = ({ open, onOpenChange
 
   // Handle form input changes
   const handleInputChange = (field: string, value: string | number | boolean) => {
-    setFormData(prev => ({ ...prev, [field]: value }));
+    setFormData(prev => {
+      const updated = { ...prev, [field]: value };
+      // If Serialized Product is enabled, disable Initial Quantity and set it to 0
+      if (field === 'isSerialized' && value === true) {
+        updated.initialQty = '0';
+      }
+      return updated;
+    });
   };
 
   // Handle input validation for specific fields
@@ -829,11 +836,16 @@ export const ProductDialog: React.FC<ProductDialogProps> = ({ open, onOpenChange
                           placeholder="0" 
                           value={formData.initialQty}
                           onChange={(e) => handleInputChange('initialQty', e.target.value)}
-                          disabled={!!product} // Disable in edit mode
+                          disabled={!!product || formData.isSerialized} // Disable in edit mode or when Serialized Product is enabled
                         />
                         {product && (
                           <p className="text-xs text-muted-foreground">
                             Stock quantities can be managed through the Inventory module
+                          </p>
+                        )}
+                        {formData.isSerialized && (
+                          <p className="text-xs text-muted-foreground">
+                            Initial Quantity is not applicable for Serialized Products
                           </p>
                         )}
                   </div>

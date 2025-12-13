@@ -20,6 +20,7 @@ import {
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
   SelectContent,
@@ -37,6 +38,11 @@ const formSchema = z.object({
   locationId: z.string().min(1, "Location is required"),
   quantity: z.number().min(0, "Quantity must be 0 or greater"),
   quantityReserved: z.number().min(0, "Reserved quantity must be 0 or greater"),
+  serialNumbers: z.string().optional(),
+}).refine((data) => {
+  // For serialized products, serial numbers are required
+  // Validation will be done in component based on selected product
+  return true;
 });
 
 type FormValues = z.infer<typeof formSchema>;
@@ -45,6 +51,7 @@ interface Product {
   id: string;
   name: string;
   sku_code: string;
+  is_serialized?: boolean;
 }
 
 interface Location {
@@ -64,6 +71,7 @@ export function StockLevelDialog({ open, onOpenChange, stockLevel, onSuccess }: 
   const [locations, setLocations] = useState<Location[]>([]);
   const [loading, setLoading] = useState(false);
   const [fetchingData, setFetchingData] = useState(false);
+  const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
 
   const form = useForm<FormValues>({
     resolver: zodResolver(formSchema),
@@ -72,8 +80,13 @@ export function StockLevelDialog({ open, onOpenChange, stockLevel, onSuccess }: 
       locationId: "",
       quantity: 0,
       quantityReserved: 0,
+      serialNumbers: "",
     },
   });
+
+  // Watch productId to update selectedProduct
+  const watchedProductId = form.watch("productId");
+  const watchedQuantity = form.watch("quantity");
 
   const fetchData = useCallback(async () => {
     try {
@@ -116,6 +129,16 @@ export function StockLevelDialog({ open, onOpenChange, stockLevel, onSuccess }: 
     }
   }, [open, fetchData]);
 
+  // Update selectedProduct when productId changes
+  useEffect(() => {
+    if (watchedProductId) {
+      const product = products.find(p => p.id === watchedProductId);
+      setSelectedProduct(product || null);
+    } else {
+      setSelectedProduct(null);
+    }
+  }, [watchedProductId, products]);
+
   useEffect(() => {
     if (stockLevel) {
       form.reset({
@@ -123,6 +146,7 @@ export function StockLevelDialog({ open, onOpenChange, stockLevel, onSuccess }: 
         locationId: stockLevel.locationId,
         quantity: stockLevel.quantity,
         quantityReserved: stockLevel.quantityReserved || 0,
+        serialNumbers: "",
       });
     } else {
       form.reset({
@@ -130,19 +154,92 @@ export function StockLevelDialog({ open, onOpenChange, stockLevel, onSuccess }: 
         locationId: "",
         quantity: 0,
         quantityReserved: 0,
+        serialNumbers: "",
       });
     }
   }, [stockLevel, form, open]);
 
+  const parseSerials = (text: string): string[] => {
+    return text
+      .split(/\r?\n|,/)
+      .map(s => s.trim())
+      .filter(Boolean);
+  };
+
+  const validateSerials = (serials: string[], quantity: number, isSerialized: boolean): string | null => {
+    if (!isSerialized) return null;
+    
+    if (serials.length !== quantity) {
+      return `Serial count (${serials.length}) must match quantity (${quantity})`;
+    }
+    
+    // Check for duplicates
+    const seen = new Set<string>();
+    for (const serial of serials) {
+      if (seen.has(serial)) {
+        return `Duplicate serial number detected: ${serial}`;
+      }
+      seen.add(serial);
+      
+      // Check alphanumeric only
+      if (!/^[a-zA-Z0-9]+$/.test(serial)) {
+        return `Serial number "${serial}" must be alphanumeric only`;
+      }
+    }
+    
+    return null;
+  };
+
   const onSubmit = async (data: FormValues) => {
     try {
       setLoading(true);
+      
+      const isSerialized = selectedProduct?.is_serialized || false;
+      let serialNumbers: string[] = [];
+      
+      // Validate serial numbers for serialized products
+      if (isSerialized) {
+        if (!data.serialNumbers || !data.serialNumbers.trim()) {
+          toast({
+            title: "Validation Error",
+            description: "Serial numbers are required for serialized products",
+            variant: "destructive"
+          });
+          setLoading(false);
+          return;
+        }
+        
+        serialNumbers = parseSerials(data.serialNumbers);
+        const validationError = validateSerials(serialNumbers, data.quantity, true);
+        
+        if (validationError) {
+          toast({
+            title: "Validation Error",
+            description: validationError,
+            variant: "destructive"
+          });
+          setLoading(false);
+          return;
+        }
+      } else {
+        // For non-serialized products, ensure no serial numbers are provided
+        if (data.serialNumbers && data.serialNumbers.trim()) {
+          toast({
+            title: "Validation Error",
+            description: "Serial numbers should not be provided for non-serialized products",
+            variant: "destructive"
+          });
+          setLoading(false);
+          return;
+        }
+      }
       
       const stockLevelData = {
         productId: data.productId,
         locationId: data.locationId,
         quantity: data.quantity,
         quantityReserved: data.quantityReserved,
+        serialNumbers: isSerialized ? serialNumbers : undefined,
       };
 
       if (stockLevel) {
@@ -177,11 +274,12 @@ export function StockLevelDialog({ open, onOpenChange, stockLevel, onSuccess }: 
       
       onOpenChange(false);
       onSuccess?.(); // Callback to refresh the table
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error saving stock level:', error);
+      const errorMessage = error?.detail || error?.message || "Failed to save stock level";
       toast({
         title: "Error",
-        description: "Failed to save stock level",
+        description: errorMessage,
         variant: "destructive"
       });
     } finally {
@@ -203,7 +301,7 @@ export function StockLevelDialog({ open, onOpenChange, stockLevel, onSuccess }: 
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[500px]">
+      <DialogContent className="sm:max-w-[600px]">
         <DialogHeader>
           <DialogTitle>{stockLevel ? "Edit Stock Level" : "Add Stock Level"}</DialogTitle>
           {stockLevel ? (
@@ -291,8 +389,14 @@ export function StockLevelDialog({ open, onOpenChange, stockLevel, onSuccess }: 
                         type="number"
                         {...field}
                         onChange={e => field.onChange(parseFloat(e.target.value) || 0)}
+                        disabled={selectedProduct?.is_serialized && !stockLevel}
                       />
                     </FormControl>
+                    {selectedProduct?.is_serialized && !stockLevel && (
+                      <p className="text-xs text-muted-foreground">
+                        Quantity will be determined by serial numbers entered below
+                      </p>
+                    )}
                     <FormMessage />
                   </FormItem>
                 )}
@@ -309,13 +413,64 @@ export function StockLevelDialog({ open, onOpenChange, stockLevel, onSuccess }: 
                         type="number"
                         {...field}
                         onChange={e => field.onChange(parseFloat(e.target.value) || 0)}
+                        disabled={selectedProduct?.is_serialized}
                       />
                     </FormControl>
+                    {selectedProduct?.is_serialized && (
+                      <p className="text-xs text-muted-foreground">
+                        Reserved quantity is managed automatically for serialized products
+                      </p>
+                    )}
                     <FormMessage />
                   </FormItem>
                 )}
               />
             </div>
+
+            {selectedProduct?.is_serialized && (
+              <FormField
+                control={form.control}
+                name="serialNumbers"
+                render={({ field }) => {
+                  const serialCount = field.value ? parseSerials(field.value).length : 0;
+                  const isValidCount = serialCount === watchedQuantity;
+                  
+                  return (
+                    <FormItem>
+                      <FormLabel>
+                        Serial Numbers {watchedQuantity > 0 && `(${watchedQuantity} required)`}
+                        {field.value && (
+                          <span className={`ml-2 text-xs ${isValidCount ? 'text-green-600' : 'text-orange-600'}`}>
+                            ({serialCount} entered)
+                          </span>
+                        )}
+                      </FormLabel>
+                      <FormControl>
+                        <Textarea
+                          {...field}
+                          placeholder="Enter serial numbers, one per line or comma-separated (e.g., SN001, SN002, SN003)"
+                          rows={Math.min(Math.max(watchedQuantity || 3, 3), 10)}
+                          className="font-mono text-sm"
+                        />
+                      </FormControl>
+                      <p className="text-xs text-muted-foreground">
+                        Enter {watchedQuantity || 0} unique alphanumeric serial number{watchedQuantity !== 1 ? 's' : ''}. 
+                        One per line or comma-separated.
+                      </p>
+                      {field.value && !isValidCount && watchedQuantity > 0 && (
+                        <p className="text-xs text-orange-600">
+                          {serialCount < watchedQuantity 
+                            ? `Need ${watchedQuantity - serialCount} more serial number${watchedQuantity - serialCount !== 1 ? 's' : ''}`
+                            : `Too many serial numbers. Expected ${watchedQuantity}, got ${serialCount}`
+                          }
+                        </p>
+                      )}
+                      <FormMessage />
+                    </FormItem>
+                  );
+                }}
+              />
+            )}
 
             <DialogFooter className="pt-4">
               <Button 
