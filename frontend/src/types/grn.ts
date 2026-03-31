@@ -44,7 +44,7 @@ export interface GoodsReceiveNote {
   vendorInvoiceNumber?: string;
   receivedBy: string;
   receivedByUser?: any; // User profile data
-  status: "draft" | "partial" | "completed" | "rejected";
+  status: "draft" | "partial" | "received" | "completed" | "rejected";
   totalReceivedItems?: number;
   notes?: string;
   qualityCheckStatus?: string;

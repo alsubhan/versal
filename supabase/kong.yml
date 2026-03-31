@@ -7,13 +7,17 @@ services:
     routes:
       - name: auth-route
         paths:
+          - /auth/v1
           - /auth
+        strip_path: true
   - name: rest
     url: http://supabase-rest:3000/
     routes:
       - name: rest-route
         paths:
+          - /rest/v1
           - /rest
+        strip_path: true
   - name: realtime
     url: http://supabase-realtime:4000/
     routes:
@@ -32,3 +36,35 @@ services:
       - name: meta-route
         paths:
           - /meta
+
+plugins:
+  - name: cors
+    config:
+      origins:
+        - '*'
+      methods:
+        - GET
+        - POST
+        - PUT
+        - PATCH
+        - DELETE
+        - OPTIONS
+      headers:
+        - Accept
+        - Accept-Version
+        - Content-Length
+        - Content-MD5
+        - Content-Type
+        - Date
+        - X-Auth-Token
+        - apikey
+        - authorization
+        - x-client-info
+        - prefer
+        - x-supabase-api-version
+        - accept-profile
+      exposed_headers:
+        - content-length
+        - content-range
+      credentials: true
+      max_age: 86400

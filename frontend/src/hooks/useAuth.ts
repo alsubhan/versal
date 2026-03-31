@@ -92,10 +92,10 @@ export const useAuth = () => {
       lastPermissionCheck.current = now;
       console.log('Fetching permissions for user:', userId);
       
-      // Get profile with role relation
+      // Get profile with role text directly
       const { data: profile, error: profileError } = await supabaseClient
         .from('profiles')
-        .select('role_id, roles(name, permissions)')
+        .select('role')
         .eq('id', userId)
         .single();
       
@@ -108,9 +108,15 @@ export const useAuth = () => {
         return;
       }
       
-      if (profile.roles) {
-        const userPermissions = profile.roles.permissions || [];
-        const userRole = profile.roles.name || null;
+      if (profile.role) {
+        // Since roles table is gone, we hardcode permissions based on the ENUM
+        const userRole = profile.role || null;
+        let userPermissions: string[] = [];
+        
+        // Give admins all common permissions required by the frontend
+        if (userRole === 'admin') {
+           userPermissions = ['*']; 
+        }
         
         console.log('Set permissions:', userPermissions);
         console.log('Set role:', userRole);
@@ -313,12 +319,19 @@ export const useAuth = () => {
       performanceMonitor.startTimer('auth-permission-check');
       console.log('Checking permission:', perm);
       console.log('Available permissions:', permissions);
+      
+      // Admin override 
+      if (role === 'admin' || permissions.includes('*')) {
+         performanceMonitor.endTimer('auth-permission-check');
+         return true;
+      }
+      
       const hasPerm = permissions.includes(perm);
       console.log('Has permission:', hasPerm);
       performanceMonitor.endTimer('auth-permission-check');
       return hasPerm;
     };
-  }, [permissions]);
+  }, [permissions, role]);
 
   // Clear cache when user changes
   useEffect(() => {

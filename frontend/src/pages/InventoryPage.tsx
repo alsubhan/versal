@@ -11,6 +11,7 @@ import { InventoryMovementDialog } from "@/components/inventory/InventoryMovemen
 import { LocationsTable } from "@/components/inventory/LocationsTable";
 import { LocationDialog } from "@/components/inventory/LocationDialog";
 import { InventoryTransactionsTable } from "@/components/inventory/InventoryTransactionsTable";
+import { ProductSerialsTable } from "@/components/inventory/ProductSerialsTable";
 import { useAuth } from "@/hooks/useAuth";
 import { PermissionGuard } from "@/components/ui/permission-guard";
 
@@ -52,8 +53,9 @@ const InventoryPage = () => {
         </div>
 
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
-          <TabsList className="grid w-full grid-cols-4">
+          <TabsList className="grid w-full grid-cols-5">
             <TabsTrigger value="stock-levels">Stock Levels</TabsTrigger>
+            <TabsTrigger value="product-serials">Product Serials</TabsTrigger>
             <TabsTrigger value="movements">Movements</TabsTrigger>
             <TabsTrigger value="locations">Locations</TabsTrigger>
             <TabsTrigger value="transactions">Transactions</TabsTrigger>
@@ -99,6 +101,22 @@ const InventoryPage = () => {
                 }}
               />
             )}
+          </TabsContent>
+
+          <TabsContent value="product-serials" className="space-y-4">
+            <Card>
+              <CardHeader>
+                <div>
+                  <CardTitle>Product Serials</CardTitle>
+                  <CardDescription>
+                    Track individual serialized items, their status, and availability across the inventory.
+                  </CardDescription>
+                </div>
+              </CardHeader>
+              <CardContent>
+                <ProductSerialsTable />
+              </CardContent>
+            </Card>
           </TabsContent>
 
           <TabsContent value="movements" className="space-y-4">

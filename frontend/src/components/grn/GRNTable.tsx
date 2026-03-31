@@ -9,7 +9,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
-import { Edit, Eye, Trash2, FileText, RotateCcw } from "lucide-react";
+import { Edit, Eye, Trash2, FileText, RotateCcw, SearchCheck } from "lucide-react";
 import { type GoodsReceiveNote } from "@/types/grn";
 import { formatDate, formatCurrency } from "@/lib/utils";
 import { useCurrencyStore } from "@/stores/currencyStore";
@@ -24,15 +24,16 @@ interface GRNTableProps {
   onDelete?: (id: string) => void;
   onPrint?: (grn: GoodsReceiveNote) => void;
   onProcessReturn?: (grn: GoodsReceiveNote) => void;
+  onSendToQC?: (grn: GoodsReceiveNote) => void;
   canEdit?: boolean;
   canDelete?: boolean;
   canProcessReturn?: boolean;
 }
 
-export function GRNTable({ grns, loading, onView, onEdit, onDelete, onPrint, onProcessReturn, canEdit, canDelete, canProcessReturn }: GRNTableProps) {
+export function GRNTable({ grns, loading, onView, onEdit, onDelete, onPrint, onProcessReturn, onSendToQC, canEdit, canDelete, canProcessReturn }: GRNTableProps) {
   // Ensure grns is always an array
   const safeGrns = Array.isArray(grns) ? grns : [];
-  
+
   const [sortColumn, setSortColumn] = useState<string>("receivedDate");
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
   const { currency } = useCurrencyStore();
@@ -99,7 +100,7 @@ export function GRNTable({ grns, loading, onView, onEdit, onDelete, onPrint, onP
       <Table>
         <TableHeader>
           <TableRow>
-            <TableHead 
+            <TableHead
               className="cursor-pointer"
               onClick={() => handleSort("grnNumber")}
             >
@@ -153,25 +154,25 @@ export function GRNTable({ grns, loading, onView, onEdit, onDelete, onPrint, onP
             </TableRow>
           ) : (
             sortedGrns.map((grn) => (
-                <TableRow key={grn.id}>
-                  <TableCell>{grn.grnNumber || 'N/A'}</TableCell>
-                  <TableCell>{grn.purchaseOrder?.orderNumber || "N/A"}</TableCell>
-                  <TableCell>{grn.isDirect ? 'Direct' : 'Linked'}</TableCell>
-                  <TableCell>{grn.receivedDate ? formatDate(grn.receivedDate) : 'N/A'}</TableCell>
-                  <TableCell>
-                    {grn.receivedByUser?.fullName || 
-                     grn.receivedByUser?.name || 
-                     grn.receivedByUser?.username || 
-                     grn.receivedBy || 
-                     'N/A'}
-                  </TableCell>
+              <TableRow key={grn.id}>
+                <TableCell>{grn.grnNumber || 'N/A'}</TableCell>
+                <TableCell>{grn.purchaseOrder?.orderNumber || "N/A"}</TableCell>
+                <TableCell>{grn.isDirect ? 'Direct' : 'Linked'}</TableCell>
+                <TableCell>{grn.receivedDate ? formatDate(grn.receivedDate) : 'N/A'}</TableCell>
                 <TableCell>
-                  <span className={`capitalize px-2 py-1 rounded-full text-xs ${
-                    grn.status === "completed" ? "bg-green-100 text-green-800" :
-                    grn.status === "partial" ? "bg-blue-100 text-blue-800" : 
-                    grn.status === "rejected" ? "bg-red-100 text-red-800" : 
-                    "bg-yellow-100 text-yellow-800"
-                  }`}>
+                  {grn.receivedByUser?.fullName ||
+                    grn.receivedByUser?.name ||
+                    grn.receivedByUser?.username ||
+                    grn.receivedBy ||
+                    'N/A'}
+                </TableCell>
+                <TableCell>
+                  <span className={`capitalize px-2 py-1 rounded-full text-xs ${grn.status === "completed" ? "bg-green-100 text-green-800" :
+                      grn.status === "partial" ? "bg-blue-100 text-blue-800" :
+                        grn.status === "rejected" ? "bg-red-100 text-red-800" :
+                          grn.status === "received" ? "bg-purple-100 text-purple-800" :
+                            "bg-yellow-100 text-yellow-800"
+                    }`}>
                     {grn.status}
                   </span>
                 </TableCell>
@@ -183,10 +184,10 @@ export function GRNTable({ grns, loading, onView, onEdit, onDelete, onPrint, onP
                       const discount = item.discount || 0;
                       const tax = item.tax || 0;
                       const taxType = item.purchaseTaxType || 'exclusive';
-                      
+
                       const subtotal = quantity * unitCost;
                       const amountAfterDiscount = subtotal - discount;
-                      
+
                       let itemTotal;
                       if (taxType === 'inclusive') {
                         // For inclusive tax, total is the unit cost minus discount (tax is already included)
@@ -195,9 +196,9 @@ export function GRNTable({ grns, loading, onView, onEdit, onDelete, onPrint, onP
                         // For exclusive tax, add tax on top
                         itemTotal = amountAfterDiscount + tax;
                       }
-                      
+
                       return sum + itemTotal;
-                    }, 0) || 0, 
+                    }, 0) || 0,
                     currency
                   )}
                 </TableCell>
@@ -208,10 +209,10 @@ export function GRNTable({ grns, loading, onView, onEdit, onDelete, onPrint, onP
                       size="icon"
                       onClick={() => onView(grn)}
                       disabled={grn.status === 'draft' || grn.status === 'partial'}
-                      title={grn.status === 'draft' || grn.status === 'partial' 
-                        ? `Cannot view ${grn.status} GRN` 
+                      title={grn.status === 'draft' || grn.status === 'partial'
+                        ? `Cannot view ${grn.status} GRN`
                         : "View GRN"}
-                      className={grn.status === 'draft' || grn.status === 'partial' 
+                      className={grn.status === 'draft' || grn.status === 'partial'
                         ? 'opacity-50 cursor-not-allowed' : ''}
                     >
                       <Eye className="h-4 w-4" />
@@ -222,10 +223,10 @@ export function GRNTable({ grns, loading, onView, onEdit, onDelete, onPrint, onP
                         size="icon"
                         onClick={() => onEdit && onEdit(grn)}
                         disabled={grn.status === 'completed' || grn.status === 'rejected'}
-                        title={grn.status === 'completed' || grn.status === 'rejected' 
-                          ? `Cannot edit ${grn.status} GRN` 
+                        title={grn.status === 'completed' || grn.status === 'rejected'
+                          ? `Cannot edit ${grn.status} GRN`
                           : "Edit GRN"}
-                        className={grn.status === 'completed' || grn.status === 'rejected' 
+                        className={grn.status === 'completed' || grn.status === 'rejected'
                           ? 'opacity-50 cursor-not-allowed' : ''}
                       >
                         <Edit className="h-4 w-4" />
@@ -246,16 +247,16 @@ export function GRNTable({ grns, loading, onView, onEdit, onDelete, onPrint, onP
                         </Tooltip>
                       </TooltipProvider>
                     )}
-                     {onPrint && (
+                    {onPrint && (
                       <Button
                         variant="ghost"
                         size="icon"
                         onClick={() => onPrint(grn)}
                         disabled={grn.status === 'draft' || grn.status === 'partial'}
-                        title={grn.status === 'draft' || grn.status === 'partial' 
-                          ? `Cannot print ${grn.status} GRN` 
+                        title={grn.status === 'draft' || grn.status === 'partial'
+                          ? `Cannot print ${grn.status} GRN`
                           : "Print GRN"}
-                        className={grn.status === 'draft' || grn.status === 'partial' 
+                        className={grn.status === 'draft' || grn.status === 'partial'
                           ? 'opacity-50 cursor-not-allowed' : ''}
                       >
                         <FileText className="h-4 w-4" />
@@ -267,13 +268,28 @@ export function GRNTable({ grns, loading, onView, onEdit, onDelete, onPrint, onP
                         size="icon"
                         onClick={() => onProcessReturn(grn)}
                         disabled={grn.status !== "completed"}
-                        title={grn.status !== "completed" 
-                          ? `Cannot process return for ${grn.status} GRN` 
+                        title={grn.status !== "completed"
+                          ? `Cannot process return for ${grn.status} GRN`
                           : "Process Return"}
-                        className={grn.status !== "completed" 
+                        className={grn.status !== "completed"
                           ? 'opacity-50 cursor-not-allowed' : ''}
                       >
                         <RotateCcw className="h-4 w-4" />
+                      </Button>
+                    )}
+                    {onSendToQC && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => onSendToQC(grn)}
+                        disabled={!['draft', 'partial'].includes(grn.status)}
+                        title={!['draft', 'partial'].includes(grn.status)
+                          ? `Cannot send ${grn.status} GRN to QC`
+                          : "Send to Quality Check"}
+                        className={!['draft', 'partial'].includes(grn.status)
+                          ? 'opacity-50 cursor-not-allowed' : ''}
+                      >
+                        <SearchCheck className="h-4 w-4" />
                       </Button>
                     )}
                     {canDelete ? (
@@ -282,10 +298,10 @@ export function GRNTable({ grns, loading, onView, onEdit, onDelete, onPrint, onP
                         size="icon"
                         onClick={() => onDelete && onDelete(grn.id)}
                         disabled={grn.status === 'completed' || grn.status === 'rejected'}
-                        title={grn.status === 'completed' || grn.status === 'rejected' 
-                          ? `Cannot delete ${grn.status} GRN` 
+                        title={grn.status === 'completed' || grn.status === 'rejected'
+                          ? `Cannot delete ${grn.status} GRN`
                           : "Delete GRN"}
-                        className={grn.status === 'completed' || grn.status === 'rejected' 
+                        className={grn.status === 'completed' || grn.status === 'rejected'
                           ? 'opacity-50 cursor-not-allowed' : ''}
                       >
                         <Trash2 className="h-4 w-4" />

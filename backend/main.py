@@ -4,6 +4,7 @@ import os
 import json
 import random
 from datetime import datetime, timedelta, date
+from collections import Counter
 from supabase import create_client, Client
 from fastapi.responses import JSONResponse
 from dotenv import load_dotenv
@@ -277,7 +278,7 @@ or disable lint warnings if needed.
 
 @app.get("/inventory/serials")
 def list_serials(product_id: Optional[str] = None, status: Optional[str] = None, payload=Depends(lambda cred=Security(bearer_scheme): verify_jwt(cred))):
-    query = supabase.table("product_serials").select("*")
+    query = supabase.table("product_serials").select("*, products(name, sku_code)")
     if product_id:
         query = query.eq("product_id", product_id)
     if status:
@@ -414,6 +415,10 @@ def require_role(allowed_roles):
 
 def require_permission(required_permission):
     def decorator(payload=Depends(verify_jwt)):
+        # Bypass permissions for service_role
+        if payload.get("role") == "service_role":
+            return payload
+
         # Get user ID from JWT payload
         user_id = payload.get("sub")
         if not user_id:
@@ -424,36 +429,33 @@ def require_permission(required_permission):
 
         try:
             debug_log(f"Checking permission '{required_permission}' for user {user_id}")
-
+            
             client = get_supabase_client()
 
-            # Load profile with role
+            # Load profile with role ENUM
             try:
-                profile_data = client.table("profiles").select("role_id").eq("id", user_id).execute()
+                profile_data = client.table("profiles").select("role").eq("id", user_id).execute()
             except httpx.RemoteProtocolError:
                 client = get_supabase_client()
-                profile_data = client.table("profiles").select("role_id").eq("id", user_id).execute()
+                profile_data = client.table("profiles").select("role").eq("id", user_id).execute()
 
             if not profile_data.data:
                 raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="User profile not found")
 
-            user_role_id = profile_data.data[0].get("role_id")
-            if not user_role_id:
+            user_role = profile_data.data[0].get("role")
+            if not user_role:
                 raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="User has no assigned role")
 
-            # Load role and permissions
-            role_data = client.table("roles").select("name, permissions").eq("id", user_role_id).execute()
-            if not role_data.data:
-                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Role not found")
+            # Since the roles table is gone, we hardcode permissions based on the ENUM for now.
+            # 'admin' has all permissions ('*'), 'staff' has limited permissions.
+            user_permissions = []
+            if user_role == "admin":
+                user_permissions = ["*"]  # Matches frontend wildcard logic
+            elif user_role == "staff":
+                # Fallback permissions for staff if needed, or leave empty if restricted
+                user_permissions = ["view_dashboard", "view_products"] 
 
-            user_permissions = role_data.data[0].get("permissions", [])
-            if isinstance(user_permissions, str):
-                try:
-                    user_permissions = json.loads(user_permissions)
-                except json.JSONDecodeError:
-                    user_permissions = []
-
-            if required_permission not in user_permissions:
+            if "*" not in user_permissions and required_permission not in user_permissions:
                 raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Forbidden: missing permission '{required_permission}'")
 
             return payload
@@ -1502,6 +1504,49 @@ def get_customer_credit_balance(customer_id: str, payload=Depends(require_permis
         return JSONResponse(content={"creditBalance": 0})
     return JSONResponse(content={"creditBalance": data.data[0]["total_credit_balance"]})
 
+@app.get("/customers/{customer_id}/frequent-items")
+def get_frequent_items(customer_id: str, payload=Depends(verify_jwt)):
+    """Analyze historical sales to find the most frequent products for a customer."""
+    try:
+        fresh_supabase = get_supabase_client()
+        # Fetch up to 100 historical items for this customer
+        data = fresh_supabase.table("sales_order_items") \
+            .select("*, products(*), sales_orders!inner(customer_id, order_date)") \
+            .eq("sales_orders.customer_id", customer_id) \
+            .order("sales_orders.order_date", desc=True) \
+            .limit(100) \
+            .execute()
+            
+        if not data.data:
+            return JSONResponse(content=[])
+            
+        # Count product occurrences
+        product_counts = Counter([item["product_id"] for item in data.data])
+        # Get top 5 product IDs
+        top_product_ids = [pid for pid, _ in product_counts.most_common(5)]
+        
+        # Collect unique items for the top products using the most recent order data
+        top_items = []
+        seen_products = set()
+        # Data is already sorted by date desc, so the first match for a pid is the most recent
+        for item in data.data:
+            pid = item["product_id"]
+            if pid in top_product_ids and pid not in seen_products:
+                transformed_item = to_camel_case_sales_order_item(item)
+                # Reset quantity and totals for template use
+                transformed_item["quantity"] = 1
+                # Discount might not carry over
+                transformed_item["discount"] = 0
+                top_items.append(transformed_item)
+                seen_products.add(pid)
+                if len(top_items) >= 5:
+                    break
+                    
+        return JSONResponse(content=top_items)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch frequent items: {str(e)}")
+
+
 @app.get("/suppliers")
 def get_suppliers(payload=Depends(verify_jwt)):
     try:
@@ -2294,21 +2339,34 @@ def delete_category(category_id: str, payload=Depends(require_role(['admin']))):
 # --- Roles Endpoints ---
 @app.get("/roles")
 def get_roles(payload=Depends(require_role(["admin"]))):
-    data = supabase.table("roles").select("*").execute()
-    roles = [to_camel_case_role(role) for role in data.data]
+    # Since the roles table is gone, return hardcoded roles based on the ENUM
+    roles = [
+        {
+            "id": "admin",
+            "name": "admin",
+            "description": "Administrator with full access",
+            "permissions": ["*"],
+            "createdAt": "2026-03-26T22:43:45.517158+00:00",
+            "updatedAt": "2026-03-26T22:43:45.517158+00:00"
+        },
+        {
+            "id": "staff",
+            "name": "staff",
+            "description": "Staff member with limited access",
+            "permissions": ["view_dashboard", "view_products"],
+            "createdAt": "2026-03-26T22:43:45.517158+00:00",
+            "updatedAt": "2026-03-26T22:43:45.517158+00:00"
+        }
+    ]
     return JSONResponse(content=roles)
 
 # Helper function to check for duplicate role names
 def check_duplicate_role_name(name: str, exclude_role_name: str = None):
-    """Check if a role with the given name already exists"""
-    try:
-        query = supabase.table("roles").select("name").eq("name", name)
-        if exclude_role_name:
-            query = query.neq("name", exclude_role_name)
-        result = query.execute()
-        return len(result.data) > 0
-    except Exception:
-        return False
+    # Simply check against known roles since the table is gone
+    known_roles = ["admin", "staff"]
+    if name in known_roles:
+        return name != exclude_role_name
+    return False
 
 # Helper function to check for duplicate category names with same parent
 def check_duplicate_category_name(name: str, parent_id: str = None, exclude_category_id: str = None):
@@ -2443,27 +2501,9 @@ def check_duplicate_ean_code(ean_code: str, exclude_product_id: str = None):
 @app.post("/roles")
 def create_role(role: dict = Body(...), payload=Depends(require_role(["admin"]))):
     # Check for duplicate role name
-    role_name = role.get("name")
-    if not role_name:
-        raise HTTPException(status_code=400, detail="Role name is required")
-    
-    if check_duplicate_role_name(role_name):
-        raise HTTPException(status_code=409, detail=f"A role with name '{role_name}' already exists")
-    
-    # Map camelCase to snake_case
-    if "createdAt" in role:
-        role["created_at"] = role.pop("createdAt")
-    if "updatedAt" in role:
-        role["updated_at"] = role.pop("updatedAt")
-    
-    # Store permissions directly
-    if "permissions" in role and isinstance(role["permissions"], list):
-        role["permissions"] = role["permissions"]
-    else:
-        role["permissions"] = []
-    
-    data = supabase.table("roles").insert(role).execute()
-    return JSONResponse(content=data.data)
+    # Role management is now handled via the user_role ENUM on profiles.
+    # We no longer support creating random roles.
+    return JSONResponse(content={"message": "Role creation is disabled. Use the roles enum directly."}, status_code=501)
 
 @app.put("/roles/{role_name}")
 def update_role(role_name: str, role: dict = Body(...), payload=Depends(require_role(["admin"]))):
@@ -2501,15 +2541,16 @@ def update_role(role_name: str, role: dict = Body(...), payload=Depends(require_
 
 @app.delete("/roles/{role_name}")
 def delete_role(role_name: str, payload=Depends(require_role(["admin"]))):
-    data = supabase.table("roles").delete().eq("name", role_name).execute()
+    # Role management is disabled.
+    return JSONResponse(content={"message": "Role deletion is disabled."}, status_code=501)
     return JSONResponse(content=data.data)
 
 # --- Users Endpoints ---
 @app.get("/users")
 def get_users(payload=Depends(require_role(["admin"]))):
     try:
-        # Get profiles data with role_id
-        profiles_data = supabase.table("profiles").select("id, username, full_name, is_active, role_id, created_at, updated_at").execute()
+        # Get profiles data with role ENUM directly
+        profiles_data = supabase.table("profiles").select("id, username, full_name, is_active, role, created_at, updated_at").execute()
     except Exception as e:
         print(f"Error fetching profiles: {str(e)}")
         return JSONResponse(content=[])
@@ -2517,16 +2558,8 @@ def get_users(payload=Depends(require_role(["admin"]))):
     users = []
     
     for profile in profiles_data.data:
-        # Get role name from roles table using role_id
-        role_name = "staff"  # default fallback
-        if profile.get("role_id"):
-            try:
-                role_data = supabase.table("roles").select("name").eq("id", profile["role_id"]).execute()
-                if role_data.data and len(role_data.data) > 0:
-                    role_name = role_data.data[0].get("name", "staff")
-            except Exception as e:
-                print(f"Error fetching role for user {profile.get('id')}: {str(e)}")
-                role_name = "staff"
+        # Role is now directly on the profile
+        role_name = profile.get("role", "staff")
         
         # Try to get auth user data, but don't fail if it doesn't exist
         auth_user = {}
@@ -2688,17 +2721,9 @@ def create_user(user: dict = Body(...), payload=Depends(require_role(["admin"]))
                     if profile_data.data:
                         profile = profile_data.data[0]
                         
-                        # Update the profile with the correct role if needed
-                        if user.get("role"):
-                            try:
-                                # Get role_id from roles table based on role name
-                                role_data = supabase.table("roles").select("id").eq("name", user.get("role")).execute()
-                                if role_data.data:
-                                    role_id = role_data.data[0]["id"]
-                                    # Update profile with role_id
-                                    supabase.table("profiles").update({"role_id": role_id}).eq("id", user_id).execute()
-                            except Exception as e:
-                                print(f"Error updating role: {str(e)}")  # Debug log
+                        # The database trigger handle_new_user should have correctly set the role 
+                        # enum from the user_metadata. No manual role_id lookup needed.
+                        pass
                         
                         # Update the profile with status if provided
                         if user.get("status"):
@@ -2754,25 +2779,18 @@ def update_user(user_id: str, user: dict = Body(...), payload=Depends(require_ro
         status = user_data.pop("status")
         user_data["is_active"] = (status == "Active")
     
-    # Map role name to role_id
+    # Set role directly as ENUM string on profile
     if "role" in user_data:
-        role_name = user_data.pop("role")
-        if role_name not in ["admin", "manager", "staff"]:
-            raise HTTPException(status_code=400, detail=f"Invalid role: {role_name}")
-        
-        # Get role_id from roles table based on role name
-        try:
-            role_data = supabase.table("roles").select("id").eq("name", role_name).execute()
-            if role_data.data:
-                user_data["role_id"] = role_data.data[0]["id"]
-            else:
-                raise HTTPException(status_code=400, detail=f"Role '{role_name}' not found")
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Error fetching role: {str(e)}")
+        role_name = user_data["role"]
+        if role_name not in ["admin", "staff"]:
+            # Default to staff if an unexpected role comes in (like manager which we removed)
+            user_data["role"] = "staff"
+        else:
+            user_data["role"] = role_name
     
-    # Map camelCase to snake_case
-    if "roleId" in user_data:
-        user_data["role_id"] = user_data.pop("roleId")
+    # Remove any role_id / roleId references
+    user_data.pop("role_id", None)
+    user_data.pop("roleId", None)
     if "createdAt" in user_data:
         user_data["created_at"] = user_data.pop("createdAt")
     if "updatedAt" in user_data:
@@ -3859,6 +3877,38 @@ def to_camel_case_purchase_order_item(item):
         "updatedAt": item.get("updated_at")
     }
 
+def to_camel_case_purchase_indent(indent):
+    """Convert purchase indent data from snake_case to camelCase"""
+    return {
+        "id": indent.get("id"),
+        "indentNumber": indent.get("indent_number"),
+        "requesterId": indent.get("requester_id"),
+        "requester": indent.get("requester", {}),
+        "department": indent.get("department"),
+        "requiredDate": indent.get("required_date"),
+        "status": indent.get("status"),
+        "totalEstimatedValue": float(indent.get("total_estimated_value", 0)),
+        "notes": indent.get("notes"),
+        "createdAt": indent.get("created_at"),
+        "updatedAt": indent.get("updated_at")
+    }
+
+def to_camel_case_purchase_indent_item(item):
+    """Convert purchase indent item data from snake_case to camelCase"""
+    return {
+        "id": item.get("id"),
+        "indentId": item.get("indent_id"),
+        "productId": item.get("product_id"),
+        "productName": item.get("product", {}).get("name") if item.get("product") else item.get("product_name"),
+        "skuCode": item.get("product", {}).get("sku_code") if item.get("product") else item.get("sku_code"),
+        "quantity": item.get("quantity"),
+        "estimatedUnitPrice": float(item.get("estimated_unit_price", 0)),
+        "purchaseOrderId": item.get("purchase_order_id"),
+        "createdAt": item.get("created_at"),
+        "updatedAt": item.get("updated_at")
+    }
+
+
 # Purchase Orders API endpoints
 @app.get("/purchase-orders")
 def get_purchase_orders(payload=Depends(require_permission("purchase_orders_view"))):
@@ -4101,8 +4151,10 @@ def to_camel_case_sales_order(sales_order):
     return {
         "id": sales_order.get("id"),
         "orderNumber": sales_order.get("order_number"),
+        "customerPoNumber": sales_order.get("customer_po_number"),
         "customerId": sales_order.get("customer_id"),
         "customer": sales_order.get("customers", {}),
+        "shippingAddress": sales_order.get("shipping_address"),
         "orderDate": sales_order.get("order_date"),
         "dueDate": sales_order.get("due_date"),
         "status": sales_order.get("status"),
@@ -4143,20 +4195,8 @@ def get_sales_orders(payload=Depends(require_permission("sale_orders_view"))):
     # Join with customers to get customer names
     data = supabase.table("sales_orders").select("*, customers(*)").execute()
     
-    # Filter out orders that already have invoices (draft or sent)
-    available_orders = []
-    for order in data.data:
-        # Check if there are any invoices for this sales order
-        invoice_check = supabase.table("sale_invoices").select("id, status").eq("sales_order_id", order["id"]).execute()
-        
-        # Only include orders that have no invoices or only cancelled invoices
-        has_active_invoices = any(inv["status"] in ["draft", "sent", "partial", "paid"] for inv in invoice_check.data)
-        
-        if not has_active_invoices:
-            available_orders.append(order)
-    
     # Transform to camelCase
-    transformed_data = [to_camel_case_sales_order(order) for order in available_orders]
+    transformed_data = [to_camel_case_sales_order(order) for order in data.data]
     return JSONResponse(content=transformed_data)
 
 @app.get("/sales-orders/available")
@@ -4213,7 +4253,9 @@ def create_sales_order(sales_order: dict = Body(...), payload=Depends(require_pe
     # Map camelCase to snake_case
     sales_order_data = {
         "order_number": sales_order["orderNumber"],
+        "customer_po_number": sales_order.get("customerPoNumber"),
         "customer_id": sales_order["customerId"],
+        "shipping_address": sales_order.get("shippingAddress"),
         "order_date": sales_order["orderDate"],
         "due_date": sales_order.get("dueDate"),
         "status": sales_order["status"],
@@ -4275,7 +4317,9 @@ def update_sales_order(sales_order_id: str, sales_order: dict = Body(...), paylo
     # Map camelCase to snake_case
     sales_order_data = {
         "order_number": sales_order["orderNumber"],
+        "customer_po_number": sales_order.get("customerPoNumber"),
         "customer_id": sales_order["customerId"],
+        "shipping_address": sales_order.get("shippingAddress"),
         "order_date": sales_order["orderDate"],
         "due_date": sales_order.get("dueDate"),
         "status": sales_order["status"],
@@ -4364,10 +4408,12 @@ def to_camel_case_sale_invoice(sale_invoice):
     return {
         "id": sale_invoice.get("id"),
         "invoiceNumber": sale_invoice.get("invoice_number"),
+        "customerPoNumber": sale_invoice.get("customer_po_number"),
         "salesOrderId": sale_invoice.get("sales_order_id"),
         "salesOrder": to_camel_case_sales_order(sale_invoice.get("sales_orders", {})) if sale_invoice.get("sales_orders") else None,
         "customerId": sale_invoice.get("customer_id"),
         "customer": sale_invoice.get("customers", {}),
+        "shippingAddress": sale_invoice.get("shipping_address"),
         "invoiceDate": sale_invoice.get("invoice_date"),
         "dueDate": sale_invoice.get("due_date"),
         "status": sale_invoice.get("status"),
@@ -4483,7 +4529,9 @@ def create_sale_invoice(sale_invoice: dict = Body(...), payload=Depends(require_
         # Create sales order data from sale invoice data
         sales_order_data = {
             "order_number": f"SO-{sale_invoice['invoiceNumber']}",  # Generate order number from invoice number
+            "customer_po_number": sale_invoice.get("customerPoNumber"),
             "customer_id": sale_invoice["customerId"],
+            "shipping_address": sale_invoice.get("shippingAddress"),
             "order_date": sale_invoice["invoiceDate"],  # Use invoice date as order date
             "due_date": sale_invoice.get("dueDate"),
             "status": "approved",  # Set status to approved since it's being invoiced
@@ -4542,8 +4590,10 @@ def create_sale_invoice(sale_invoice: dict = Body(...), payload=Depends(require_
     # Map camelCase to snake_case for sale invoice
     sale_invoice_data = {
         "invoice_number": sale_invoice["invoiceNumber"],
+        "customer_po_number": sale_invoice.get("customerPoNumber"),
         "sales_order_id": sales_order_id,
         "customer_id": sale_invoice["customerId"] if sale_invoice["customerId"] else None,
+        "shipping_address": sale_invoice.get("shippingAddress"),
         "invoice_date": sale_invoice["invoiceDate"],
         "due_date": sale_invoice.get("dueDate"),
         "status": sale_invoice["status"],
@@ -4671,8 +4721,10 @@ def update_sale_invoice(sale_invoice_id: str, sale_invoice: dict = Body(...), pa
     # Map camelCase to snake_case
     sale_invoice_data = {
         "invoice_number": sale_invoice["invoiceNumber"],
+        "customer_po_number": sale_invoice.get("customerPoNumber"),
         "sales_order_id": sale_invoice.get("salesOrderId") if sale_invoice.get("salesOrderId") else None,
         "customer_id": sale_invoice["customerId"] if sale_invoice["customerId"] else None,
+        "shipping_address": sale_invoice.get("shippingAddress"),
         "invoice_date": sale_invoice["invoiceDate"],
         "due_date": sale_invoice.get("dueDate"),
         "status": sale_invoice["status"],
@@ -5386,6 +5438,1571 @@ def delete_good_receive_note(good_receive_note_id: str, payload=Depends(require_
     data = supabase.table("good_receive_notes").delete().eq("id", good_receive_note_id).execute()
     return JSONResponse(content=data.data)
 
+# ==================== Quality Checks (QC) API ====================
+
+def to_camel_case_quality_check(qc):
+    """Convert quality check data from snake_case to camelCase"""
+    return {
+        "id": qc.get("id"),
+        "qcNumber": qc.get("qc_number"),
+        "grnId": qc.get("grn_id"),
+        "grn": to_camel_case_good_receive_note(qc.get("good_receive_notes", {})) if qc.get("good_receive_notes") else None,
+        "inspectorId": qc.get("inspector_id"),
+        "inspectorName": qc.get("inspector", {}).get("full_name") if qc.get("inspector") else None,
+        "qcDate": qc.get("qc_date"),
+        "status": qc.get("status"),
+        "notes": qc.get("notes"),
+        "createdBy": qc.get("created_by"),
+        "items": [to_camel_case_quality_check_item(item) for item in qc.get("items", [])],
+        "createdAt": qc.get("created_at"),
+        "updatedAt": qc.get("updated_at")
+    }
+
+def to_camel_case_quality_check_item(item):
+    """Convert quality check item data from snake_case to camelCase"""
+    return {
+        "id": item.get("id"),
+        "qcId": item.get("qc_id"),
+        "grnItemId": item.get("grn_item_id"),
+        "productId": item.get("product_id"),
+        "productName": item.get("product_name") or (item.get("products", {}).get("name") if item.get("products") else None),
+        "skuCode": item.get("sku_code") or (item.get("products", {}).get("sku_code") if item.get("products") else None),
+        "receivedQuantity": item.get("received_quantity", 0),
+        "inspectedQuantity": item.get("inspected_quantity", 0),
+        "passedQuantity": item.get("passed_quantity", 0),
+        "failedQuantity": item.get("failed_quantity", 0),
+        "failureReason": item.get("failure_reason"),
+        "notes": item.get("notes"),
+        "createdAt": item.get("created_at"),
+        "updatedAt": item.get("updated_at")
+    }
+
+@app.get("/quality-checks")
+def get_quality_checks(payload=Depends(require_permission("grn_view"))):
+    """Get all quality checks with related data."""
+    try:
+        fresh_supabase = get_supabase_client()
+        
+        # Get all QCs
+        qc_data = fresh_supabase.table("quality_checks").select("*").execute()
+        
+        if not qc_data.data:
+            return JSONResponse(content=[])
+        
+        # Get inspector profiles
+        inspector_ids = list(set([qc["inspector_id"] for qc in qc_data.data if qc.get("inspector_id")]))
+        inspectors = {}
+        if inspector_ids:
+            insp_result = fresh_supabase.table("profiles").select("id, full_name").in_("id", inspector_ids).execute()
+            inspectors = {p["id"]: p for p in insp_result.data}
+        
+        # Get GRN data for display
+        grn_ids = list(set([qc["grn_id"] for qc in qc_data.data if qc.get("grn_id")]))
+        grns = {}
+        if grn_ids:
+            grn_result = fresh_supabase.table("good_receive_notes").select("id, grn_number, status, supplier_id, suppliers(name)").in_("id", grn_ids).execute()
+            grns = {g["id"]: g for g in grn_result.data}
+        
+        # Get items for all QCs
+        qc_ids = [qc["id"] for qc in qc_data.data]
+        items_by_qc = {}
+        if qc_ids:
+            items_result = fresh_supabase.table("quality_check_items").select("*, products(name, sku_code)").in_("qc_id", qc_ids).execute()
+            for item in items_result.data:
+                qc_id = item["qc_id"]
+                if qc_id not in items_by_qc:
+                    items_by_qc[qc_id] = []
+                items_by_qc[qc_id].append(item)
+        
+        # Assemble response
+        result = []
+        for qc in qc_data.data:
+            qc["inspector"] = inspectors.get(qc.get("inspector_id"))
+            qc["good_receive_notes"] = grns.get(qc.get("grn_id"))
+            qc["items"] = items_by_qc.get(qc["id"], [])
+            result.append(to_camel_case_quality_check(qc))
+        
+        return JSONResponse(content=result)
+    except Exception as e:
+        print(f"ERROR fetching quality checks: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error fetching quality checks: {str(e)}")
+
+@app.get("/quality-checks/{qc_id}")
+def get_quality_check(qc_id: str, payload=Depends(require_permission("grn_view"))):
+    """Get a single quality check with items."""
+    try:
+        fresh_supabase = get_supabase_client()
+        
+        qc_data = fresh_supabase.table("quality_checks").select("*").eq("id", qc_id).execute()
+        if not qc_data.data:
+            raise HTTPException(status_code=404, detail="Quality check not found")
+        
+        qc = qc_data.data[0]
+        
+        # Get inspector
+        if qc.get("inspector_id"):
+            insp_result = fresh_supabase.table("profiles").select("id, full_name").eq("id", qc["inspector_id"]).execute()
+            qc["inspector"] = insp_result.data[0] if insp_result.data else None
+        
+        # Get GRN
+        if qc.get("grn_id"):
+            grn_result = fresh_supabase.table("good_receive_notes").select("*, purchase_orders(*), profiles!good_receive_notes_received_by_fkey(*)").eq("id", qc["grn_id"]).execute()
+            qc["good_receive_notes"] = grn_result.data[0] if grn_result.data else None
+        
+        # Get items
+        items_result = fresh_supabase.table("quality_check_items").select("*, products(name, sku_code)").eq("qc_id", qc_id).execute()
+        qc["items"] = items_result.data or []
+        
+        return JSONResponse(content=to_camel_case_quality_check(qc))
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"ERROR fetching quality check {qc_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error fetching quality check: {str(e)}")
+
+@app.post("/quality-checks")
+def create_quality_check(quality_check: dict = Body(...), payload=Depends(require_permission("grn_create"))):
+    """Create a quality check from a GRN."""
+    try:
+        grn_id = quality_check.get("grnId")
+        if not grn_id:
+            raise HTTPException(status_code=400, detail="GRN ID is required")
+        
+        # Verify GRN exists and is in received status
+        fresh_supabase = get_supabase_client()
+        grn_data = fresh_supabase.table("good_receive_notes").select("id, status").eq("id", grn_id).execute()
+        if not grn_data.data:
+            raise HTTPException(status_code=404, detail="GRN not found")
+        
+        grn_status = grn_data.data[0]["status"]
+        if grn_status not in ["received", "draft", "partial", "completed"]:
+            raise HTTPException(status_code=400, detail=f"Cannot create QC for GRN with status '{grn_status}'. GRN must be in received, draft, partial, or completed status.")
+        
+        # Check if QC already exists for this GRN
+        existing_qc = fresh_supabase.table("quality_checks").select("id").eq("grn_id", grn_id).execute()
+        if existing_qc.data:
+            raise HTTPException(status_code=400, detail="A quality check already exists for this GRN")
+        
+        # Create QC record
+        qc_data = {
+            "qc_number": quality_check["qcNumber"],
+            "grn_id": grn_id,
+            "inspector_id": quality_check.get("inspectorId") or payload["sub"],
+            "qc_date": quality_check.get("qcDate", date.today().isoformat()),
+            "status": quality_check.get("status", "pending"),
+            "notes": quality_check.get("notes", ""),
+            "created_by": payload["sub"]
+        }
+        
+        result = fresh_supabase.table("quality_checks").insert(qc_data).execute()
+        if not result.data:
+            raise HTTPException(status_code=500, detail="Failed to create quality check")
+        
+        created_qc = result.data[0]
+        
+        # Get GRN items and create QC items from them
+        grn_items = fresh_supabase.table("good_receive_note_items").select("*, products(name, sku_code)").eq("grn_id", grn_id).execute()
+        
+        items = quality_check.get("items", [])
+        if items:
+            # Use items from request
+            items_data = []
+            for item in items:
+                item_data = {
+                    "qc_id": created_qc["id"],
+                    "grn_item_id": item["grnItemId"],
+                    "product_id": item["productId"],
+                    "product_name": item.get("productName", ""),
+                    "sku_code": item.get("skuCode", ""),
+                    "received_quantity": item.get("receivedQuantity", 0),
+                    "inspected_quantity": item.get("inspectedQuantity", 0),
+                    "passed_quantity": item.get("passedQuantity", 0),
+                    "failed_quantity": item.get("failedQuantity", 0),
+                    "failure_reason": item.get("failureReason"),
+                    "notes": item.get("notes")
+                }
+                items_data.append(item_data)
+            fresh_supabase.table("quality_check_items").insert(items_data).execute()
+        elif grn_items.data:
+            # Auto-create items from GRN items
+            items_data = []
+            for grn_item in grn_items.data:
+                product = grn_item.get("products", {})
+                received_qty = grn_item.get("received_quantity", 0) - grn_item.get("rejected_quantity", 0)
+                item_data = {
+                    "qc_id": created_qc["id"],
+                    "grn_item_id": grn_item["id"],
+                    "product_id": grn_item["product_id"],
+                    "product_name": product.get("name") if product else grn_item.get("product_name"),
+                    "sku_code": product.get("sku_code") if product else grn_item.get("sku_code"),
+                    "received_quantity": received_qty,
+                    "inspected_quantity": 0,
+                    "passed_quantity": 0,
+                    "failed_quantity": 0
+                }
+                items_data.append(item_data)
+            if items_data:
+                fresh_supabase.table("quality_check_items").insert(items_data).execute()
+        
+        # Update GRN status to received if it's draft/partial
+        if grn_status in ["draft", "partial"]:
+            fresh_supabase.table("good_receive_notes").update({"status": "received"}).eq("id", grn_id).execute()
+        
+        # Update GRN quality_check_status
+        fresh_supabase.table("good_receive_notes").update({"quality_check_status": "pending"}).eq("id", grn_id).execute()
+        
+        return JSONResponse(content=created_qc)
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error creating quality check: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to create quality check: {str(e)}")
+
+@app.put("/quality-checks/{qc_id}")
+def update_quality_check(qc_id: str, quality_check: dict = Body(...), payload=Depends(require_permission("grn_edit"))):
+    """Update a quality check and its items."""
+    try:
+        fresh_supabase = get_supabase_client()
+        
+        # Get current QC
+        current_qc = fresh_supabase.table("quality_checks").select("id, status, grn_id").eq("id", qc_id).execute()
+        if not current_qc.data:
+            raise HTTPException(status_code=404, detail="Quality check not found")
+        
+        current_status = current_qc.data[0]["status"]
+        grn_id = current_qc.data[0]["grn_id"]
+        
+        # Only pending and in_progress QCs can be edited
+        if current_status in ["passed", "failed"]:
+            raise HTTPException(status_code=403, detail=f"Cannot edit quality check with status '{current_status}'.")
+        
+        # Update QC record
+        qc_data = {
+            "inspector_id": quality_check.get("inspectorId"),
+            "qc_date": quality_check.get("qcDate"),
+            "status": quality_check.get("status", current_status),
+            "notes": quality_check.get("notes")
+        }
+        # Remove None values
+        qc_data = {k: v for k, v in qc_data.items() if v is not None}
+        
+        result = fresh_supabase.table("quality_checks").update(qc_data).eq("id", qc_id).execute()
+        if not result.data:
+            raise HTTPException(status_code=404, detail="Quality check not found")
+        
+        updated_qc = result.data[0]
+        
+        # Handle items update
+        items = quality_check.get("items", [])
+        if items:
+            # Delete existing items and re-insert
+            fresh_supabase.table("quality_check_items").delete().eq("qc_id", qc_id).execute()
+            
+            items_data = []
+            for item in items:
+                item_data = {
+                    "qc_id": qc_id,
+                    "grn_item_id": item["grnItemId"],
+                    "product_id": item["productId"],
+                    "product_name": item.get("productName", ""),
+                    "sku_code": item.get("skuCode", ""),
+                    "received_quantity": item.get("receivedQuantity", 0),
+                    "inspected_quantity": item.get("inspectedQuantity", 0),
+                    "passed_quantity": item.get("passedQuantity", 0),
+                    "failed_quantity": item.get("failedQuantity", 0),
+                    "failure_reason": item.get("failureReason"),
+                    "notes": item.get("notes")
+                }
+                items_data.append(item_data)
+            
+            if items_data:
+                fresh_supabase.table("quality_check_items").insert(items_data).execute()
+        
+        # Update GRN quality_check_status based on QC status
+        new_status = quality_check.get("status", current_status)
+        qc_status_map = {
+            "pending": "pending",
+            "in_progress": "pending",
+            "passed": "passed",
+            "failed": "failed",
+            "partial": "partial"
+        }
+        grn_qc_status = qc_status_map.get(new_status, "pending")
+        fresh_supabase.table("good_receive_notes").update({"quality_check_status": grn_qc_status}).eq("id", grn_id).execute()
+        
+        return JSONResponse(content=updated_qc)
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error updating quality check: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to update quality check: {str(e)}")
+
+@app.delete("/quality-checks/{qc_id}")
+def delete_quality_check(qc_id: str, payload=Depends(require_permission("grn_delete"))):
+    """Delete a quality check (only pending/in_progress)."""
+    try:
+        fresh_supabase = get_supabase_client()
+        
+        # Get current QC
+        current_qc = fresh_supabase.table("quality_checks").select("id, status, grn_id").eq("id", qc_id).execute()
+        if not current_qc.data:
+            raise HTTPException(status_code=404, detail="Quality check not found")
+        
+        current_status = current_qc.data[0]["status"]
+        grn_id = current_qc.data[0]["grn_id"]
+        
+        if current_status not in ["pending", "in_progress"]:
+            raise HTTPException(status_code=403, detail=f"Cannot delete quality check with status '{current_status}'. Only pending or in-progress QCs can be deleted.")
+        
+        # Delete QC (items cascade)
+        data = fresh_supabase.table("quality_checks").delete().eq("id", qc_id).execute()
+        
+        # Reset GRN quality_check_status back to pending
+        fresh_supabase.table("good_receive_notes").update({"quality_check_status": "pending"}).eq("id", grn_id).execute()
+        
+        # Revert GRN status from 'received' back to 'draft' since QC was deleted
+        grn_data = fresh_supabase.table("good_receive_notes").select("status").eq("id", grn_id).execute()
+        if grn_data.data and grn_data.data[0]["status"] == "received":
+            fresh_supabase.table("good_receive_notes").update({"status": "draft"}).eq("id", grn_id).execute()
+        
+        return JSONResponse(content=data.data)
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error deleting quality check: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to delete quality check: {str(e)}")
+
+# ==================== End Quality Checks API ====================
+
+# ==================== Put Away API ====================
+
+def to_camel_case_put_away(pa):
+    """Convert put away data from snake_case to camelCase"""
+    return {
+        "id": pa.get("id"),
+        "putAwayNumber": pa.get("put_away_number"),
+        "qualityCheckId": pa.get("quality_check_id"),
+        "qualityCheck": {
+            "qcNumber": pa.get("quality_checks", {}).get("qc_number"),
+            "status": pa.get("quality_checks", {}).get("status"),
+        } if pa.get("quality_checks") else None,
+        "grnId": pa.get("grn_id"),
+        "grn": {
+            "grnNumber": pa.get("good_receive_notes", {}).get("grn_number"),
+            "status": pa.get("good_receive_notes", {}).get("status"),
+        } if pa.get("good_receive_notes") else None,
+        "assignedTo": pa.get("assigned_to"),
+        "assignedUser": {
+            "fullName": pa.get("assigned_user", {}).get("full_name"),
+            "username": pa.get("assigned_user", {}).get("username"),
+        } if pa.get("assigned_user") else None,
+        "status": pa.get("status"),
+        "putAwayDate": pa.get("put_away_date"),
+        "completedDate": pa.get("completed_date"),
+        "notes": pa.get("notes"),
+        "items": [to_camel_case_put_away_item(item) for item in pa.get("items", [])],
+        "createdBy": pa.get("created_by"),
+        "createdAt": pa.get("created_at"),
+        "updatedAt": pa.get("updated_at"),
+    }
+
+def to_camel_case_put_away_item(item):
+    """Convert put away item data from snake_case to camelCase"""
+    return {
+        "id": item.get("id"),
+        "putAwayId": item.get("put_away_id"),
+        "qualityCheckItemId": item.get("quality_check_item_id"),
+        "productId": item.get("product_id"),
+        "productName": item.get("product_name"),
+        "skuCode": item.get("sku_code"),
+        "quantity": item.get("quantity", 0),
+        "placedQuantity": item.get("placed_quantity", 0),
+        "locationId": item.get("location_id"),
+        "locationName": item.get("location_name") or (item.get("locations", {}).get("name") if item.get("locations") else None),
+        "batchNumber": item.get("batch_number"),
+        "expiryDate": item.get("expiry_date"),
+        "notes": item.get("notes"),
+        "createdAt": item.get("created_at"),
+        "updatedAt": item.get("updated_at"),
+    }
+
+@app.get("/put-aways")
+def get_put_aways(payload=Depends(require_permission("grn_view"))):
+    """Get all put aways with related data."""
+    try:
+        fresh_supabase = get_supabase_client()
+        data = fresh_supabase.table("put_aways").select(
+            "*, quality_checks(qc_number, status), good_receive_notes(grn_number, status), assigned_user:profiles!put_aways_assigned_to_fkey(full_name, username), items:put_away_items(*)"
+        ).order("created_at", desc=True).execute()
+        
+        return JSONResponse(content=[to_camel_case_put_away(pa) for pa in (data.data or [])])
+    except Exception as e:
+        print(f"Error fetching put aways: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to fetch put aways: {str(e)}")
+
+@app.get("/put-aways/{pa_id}")
+def get_put_away(pa_id: str, payload=Depends(require_permission("grn_view"))):
+    """Get a single put away with items."""
+    try:
+        fresh_supabase = get_supabase_client()
+        data = fresh_supabase.table("put_aways").select(
+            "*, quality_checks(qc_number, status), good_receive_notes(grn_number, status), assigned_user:profiles!put_aways_assigned_to_fkey(full_name, username), items:put_away_items(*, locations(name))"
+        ).eq("id", pa_id).execute()
+        
+        if not data.data:
+            raise HTTPException(status_code=404, detail="Put away not found")
+        
+        return JSONResponse(content=to_camel_case_put_away(data.data[0]))
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error fetching put away: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to fetch put away: {str(e)}")
+
+@app.post("/put-aways")
+def create_put_away(put_away: dict = Body(...), payload=Depends(require_permission("grn_create"))):
+    """Create a put away from a quality check."""
+    try:
+        fresh_supabase = get_supabase_client()
+        user_id = payload.get("sub")
+        
+        qc_id = put_away.get("qualityCheckId")
+        grn_id = put_away.get("grnId")
+        
+        # Build put away record
+        pa_record = {
+            "put_away_number": put_away.get("putAwayNumber", f"PA-{datetime.now().strftime('%Y%m%d%H%M%S')}"),
+            "quality_check_id": qc_id,
+            "grn_id": grn_id,
+            "assigned_to": put_away.get("assignedTo"),
+            "status": put_away.get("status", "pending"),
+            "put_away_date": put_away.get("putAwayDate", datetime.now().strftime("%Y-%m-%d")),
+            "notes": put_away.get("notes"),
+            "created_by": user_id,
+        }
+        
+        result = fresh_supabase.table("put_aways").insert(pa_record).execute()
+        
+        if not result.data:
+            raise HTTPException(status_code=500, detail="Failed to create put away record")
+        
+        pa_id = result.data[0]["id"]
+        
+        # Insert items if provided
+        items = put_away.get("items", [])
+        if items:
+            for item in items:
+                item_record = {
+                    "put_away_id": pa_id,
+                    "quality_check_item_id": item.get("qualityCheckItemId"),
+                    "product_id": item.get("productId"),
+                    "product_name": item.get("productName"),
+                    "sku_code": item.get("skuCode"),
+                    "quantity": item.get("quantity", 0),
+                    "placed_quantity": item.get("placedQuantity", 0),
+                    "location_id": item.get("locationId"),
+                    "location_name": item.get("locationName"),
+                    "batch_number": item.get("batchNumber"),
+                    "expiry_date": item.get("expiryDate"),
+                    "notes": item.get("notes"),
+                }
+                fresh_supabase.table("put_away_items").insert(item_record).execute()
+        elif qc_id:
+            # Auto-populate from QC passed items
+            qc_items = fresh_supabase.table("quality_check_items").select("*").eq("qc_id", qc_id).execute()
+            for qi in (qc_items.data or []):
+                passed = qi.get("passed_quantity", 0)
+                if passed > 0:
+                    item_record = {
+                        "put_away_id": pa_id,
+                        "quality_check_item_id": qi["id"],
+                        "product_id": qi.get("product_id"),
+                        "product_name": qi.get("product_name"),
+                        "sku_code": qi.get("sku_code"),
+                        "quantity": passed,
+                        "placed_quantity": 0,
+                    }
+                    fresh_supabase.table("put_away_items").insert(item_record).execute()
+        
+        # If status is completed on creation, increase stock
+        status = put_away.get("status", "pending")
+        if status == "completed":
+            pa_items = fresh_supabase.table("put_away_items").select("*").eq("put_away_id", pa_id).execute()
+            for pai in (pa_items.data or []):
+                placed_qty = pai.get("placed_quantity", 0) or pai.get("quantity", 0)
+                product_id = pai.get("product_id")
+                location_id = pai.get("location_id")
+                
+                if placed_qty > 0 and product_id:
+                    if not location_id:
+                        default_loc = fresh_supabase.table("locations").select("id").limit(1).execute()
+                        location_id = default_loc.data[0]["id"] if default_loc.data else None
+                    
+                    if location_id:
+                        existing = fresh_supabase.table("stock_levels").select("id, quantity_on_hand").eq("product_id", product_id).eq("location_id", location_id).execute()
+                        if existing.data:
+                            new_qty = (existing.data[0].get("quantity_on_hand", 0) or 0) + placed_qty
+                            fresh_supabase.table("stock_levels").update({"quantity_on_hand": new_qty}).eq("id", existing.data[0]["id"]).execute()
+                        else:
+                            fresh_supabase.table("stock_levels").insert({"product_id": product_id, "location_id": location_id, "quantity_on_hand": placed_qty}).execute()
+                        
+                        try:
+                            fresh_supabase.table("inventory_transactions").insert({
+                                "product_id": product_id, "transaction_type": "purchase",
+                                "quantity_change": placed_qty, "reference_type": "put_away",
+                                "reference_id": pa_id,
+                                "notes": f"Put Away {pa_id} completed - stock increased",
+                                "created_by": user_id,
+                            }).execute()
+                        except Exception as tx_err:
+                            print(f"Warning: Failed to record inventory transaction: {tx_err}")
+                    
+                    # Also update product current_stock
+                    try:
+                        prod = fresh_supabase.table("products").select("current_stock").eq("id", product_id).single().execute()
+                        if prod.data:
+                            cur = prod.data.get("current_stock", 0) or 0
+                            fresh_supabase.table("products").update({"current_stock": cur + placed_qty}).eq("id", product_id).execute()
+                            print(f"Stock increased for product {product_id}: {cur} -> {cur + placed_qty}")
+                    except Exception as stock_err:
+                        print(f"Warning: Failed to update product stock: {stock_err}")
+        
+        # Fetch and return the created record
+        created = fresh_supabase.table("put_aways").select(
+            "*, quality_checks(qc_number, status), good_receive_notes(grn_number, status), items:put_away_items(*)"
+        ).eq("id", pa_id).execute()
+        
+        return JSONResponse(content=to_camel_case_put_away(created.data[0]) if created.data else result.data[0])
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error creating put away: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Failed to create put away: {str(e)}")
+
+@app.put("/put-aways/{pa_id}")
+def update_put_away(pa_id: str, put_away: dict = Body(...), payload=Depends(require_permission("grn_edit"))):
+    """Update a put away. If status changed to 'completed', increase stock."""
+    try:
+        fresh_supabase = get_supabase_client()
+        
+        # Get current put away
+        current = fresh_supabase.table("put_aways").select("id, status, grn_id, quality_check_id").eq("id", pa_id).execute()
+        if not current.data:
+            raise HTTPException(status_code=404, detail="Put away not found")
+        
+        old_status = current.data[0]["status"]
+        new_status = put_away.get("status", old_status)
+        grn_id = current.data[0]["grn_id"]
+        
+        if old_status == "completed":
+            raise HTTPException(status_code=403, detail="Cannot edit a completed put away")
+        
+        # Update main record
+        update_data = {}
+        if "assignedTo" in put_away:
+            update_data["assigned_to"] = put_away["assignedTo"]
+        if "status" in put_away:
+            update_data["status"] = put_away["status"]
+        if "notes" in put_away:
+            update_data["notes"] = put_away["notes"]
+        if "putAwayDate" in put_away:
+            update_data["put_away_date"] = put_away["putAwayDate"]
+        
+        if new_status == "completed":
+            update_data["completed_date"] = datetime.now().isoformat()
+        
+        if update_data:
+            fresh_supabase.table("put_aways").update(update_data).eq("id", pa_id).execute()
+        
+        # Update items
+        items = put_away.get("items", [])
+        for item in items:
+            item_id = item.get("id")
+            if item_id:
+                item_update = {}
+                if "placedQuantity" in item:
+                    item_update["placed_quantity"] = item["placedQuantity"]
+                if "locationId" in item:
+                    item_update["location_id"] = item["locationId"]
+                if "locationName" in item:
+                    item_update["location_name"] = item["locationName"]
+                if "notes" in item:
+                    item_update["notes"] = item["notes"]
+                if item_update:
+                    fresh_supabase.table("put_away_items").update(item_update).eq("id", item_id).execute()
+        
+        # If completing put away — increase stock
+        if old_status != "completed" and new_status == "completed":
+            pa_items = fresh_supabase.table("put_away_items").select("*").eq("put_away_id", pa_id).execute()
+            for pai in (pa_items.data or []):
+                placed_qty = pai.get("placed_quantity", 0)
+                product_id = pai.get("product_id")
+                location_id = pai.get("location_id")
+                
+                if placed_qty > 0 and product_id:
+                    # Use a default location if none specified
+                    if not location_id:
+                        default_loc = fresh_supabase.table("locations").select("id").limit(1).execute()
+                        location_id = default_loc.data[0]["id"] if default_loc.data else None
+                    
+                    if location_id:
+                        # Check existing stock level
+                        existing = fresh_supabase.table("stock_levels").select("id, quantity_on_hand").eq("product_id", product_id).eq("location_id", location_id).execute()
+                        
+                        if existing.data:
+                            # Update existing stock
+                            new_qty = (existing.data[0].get("quantity_on_hand", 0) or 0) + placed_qty
+                            fresh_supabase.table("stock_levels").update({
+                                "quantity_on_hand": new_qty
+                            }).eq("id", existing.data[0]["id"]).execute()
+                        else:
+                            # Insert new stock level
+                            fresh_supabase.table("stock_levels").insert({
+                                "product_id": product_id,
+                                "location_id": location_id,
+                                "quantity_on_hand": placed_qty,
+                            }).execute()
+                        
+                        # Record inventory transaction
+                        try:
+                            fresh_supabase.table("inventory_transactions").insert({
+                                "product_id": product_id,
+                                "transaction_type": "purchase",
+                                "quantity_change": placed_qty,
+                                "reference_type": "put_away",
+                                "reference_id": pa_id,
+                                "notes": f"Put Away {pai.get('put_away_id')} completed - stock increased",
+                                "created_by": payload.get("sub"),
+                            }).execute()
+                        except Exception as tx_err:
+                            print(f"Warning: Failed to record inventory transaction: {tx_err}")
+            
+            # Update GRN status to completed
+            if grn_id:
+                fresh_supabase.table("good_receive_notes").update({"status": "completed"}).eq("id", grn_id).execute()
+        
+        # Return updated record
+        updated = fresh_supabase.table("put_aways").select(
+            "*, quality_checks(qc_number, status), good_receive_notes(grn_number, status), assigned_user:profiles!put_aways_assigned_to_fkey(full_name, username), items:put_away_items(*)"
+        ).eq("id", pa_id).execute()
+        
+        return JSONResponse(content=to_camel_case_put_away(updated.data[0]) if updated.data else {})
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error updating put away: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Failed to update put away: {str(e)}")
+
+@app.delete("/put-aways/{pa_id}")
+def delete_put_away(pa_id: str, payload=Depends(require_permission("grn_delete"))):
+    """Delete a put away (only pending/in_progress)."""
+    try:
+        fresh_supabase = get_supabase_client()
+        
+        current = fresh_supabase.table("put_aways").select("id, status").eq("id", pa_id).execute()
+        if not current.data:
+            raise HTTPException(status_code=404, detail="Put away not found")
+        
+        current_status = current.data[0]["status"]
+        if current_status not in ["pending", "in_progress"]:
+            raise HTTPException(status_code=403, detail=f"Cannot delete put away with status '{current_status}'.")
+        
+        data = fresh_supabase.table("put_aways").delete().eq("id", pa_id).execute()
+        return JSONResponse(content=data.data)
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error deleting put away: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to delete put away: {str(e)}")
+
+# ==================== End Put Away API ====================
+
+# ==================== Delivery Challan API ====================
+
+def to_camel_case_delivery_challan(dc):
+    """Convert delivery challan data from snake_case to camelCase"""
+    return {
+        "id": dc.get("id"),
+        "dcNumber": dc.get("dc_number"),
+        "saleInvoiceId": dc.get("sale_invoice_id"),
+        "saleInvoice": {
+            "invoiceNumber": dc.get("sale_invoices", {}).get("invoice_number"),
+            "status": dc.get("sale_invoices", {}).get("status"),
+        } if dc.get("sale_invoices") else None,
+        "salesOrderId": dc.get("sales_order_id"),
+        "salesOrder": {
+            "orderNumber": dc.get("sales_orders", {}).get("order_number"),
+            "status": dc.get("sales_orders", {}).get("status"),
+        } if dc.get("sales_orders") else None,
+        "customerId": dc.get("customer_id"),
+        "customer": {
+            "name": dc.get("customers", {}).get("name"),
+            "phone": dc.get("customers", {}).get("phone"),
+            "address": dc.get("customers", {}).get("shipping_address"),
+        } if dc.get("customers") else None,
+        "status": dc.get("status"),
+        "dcDate": dc.get("dc_date"),
+        "dispatchDate": dc.get("dispatch_date"),
+        "deliveryDate": dc.get("delivery_date"),
+        "vehicleNumber": dc.get("vehicle_number"),
+        "driverName": dc.get("driver_name"),
+        "driverPhone": dc.get("driver_phone"),
+        "deliveryAddress": dc.get("delivery_address"),
+        "isStandalone": dc.get("is_standalone", False),
+        "notes": dc.get("notes"),
+        "items": [to_camel_case_delivery_challan_item(i) for i in dc.get("items", [])],
+        "createdBy": dc.get("created_by"),
+        "createdAt": dc.get("created_at"),
+        "updatedAt": dc.get("updated_at"),
+    }
+
+def to_camel_case_delivery_challan_item(item):
+    """Convert delivery challan item from snake_case to camelCase"""
+    return {
+        "id": item.get("id"),
+        "deliveryChallanId": item.get("delivery_challan_id"),
+        "productId": item.get("product_id"),
+        "productName": item.get("product_name"),
+        "skuCode": item.get("sku_code"),
+        "quantity": item.get("quantity", 0),
+        "dispatchedQuantity": item.get("dispatched_quantity", 0),
+        "unitPrice": item.get("unit_price", 0),
+        "notes": item.get("notes"),
+        "createdAt": item.get("created_at"),
+        "updatedAt": item.get("updated_at"),
+    }
+
+@app.get("/delivery-challans")
+def get_delivery_challans(payload=Depends(require_permission("sale_invoices_view"))):
+    """Get all delivery challans with related data."""
+    try:
+        fresh_supabase = get_supabase_client()
+        data = fresh_supabase.table("delivery_challans").select(
+            "*, sale_invoices(invoice_number, status), sales_orders(order_number, status), customers(name, phone, shipping_address), items:delivery_challan_items(*)"
+        ).order("created_at", desc=True).execute()
+
+        return JSONResponse(content=[to_camel_case_delivery_challan(dc) for dc in (data.data or [])])
+    except Exception as e:
+        print(f"Error fetching delivery challans: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to fetch delivery challans: {str(e)}")
+
+@app.get("/delivery-challans/{dc_id}")
+def get_delivery_challan(dc_id: str, payload=Depends(require_permission("sale_invoices_view"))):
+    """Get a single delivery challan with items."""
+    try:
+        fresh_supabase = get_supabase_client()
+        data = fresh_supabase.table("delivery_challans").select(
+            "*, sale_invoices(invoice_number, status), sales_orders(order_number, status), customers(name, phone, shipping_address), items:delivery_challan_items(*)"
+        ).eq("id", dc_id).execute()
+
+        if not data.data:
+            raise HTTPException(status_code=404, detail="Delivery challan not found")
+
+        return JSONResponse(content=to_camel_case_delivery_challan(data.data[0]))
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error fetching delivery challan: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to fetch delivery challan: {str(e)}")
+
+@app.post("/delivery-challans")
+def create_delivery_challan(dc: dict = Body(...), payload=Depends(require_permission("sale_invoices_create"))):
+    """Create a delivery challan (from invoice, SO, or standalone)."""
+    try:
+        fresh_supabase = get_supabase_client()
+        user_id = payload.get("sub")
+
+        dc_record = {
+            "dc_number": dc.get("dcNumber", f"DC-{datetime.now().strftime('%Y%m%d%H%M%S')}"),
+            "sale_invoice_id": dc.get("saleInvoiceId"),
+            "sales_order_id": dc.get("salesOrderId"),
+            "customer_id": dc.get("customerId"),
+            "status": dc.get("status", "draft"),
+            "dc_date": dc.get("dcDate", datetime.now().strftime("%Y-%m-%d")),
+            "vehicle_number": dc.get("vehicleNumber"),
+            "driver_name": dc.get("driverName"),
+            "driver_phone": dc.get("driverPhone"),
+            "delivery_address": dc.get("deliveryAddress"),
+            "is_standalone": dc.get("isStandalone", False),
+            "notes": dc.get("notes"),
+            "created_by": user_id,
+        }
+
+        result = fresh_supabase.table("delivery_challans").insert(dc_record).execute()
+        if not result.data:
+            raise HTTPException(status_code=500, detail="Failed to create delivery challan")
+
+        dc_id = result.data[0]["id"]
+
+        # Insert items if provided
+        items = dc.get("items", [])
+        if items:
+            for item in items:
+                item_record = {
+                    "delivery_challan_id": dc_id,
+                    "product_id": item.get("productId"),
+                    "product_name": item.get("productName"),
+                    "sku_code": item.get("skuCode"),
+                    "quantity": item.get("quantity", 0),
+                    "dispatched_quantity": item.get("dispatchedQuantity", 0),
+                    "unit_price": item.get("unitPrice", 0),
+                    "notes": item.get("notes"),
+                }
+                fresh_supabase.table("delivery_challan_items").insert(item_record).execute()
+        elif dc.get("saleInvoiceId"):
+            # Auto-populate from sale invoice items
+            si_items = fresh_supabase.table("sale_invoice_items").select(
+                "*, products(name, sku_code)"
+            ).eq("invoice_id", dc.get("saleInvoiceId")).execute()
+            for si in (si_items.data or []):
+                item_record = {
+                    "delivery_challan_id": dc_id,
+                    "product_id": si.get("product_id"),
+                    "product_name": si.get("product_name") or (si.get("products", {}).get("name") if si.get("products") else None),
+                    "sku_code": si.get("sku_code") or (si.get("products", {}).get("sku_code") if si.get("products") else None),
+                    "quantity": si.get("quantity", 0),
+                    "dispatched_quantity": 0,
+                    "unit_price": si.get("unit_price", 0),
+                }
+                fresh_supabase.table("delivery_challan_items").insert(item_record).execute()
+
+        # Return created record
+        created = fresh_supabase.table("delivery_challans").select(
+            "*, sale_invoices(invoice_number, status), sales_orders(order_number, status), customers(name, phone, shipping_address), items:delivery_challan_items(*)"
+        ).eq("id", dc_id).execute()
+
+        return JSONResponse(content=to_camel_case_delivery_challan(created.data[0]) if created.data else result.data[0])
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error creating delivery challan: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Failed to create delivery challan: {str(e)}")
+
+@app.put("/delivery-challans/{dc_id}")
+def update_delivery_challan(dc_id: str, dc: dict = Body(...), payload=Depends(require_permission("sale_invoices_edit"))):
+    """Update a delivery challan."""
+    try:
+        fresh_supabase = get_supabase_client()
+
+        current = fresh_supabase.table("delivery_challans").select("id, status").eq("id", dc_id).execute()
+        if not current.data:
+            raise HTTPException(status_code=404, detail="Delivery challan not found")
+
+        old_status = current.data[0]["status"]
+        new_status = dc.get("status", old_status)
+
+        if old_status in ["delivered", "invoiced", "returned"]:
+            raise HTTPException(status_code=403, detail=f"Cannot edit delivery challan with status '{old_status}'")
+
+        update_data = {}
+        for camel, snake in [
+            ("status", "status"), ("vehicleNumber", "vehicle_number"),
+            ("driverName", "driver_name"), ("driverPhone", "driver_phone"),
+            ("deliveryAddress", "delivery_address"), ("notes", "notes"),
+            ("dcDate", "dc_date"), ("customerId", "customer_id"),
+        ]:
+            if camel in dc:
+                update_data[snake] = dc[camel]
+
+        # Track dispatch/delivery dates
+        if old_status != "dispatched" and new_status == "dispatched":
+            update_data["dispatch_date"] = datetime.now().isoformat()
+        if old_status != "delivered" and new_status == "delivered":
+            update_data["delivery_date"] = datetime.now().isoformat()
+
+        if update_data:
+            fresh_supabase.table("delivery_challans").update(update_data).eq("id", dc_id).execute()
+
+        # Update items
+        for item in dc.get("items", []):
+            item_id = item.get("id")
+            if item_id:
+                item_update = {}
+                if "dispatchedQuantity" in item:
+                    item_update["dispatched_quantity"] = item["dispatchedQuantity"]
+                if "notes" in item:
+                    item_update["notes"] = item["notes"]
+                if item_update:
+                    fresh_supabase.table("delivery_challan_items").update(item_update).eq("id", item_id).execute()
+
+        updated = fresh_supabase.table("delivery_challans").select(
+            "*, sale_invoices(invoice_number, status), sales_orders(order_number, status), customers(name, phone, shipping_address), items:delivery_challan_items(*)"
+        ).eq("id", dc_id).execute()
+
+        return JSONResponse(content=to_camel_case_delivery_challan(updated.data[0]) if updated.data else {})
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error updating delivery challan: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Failed to update delivery challan: {str(e)}")
+
+@app.delete("/delivery-challans/{dc_id}")
+def delete_delivery_challan(dc_id: str, payload=Depends(require_permission("sale_invoices_delete"))):
+    """Delete a delivery challan (only draft)."""
+    try:
+        fresh_supabase = get_supabase_client()
+
+        current = fresh_supabase.table("delivery_challans").select("id, status").eq("id", dc_id).execute()
+        if not current.data:
+            raise HTTPException(status_code=404, detail="Delivery challan not found")
+
+        if current.data[0]["status"] != "draft":
+            raise HTTPException(status_code=403, detail="Only draft delivery challans can be deleted")
+
+        data = fresh_supabase.table("delivery_challans").delete().eq("id", dc_id).execute()
+        return JSONResponse(content=data.data)
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error deleting delivery challan: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to delete delivery challan: {str(e)}")
+
+@app.post("/delivery-challans/{dc_id}/convert-to-invoice")
+def convert_dc_to_invoice(dc_id: str, payload=Depends(require_permission("sale_invoices_create"))):
+    """Convert a standalone DC to a draft Sale Invoice."""
+    try:
+        fresh_supabase = get_supabase_client()
+
+        # Fetch the DC with items
+        dc_data = fresh_supabase.table("delivery_challans").select(
+            "*, items:delivery_challan_items(*), customers(name, phone)"
+        ).eq("id", dc_id).execute()
+
+        if not dc_data.data:
+            raise HTTPException(status_code=404, detail="Delivery Challan not found")
+
+        dc = dc_data.data[0]
+
+        # Validate: must be dispatched or delivered, and not already invoiced
+        if dc["status"] in ["draft", "invoiced"]:
+            raise HTTPException(status_code=400, detail=f"Cannot convert DC with status '{dc['status']}'. Must be dispatched or delivered.")
+
+        if dc.get("sale_invoice_id"):
+            raise HTTPException(status_code=400, detail="This DC is already linked to a Sale Invoice")
+
+        customer_id = dc.get("customer_id")
+        if not customer_id:
+            raise HTTPException(status_code=400, detail="DC has no customer — cannot create invoice")
+
+        items = dc.get("items", [])
+        if not items:
+            raise HTTPException(status_code=400, detail="DC has no items")
+
+        user_id = payload.get("sub")
+
+        # Calculate totals from items
+        subtotal = 0
+        invoice_items = []
+        for item in items:
+            qty = item.get("dispatched_quantity") or item.get("quantity", 0)
+            price = float(item.get("unit_price", 0) or 0)
+            line_total = qty * price
+            subtotal += line_total
+
+            # Try to get product HSN code
+            hsn_code = ""
+            product_id = item.get("product_id")
+            if product_id:
+                try:
+                    prod = fresh_supabase.table("products").select("hsn_code").eq("id", product_id).limit(1).execute()
+                    if prod.data:
+                        hsn_code = prod.data[0].get("hsn_code", "") or ""
+                except:
+                    pass
+
+            invoice_items.append({
+                "product_id": product_id,
+                "product_name": item.get("product_name", ""),
+                "sku_code": item.get("sku_code", ""),
+                "hsn_code": hsn_code,
+                "quantity": qty,
+                "unit_price": price,
+                "discount": 0,
+                "tax": 0,
+                "sale_tax_type": "exclusive",
+                "unit_abbreviation": "",
+                "created_by": user_id,
+            })
+
+        # Generate invoice number
+        invoice_number = f"INV-DC-{datetime.now().strftime('%Y%m%d%H%M%S')}"
+
+        # Create the sale invoice as draft
+        invoice_data = {
+            "invoice_number": invoice_number,
+            "customer_id": customer_id,
+            "invoice_date": datetime.now().strftime("%Y-%m-%d"),
+            "status": "draft",
+            "payment_method": "cash",
+            "subtotal": subtotal,
+            "tax_amount": 0,
+            "discount_amount": 0,
+            "total_amount": subtotal,
+            "rounding_adjustment": 0,
+            "is_direct": True,
+            "notes": f"Converted from Delivery Challan {dc.get('dc_number', dc_id)}",
+            "created_by": user_id,
+            "amount_paid": 0,
+            "amount_due": subtotal,
+        }
+
+        result = fresh_supabase.table("sale_invoices").insert(invoice_data).execute()
+        if not result.data:
+            raise HTTPException(status_code=500, detail="Failed to create sale invoice")
+
+        invoice_id = result.data[0]["id"]
+
+        # Insert invoice items
+        for inv_item in invoice_items:
+            inv_item["sale_invoice_id"] = invoice_id
+            fresh_supabase.table("sale_invoice_items").insert(inv_item).execute()
+
+        # Update DC: link to invoice + set status to invoiced
+        fresh_supabase.table("delivery_challans").update({
+            "sale_invoice_id": invoice_id,
+            "status": "invoiced",
+        }).eq("id", dc_id).execute()
+
+        return JSONResponse(content={
+            "message": "Successfully converted DC to Sale Invoice",
+            "invoiceId": invoice_id,
+            "invoiceNumber": invoice_number,
+        })
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Failed to convert DC to invoice: {str(e)}")
+
+# ==================== End Delivery Challan API ====================
+
+# ==================== Pick List API ====================
+
+def to_camel_case_pick_list_item(item):
+    return {
+        "id": item.get("id"),
+        "pickListId": item.get("pick_list_id"),
+        "productId": item.get("product_id"),
+        "productName": item.get("product_name"),
+        "skuCode": item.get("sku_code"),
+        "quantity": item.get("quantity", 0),
+        "pickedQuantity": item.get("picked_quantity", 0),
+        "locationId": item.get("location_id"),
+        "locationName": item.get("location_name"),
+        "notes": item.get("notes"),
+        "createdAt": item.get("created_at"),
+        "updatedAt": item.get("updated_at"),
+    }
+
+def to_camel_case_pick_list(pl):
+    return {
+        "id": pl.get("id"),
+        "pickListNumber": pl.get("pick_list_number"),
+        "deliveryChallanId": pl.get("delivery_challan_id"),
+        "deliveryChallan": {
+            "dcNumber": pl.get("delivery_challans", {}).get("dc_number"),
+            "status": pl.get("delivery_challans", {}).get("status"),
+        } if pl.get("delivery_challans") else None,
+        "assignedTo": pl.get("assigned_to"),
+        "assignedUser": {
+            "fullName": pl.get("assigned_user", {}).get("full_name"),
+            "username": pl.get("assigned_user", {}).get("username"),
+        } if pl.get("assigned_user") else None,
+        "status": pl.get("status"),
+        "pickDate": pl.get("pick_date"),
+        "completedDate": pl.get("completed_date"),
+        "notes": pl.get("notes"),
+        "items": [to_camel_case_pick_list_item(i) for i in pl.get("items", [])],
+        "createdBy": pl.get("created_by"),
+        "createdAt": pl.get("created_at"),
+        "updatedAt": pl.get("updated_at"),
+    }
+
+PICK_LIST_SELECT = "*, delivery_challans(dc_number, status), assigned_user:profiles!pick_lists_assigned_to_fkey(full_name, username), items:pick_list_items(*)"
+
+@app.get("/pick-lists")
+def get_pick_lists(payload=Depends(require_permission("sale_invoices_view"))):
+    """Get all pick lists."""
+    try:
+        fresh_supabase = get_supabase_client()
+        data = fresh_supabase.table("pick_lists").select(PICK_LIST_SELECT).order("created_at", desc=True).execute()
+        return JSONResponse(content=[to_camel_case_pick_list(pl) for pl in (data.data or [])])
+    except Exception as e:
+        print(f"Error fetching pick lists: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to fetch pick lists: {str(e)}")
+
+@app.get("/pick-lists/{pl_id}")
+def get_pick_list(pl_id: str, payload=Depends(require_permission("sale_invoices_view"))):
+    """Get a single pick list."""
+    try:
+        fresh_supabase = get_supabase_client()
+        data = fresh_supabase.table("pick_lists").select(PICK_LIST_SELECT).eq("id", pl_id).execute()
+        if not data.data:
+            raise HTTPException(status_code=404, detail="Pick list not found")
+        return JSONResponse(content=to_camel_case_pick_list(data.data[0]))
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch pick list: {str(e)}")
+
+
+@app.post("/pick-lists")
+def create_pick_list(pl: dict = Body(...), payload=Depends(require_permission("sale_invoices_create"))):
+    """Create a pick list (from DC)."""
+    try:
+        fresh_supabase = get_supabase_client()
+        user_id = payload.get("sub")
+
+        pl_record = {
+            "pick_list_number": pl.get("pickListNumber", f"PL-{datetime.now().strftime('%Y%m%d%H%M%S')}"),
+            "delivery_challan_id": pl.get("deliveryChallanId"),
+            "assigned_to": pl.get("assignedTo"),
+            "status": pl.get("status", "pending"),
+            "pick_date": pl.get("pickDate", datetime.now().strftime("%Y-%m-%d")),
+            "notes": pl.get("notes"),
+            "created_by": user_id,
+        }
+
+        result = fresh_supabase.table("pick_lists").insert(pl_record).execute()
+        if not result.data:
+            raise HTTPException(status_code=500, detail="Failed to create pick list")
+
+        pl_id = result.data[0]["id"]
+
+        # Insert items if provided
+        items = pl.get("items", [])
+        if items:
+            for item in items:
+                fresh_supabase.table("pick_list_items").insert({
+                    "pick_list_id": pl_id,
+                    "product_id": item.get("productId"),
+                    "product_name": item.get("productName"),
+                    "sku_code": item.get("skuCode"),
+                    "quantity": item.get("quantity", 0),
+                    "picked_quantity": item.get("pickedQuantity", 0),
+                    "location_id": item.get("locationId"),
+                    "location_name": item.get("locationName"),
+                    "notes": item.get("notes"),
+                }).execute()
+        elif pl.get("deliveryChallanId"):
+            # Auto-populate from DC items
+            dc_items = fresh_supabase.table("delivery_challan_items").select("*").eq("delivery_challan_id", pl.get("deliveryChallanId")).execute()
+            for dci in (dc_items.data or []):
+                fresh_supabase.table("pick_list_items").insert({
+                    "pick_list_id": pl_id,
+                    "product_id": dci.get("product_id"),
+                    "product_name": dci.get("product_name"),
+                    "sku_code": dci.get("sku_code"),
+                    "quantity": dci.get("quantity", 0),
+                    "picked_quantity": 0,
+                }).execute()
+
+        created = fresh_supabase.table("pick_lists").select(PICK_LIST_SELECT).eq("id", pl_id).execute()
+        return JSONResponse(content=to_camel_case_pick_list(created.data[0]) if created.data else result.data[0])
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error creating pick list: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Failed to create pick list: {str(e)}")
+
+@app.put("/pick-lists/{pl_id}")
+def update_pick_list(pl_id: str, pl: dict = Body(...), payload=Depends(require_permission("sale_invoices_edit"))):
+    """Update a pick list. If completed, decrease stock and dispatch DC."""
+    try:
+        fresh_supabase = get_supabase_client()
+
+        current = fresh_supabase.table("pick_lists").select("id, status, delivery_challan_id").eq("id", pl_id).execute()
+        if not current.data:
+            raise HTTPException(status_code=404, detail="Pick list not found")
+
+        old_status = current.data[0]["status"]
+        new_status = pl.get("status", old_status)
+        dc_id = current.data[0].get("delivery_challan_id")
+
+        if old_status == "completed":
+            raise HTTPException(status_code=403, detail="Cannot edit a completed pick list")
+
+        update_data = {}
+        for camel, snake in [
+            ("status", "status"), ("assignedTo", "assigned_to"),
+            ("notes", "notes"), ("pickDate", "pick_date"),
+        ]:
+            if camel in pl:
+                update_data[snake] = pl[camel]
+
+        if new_status == "completed":
+            update_data["completed_date"] = datetime.now().isoformat()
+
+        if update_data:
+            fresh_supabase.table("pick_lists").update(update_data).eq("id", pl_id).execute()
+
+        # Update items
+        for item in pl.get("items", []):
+            item_id = item.get("id")
+            if item_id:
+                item_update = {}
+                if "pickedQuantity" in item:
+                    item_update["picked_quantity"] = item["pickedQuantity"]
+                if "locationId" in item:
+                    item_update["location_id"] = item["locationId"]
+                if "locationName" in item:
+                    item_update["location_name"] = item["locationName"]
+                if "notes" in item:
+                    item_update["notes"] = item["notes"]
+                if item_update:
+                    fresh_supabase.table("pick_list_items").update(item_update).eq("id", item_id).execute()
+
+        # If completing — decrease stock
+        if old_status != "completed" and new_status == "completed":
+            pl_items = fresh_supabase.table("pick_list_items").select("*").eq("pick_list_id", pl_id).execute()
+            for pli in (pl_items.data or []):
+                picked_qty = pli.get("picked_quantity", 0)
+                product_id = pli.get("product_id")
+                location_id = pli.get("location_id")
+
+                if picked_qty > 0 and product_id:
+                    if location_id:
+                        existing = fresh_supabase.table("stock_levels").select("id, quantity_on_hand").eq("product_id", product_id).eq("location_id", location_id).execute()
+                    else:
+                        existing = fresh_supabase.table("stock_levels").select("id, quantity_on_hand").eq("product_id", product_id).limit(1).execute()
+
+                    if existing.data:
+                        new_qty = max(0, (existing.data[0].get("quantity_on_hand", 0) or 0) - picked_qty)
+                        fresh_supabase.table("stock_levels").update({
+                            "quantity_on_hand": new_qty
+                        }).eq("id", existing.data[0]["id"]).execute()
+
+                    # Record inventory transaction
+                    try:
+                        fresh_supabase.table("inventory_transactions").insert({
+                            "product_id": product_id,
+                            "transaction_type": "sale",
+                            "quantity_change": -picked_qty,
+                            "reference_type": "pick_list",
+                            "reference_id": pl_id,
+                            "notes": f"Pick List completed - stock decreased",
+                            "created_by": payload.get("sub"),
+                        }).execute()
+                    except Exception as tx_err:
+                        print(f"Warning: Failed to record inventory transaction: {tx_err}")
+                    
+                    # Stock sync is handled by on_inventory_transaction trigger
+                    pass
+
+            # Update DC status to dispatched
+            if dc_id:
+                fresh_supabase.table("delivery_challans").update({
+                    "status": "dispatched",
+                    "dispatch_date": datetime.now().isoformat(),
+                }).eq("id", dc_id).execute()
+
+        updated = fresh_supabase.table("pick_lists").select(PICK_LIST_SELECT).eq("id", pl_id).execute()
+        return JSONResponse(content=to_camel_case_pick_list(updated.data[0]) if updated.data else {})
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error updating pick list: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Failed to update pick list: {str(e)}")
+
+@app.delete("/pick-lists/{pl_id}")
+def delete_pick_list(pl_id: str, payload=Depends(require_permission("sale_invoices_delete"))):
+    """Delete a pick list (only pending)."""
+    try:
+        fresh_supabase = get_supabase_client()
+        current = fresh_supabase.table("pick_lists").select("id, status").eq("id", pl_id).execute()
+        if not current.data:
+            raise HTTPException(status_code=404, detail="Pick list not found")
+        if current.data[0]["status"] not in ["pending", "cancelled"]:
+            raise HTTPException(status_code=403, detail="Only pending or cancelled pick lists can be deleted")
+        data = fresh_supabase.table("pick_lists").delete().eq("id", pl_id).execute()
+        return JSONResponse(content=data.data)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to delete pick list: {str(e)}")
+
+# ==================== End Pick List API ====================
+
+# ==================== Return Delivery Challan API ====================
+
+def to_camel_case_return_dc_item(item):
+    return {
+        "id": item.get("id"),
+        "returnDcId": item.get("return_dc_id"),
+        "productId": item.get("product_id"),
+        "productName": item.get("product_name"),
+        "skuCode": item.get("sku_code"),
+        "deliveredQuantity": item.get("delivered_quantity", 0),
+        "returnQuantity": item.get("return_quantity", 0),
+        "receivedQuantity": item.get("received_quantity", 0),
+        "reason": item.get("reason"),
+        "condition": item.get("condition", "good"),
+        "notes": item.get("notes"),
+        "createdAt": item.get("created_at"),
+        "updatedAt": item.get("updated_at"),
+    }
+
+def to_camel_case_return_dc(rdc):
+    return {
+        "id": rdc.get("id"),
+        "returnDcNumber": rdc.get("return_dc_number"),
+        "deliveryChallanId": rdc.get("delivery_challan_id"),
+        "deliveryChallan": {
+            "dcNumber": rdc.get("delivery_challans", {}).get("dc_number"),
+            "status": rdc.get("delivery_challans", {}).get("status"),
+        } if rdc.get("delivery_challans") else None,
+        "customerId": rdc.get("customer_id"),
+        "customer": {
+            "name": rdc.get("customers", {}).get("name"),
+            "phone": rdc.get("customers", {}).get("phone"),
+        } if rdc.get("customers") else None,
+        "status": rdc.get("status"),
+        "returnDate": rdc.get("return_date"),
+        "receivedDate": rdc.get("received_date"),
+        "completedDate": rdc.get("completed_date"),
+        "reason": rdc.get("reason"),
+        "notes": rdc.get("notes"),
+        "items": [to_camel_case_return_dc_item(i) for i in rdc.get("items", [])],
+        "createdBy": rdc.get("created_by"),
+        "createdAt": rdc.get("created_at"),
+        "updatedAt": rdc.get("updated_at"),
+    }
+
+RETURN_DC_SELECT = "*, delivery_challans(dc_number, status), customers(name, phone), items:return_delivery_challan_items(*)"
+
+@app.get("/return-delivery-challans")
+def get_return_dcs(payload=Depends(require_permission("sale_invoices_view"))):
+    try:
+        fresh_supabase = get_supabase_client()
+        data = fresh_supabase.table("return_delivery_challans").select(RETURN_DC_SELECT).order("created_at", desc=True).execute()
+        return JSONResponse(content=[to_camel_case_return_dc(r) for r in (data.data or [])])
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch return DCs: {str(e)}")
+
+@app.get("/return-delivery-challans/{rdc_id}")
+def get_return_dc(rdc_id: str, payload=Depends(require_permission("sale_invoices_view"))):
+    try:
+        fresh_supabase = get_supabase_client()
+        data = fresh_supabase.table("return_delivery_challans").select(RETURN_DC_SELECT).eq("id", rdc_id).execute()
+        if not data.data:
+            raise HTTPException(status_code=404, detail="Return DC not found")
+        return JSONResponse(content=to_camel_case_return_dc(data.data[0]))
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch return DC: {str(e)}")
+
+@app.post("/return-delivery-challans")
+def create_return_dc(rdc: dict = Body(...), payload=Depends(require_permission("sale_invoices_create"))):
+    try:
+        fresh_supabase = get_supabase_client()
+        user_id = payload.get("sub")
+
+        record = {
+            "return_dc_number": rdc.get("returnDcNumber", f"RDC-{datetime.now().strftime('%Y%m%d%H%M%S')}"),
+            "delivery_challan_id": rdc.get("deliveryChallanId"),
+            "customer_id": rdc.get("customerId"),
+            "status": rdc.get("status", "draft"),
+            "return_date": rdc.get("returnDate", datetime.now().strftime("%Y-%m-%d")),
+            "reason": rdc.get("reason"),
+            "notes": rdc.get("notes"),
+            "created_by": user_id,
+        }
+
+        result = fresh_supabase.table("return_delivery_challans").insert(record).execute()
+        if not result.data:
+            raise HTTPException(status_code=500, detail="Failed to create return DC")
+
+        rdc_id = result.data[0]["id"]
+
+        items = rdc.get("items", [])
+        if items:
+            for item in items:
+                fresh_supabase.table("return_delivery_challan_items").insert({
+                    "return_dc_id": rdc_id,
+                    "product_id": item.get("productId"),
+                    "product_name": item.get("productName"),
+                    "sku_code": item.get("skuCode"),
+                    "delivered_quantity": item.get("deliveredQuantity", 0),
+                    "return_quantity": item.get("returnQuantity", 0),
+                    "received_quantity": item.get("receivedQuantity", 0),
+                    "reason": item.get("reason"),
+                    "condition": item.get("condition", "good"),
+                    "notes": item.get("notes"),
+                }).execute()
+        elif rdc.get("deliveryChallanId"):
+            dc_items = fresh_supabase.table("delivery_challan_items").select("*").eq("delivery_challan_id", rdc.get("deliveryChallanId")).execute()
+            for dci in (dc_items.data or []):
+                fresh_supabase.table("return_delivery_challan_items").insert({
+                    "return_dc_id": rdc_id,
+                    "product_id": dci.get("product_id"),
+                    "product_name": dci.get("product_name"),
+                    "sku_code": dci.get("sku_code"),
+                    "delivered_quantity": dci.get("dispatched_quantity") or dci.get("quantity", 0),
+                    "return_quantity": 0,
+                    "received_quantity": 0,
+                    "condition": "good",
+                }).execute()
+
+        created = fresh_supabase.table("return_delivery_challans").select(RETURN_DC_SELECT).eq("id", rdc_id).execute()
+        return JSONResponse(content=to_camel_case_return_dc(created.data[0]) if created.data else result.data[0])
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Failed to create return DC: {str(e)}")
+
+@app.put("/return-delivery-challans/{rdc_id}")
+def update_return_dc(rdc_id: str, rdc: dict = Body(...), payload=Depends(require_permission("sale_invoices_edit"))):
+    """Update return DC. On completion: increase stock for good items, update DC status."""
+    try:
+        fresh_supabase = get_supabase_client()
+
+        current = fresh_supabase.table("return_delivery_challans").select("id, status, delivery_challan_id").eq("id", rdc_id).execute()
+        if not current.data:
+            raise HTTPException(status_code=404, detail="Return DC not found")
+
+        old_status = current.data[0]["status"]
+        new_status = rdc.get("status", old_status)
+        dc_id = current.data[0].get("delivery_challan_id")
+
+        if old_status == "completed":
+            raise HTTPException(status_code=403, detail="Cannot edit a completed return DC")
+
+        update_data = {}
+        for camel, snake in [
+            ("status", "status"), ("reason", "reason"), ("notes", "notes"), ("returnDate", "return_date"),
+        ]:
+            if camel in rdc:
+                update_data[snake] = rdc[camel]
+
+        if new_status == "received" and old_status != "received":
+            update_data["received_date"] = datetime.now().isoformat()
+        if new_status == "completed":
+            update_data["completed_date"] = datetime.now().isoformat()
+
+        if update_data:
+            fresh_supabase.table("return_delivery_challans").update(update_data).eq("id", rdc_id).execute()
+
+        # Update items
+        for item in rdc.get("items", []):
+            item_id = item.get("id")
+            if item_id:
+                item_update = {}
+                if "returnQuantity" in item:
+                    item_update["return_quantity"] = item["returnQuantity"]
+                if "receivedQuantity" in item:
+                    item_update["received_quantity"] = item["receivedQuantity"]
+                if "reason" in item:
+                    item_update["reason"] = item["reason"]
+                if "condition" in item:
+                    item_update["condition"] = item["condition"]
+                if "notes" in item:
+                    item_update["notes"] = item["notes"]
+                if item_update:
+                    fresh_supabase.table("return_delivery_challan_items").update(item_update).eq("id", item_id).execute()
+
+        # On completion — increase stock for good condition items
+        if old_status != "completed" and new_status == "completed":
+            rdc_items = fresh_supabase.table("return_delivery_challan_items").select("*").eq("return_dc_id", rdc_id).execute()
+
+            total_delivered = 0
+            total_returned = 0
+
+            for ri in (rdc_items.data or []):
+                received_qty = ri.get("received_quantity", 0)
+                product_id = ri.get("product_id")
+                condition = ri.get("condition", "good")
+                delivered_qty = ri.get("delivered_quantity", 0)
+                return_qty = ri.get("return_quantity", 0)
+
+                total_delivered += delivered_qty
+                total_returned += return_qty
+
+                # Only add back to stock if condition is good
+                if received_qty > 0 and product_id and condition == "good":
+                    existing = fresh_supabase.table("stock_levels").select("id, quantity_on_hand").eq("product_id", product_id).limit(1).execute()
+
+                    if existing.data:
+                        new_qty = (existing.data[0].get("quantity_on_hand", 0) or 0) + received_qty
+                        fresh_supabase.table("stock_levels").update({
+                            "quantity_on_hand": new_qty
+                        }).eq("id", existing.data[0]["id"]).execute()
+                    else:
+                        default_loc = fresh_supabase.table("locations").select("id").limit(1).execute()
+                        loc_id = default_loc.data[0]["id"] if default_loc.data else None
+                        if loc_id:
+                            fresh_supabase.table("stock_levels").insert({
+                                "product_id": product_id,
+                                "location_id": loc_id,
+                                "quantity_on_hand": received_qty,
+                            }).execute()
+
+                    try:
+                        fresh_supabase.table("inventory_transactions").insert({
+                            "product_id": product_id,
+                            "transaction_type": "return",
+                            "quantity_change": received_qty,
+                            "reference_type": "return_delivery_challan",
+                            "reference_id": rdc_id,
+                            "notes": f"Return DC completed - stock increased (condition: {condition})",
+                            "created_by": payload.get("sub"),
+                        }).execute()
+                    except Exception as tx_err:
+                        print(f"Warning: Failed to record inventory transaction: {tx_err}")
+                    
+                    # Stock sync is handled by on_inventory_transaction trigger
+                    pass
+
+            # Update DC status
+            if dc_id:
+                if total_returned >= total_delivered and total_delivered > 0:
+                    dc_new_status = "returned"
+                else:
+                    dc_new_status = "partial_return"
+                fresh_supabase.table("delivery_challans").update({"status": dc_new_status}).eq("id", dc_id).execute()
+
+        updated = fresh_supabase.table("return_delivery_challans").select(RETURN_DC_SELECT).eq("id", rdc_id).execute()
+        return JSONResponse(content=to_camel_case_return_dc(updated.data[0]) if updated.data else {})
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Failed to update return DC: {str(e)}")
+
+@app.delete("/return-delivery-challans/{rdc_id}")
+def delete_return_dc(rdc_id: str, payload=Depends(require_permission("sale_invoices_delete"))):
+    try:
+        fresh_supabase = get_supabase_client()
+        current = fresh_supabase.table("return_delivery_challans").select("id, status").eq("id", rdc_id).execute()
+        if not current.data:
+            raise HTTPException(status_code=404, detail="Return DC not found")
+        if current.data[0]["status"] not in ["draft", "cancelled"]:
+            raise HTTPException(status_code=403, detail="Only draft or cancelled return DCs can be deleted")
+        data = fresh_supabase.table("return_delivery_challans").delete().eq("id", rdc_id).execute()
+        return JSONResponse(content=data.data)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to delete return DC: {str(e)}")
+
+# ==================== End Return Delivery Challan API ====================
+
 def check_duplicate_ean_code(ean_code: str, exclude_product_id: str = None):
     """Check if EAN code already exists"""
     query = supabase.table("products").select("id").eq("barcode", ean_code)
@@ -5476,14 +7093,14 @@ def validate_grn_status_transition(current_status: str, new_status: str = None, 
     """Validate GRN status for edit/delete operations"""
     if operation == "edit":
         # For editing: only draft and partial can be edited
-        if current_status in ['completed', 'rejected']:
+        if current_status in ['completed', 'rejected', 'received']:
             raise HTTPException(
                 status_code=403, 
                 detail=f"Cannot edit GRN with status '{current_status}'. Only draft and partial GRNs can be edited."
             )
     elif operation == "delete":
         # For deleting: only draft can be deleted
-        if current_status in ['partial', 'completed', 'rejected']:
+        if current_status in ['partial', 'completed', 'rejected', 'received']:
             raise HTTPException(
                 status_code=403, 
                 detail=f"Cannot delete GRN with status '{current_status}'. Only draft GRNs can be deleted."
@@ -5838,6 +7455,187 @@ def get_available_purchase_orders_for_grn(payload=Depends(require_permission("pu
     transformed_data = [to_camel_case_purchase_order(order) for order in available_orders]
     return JSONResponse(content=transformed_data)
 
+
 if __name__ == "__main__":
     print(f"Starting server with DEBUG_MODE: {DEBUG_MODE}")
     uvicorn.run(app, host="0.0.0.0", port=8000, reload=DEBUG_MODE)
+
+
+# --- Purchase Indents API Endpoints ---
+
+@app.get("/purchase-indents")
+def get_purchase_indents(status: Optional[str] = None, payload=Depends(require_permission("purchase_orders_view"))):
+    try:
+        client = get_supabase_client()
+        query = client.table("purchase_indents").select("*, requester:profiles(*)")
+        if status:
+            query = query.eq("status", status)
+        data = query.order("created_at", desc=True).execute()
+        
+        transformed = [to_camel_case_purchase_indent(indent) for indent in data.data]
+        return JSONResponse(content=transformed)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error fetching indents: {str(e)}")
+
+@app.get("/purchase-indents/{indent_id}")
+def get_purchase_indent(indent_id: str, payload=Depends(require_permission("purchase_orders_view"))):
+    try:
+        client = get_supabase_client()
+        indent_data = client.table("purchase_indents").select("*, requester:profiles(*)").eq("id", indent_id).single().execute()
+        if not indent_data.data:
+            return JSONResponse(content={"error": "Indent not found"}, status_code=404)
+            
+        items_data = client.table("purchase_indent_items").select("*, product:products(*)").eq("indent_id", indent_id).execute()
+        
+        indent = to_camel_case_purchase_indent(indent_data.data)
+        indent["items"] = [to_camel_case_purchase_indent_item(item) for item in items_data.data]
+        
+        return JSONResponse(content=indent)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error fetching indent: {str(e)}")
+
+@app.post("/purchase-indents")
+def create_purchase_indent(indent: dict = Body(...), payload=Depends(require_permission("purchase_orders_create"))):
+    try:
+        client = get_supabase_client()
+        
+        # 1. Create indent header
+        indent_data = {
+            "indent_number": indent["indentNumber"],
+            "requester_id": indent["requesterId"],
+            "department": indent.get("department"),
+            "required_date": indent["requiredDate"],
+            "status": indent.get("status", "draft"),
+            "total_estimated_value": indent.get("totalEstimatedValue", 0),
+            "notes": indent.get("notes")
+        }
+        
+        header_result = client.table("purchase_indents").insert(indent_data).execute()
+        new_indent = header_result.data[0]
+        
+        # 2. Create items
+        items = indent.get("items", [])
+        if items:
+            items_payload = []
+            for item in items:
+                items_payload.append({
+                    "indent_id": new_indent["id"],
+                    "product_id": item["productId"],
+                    "quantity": item["quantity"],
+                    "estimated_unit_price": item.get("estimatedUnitPrice", 0)
+                })
+            client.table("purchase_indent_items").insert(items_payload).execute()
+            
+        return JSONResponse(content=to_camel_case_purchase_indent(new_indent))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error creating indent: {str(e)}")
+
+@app.put("/purchase-indents/{indent_id}")
+def update_purchase_indent(indent_id: str, indent: dict = Body(...), payload=Depends(require_permission("purchase_orders_edit"))):
+    try:
+        client = get_supabase_client()
+        
+        # 1. Update header
+        update_data = {}
+        if "indentNumber" in indent: update_data["indent_number"] = indent["indentNumber"]
+        if "department" in indent: update_data["department"] = indent["department"]
+        if "requiredDate" in indent: update_data["required_date"] = indent["requiredDate"]
+        if "status" in indent: update_data["status"] = indent["status"]
+        if "notes" in indent: update_data["notes"] = indent["notes"]
+        if "totalEstimatedValue" in indent: update_data["total_estimated_value"] = indent["totalEstimatedValue"]
+        
+        if update_data:
+            client.table("purchase_indents").update(update_data).eq("id", indent_id).execute()
+            
+        # 2. Update items (Replace all strategy for MVP)
+        if "items" in indent:
+            client.table("purchase_indent_items").delete().eq("indent_id", indent_id).execute()
+            items_payload = []
+            for item in indent["items"]:
+                items_payload.append({
+                    "indent_id": indent_id,
+                    "product_id": item["productId"],
+                    "quantity": item["quantity"],
+                    "estimated_unit_price": item.get("estimatedUnitPrice", 0)
+                })
+            if items_payload:
+                client.table("purchase_indent_items").insert(items_payload).execute()
+                
+        return JSONResponse(content={"status": "success"})
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error updating indent: {str(e)}")
+
+@app.delete("/purchase-indents/{indent_id}")
+def delete_purchase_indent(indent_id: str, payload=Depends(require_permission("purchase_orders_delete"))):
+    try:
+        client = get_supabase_client()
+        client.table("purchase_indents").delete().eq("id", indent_id).execute()
+        return JSONResponse(content={"status": "success"})
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error deleting indent: {str(e)}")
+
+@app.post("/purchase-orders/from-indents")
+def consolidate_indents(request: dict = Body(...), payload=Depends(require_permission("purchase_orders_create"))):
+    """
+    Consolidate multiple indents into one Purchase Order.
+    Expected body: { indentIds: string[], supplierId: string, orderDate: string, ... }
+    """
+    try:
+        client = get_supabase_client()
+        indent_ids = request["indentIds"]
+        supplier_id = request["supplierId"]
+        
+        # 1. Fetch items from all indents
+        items_res = client.table("purchase_indent_items") \
+            .select("*, indent:purchase_indents(*)") \
+            .in_("indent_id", indent_ids) \
+            .execute()
+        
+        all_items = items_res.data
+        if not all_items:
+            raise HTTPException(status_code=400, detail="No items found in selected indents")
+            
+        # 2. Consolidate by product
+        consolidated = {}
+        for it in all_items:
+            pid = it["product_id"]
+            if pid not in consolidated:
+                consolidated[pid] = {
+                    "product_id": pid,
+                    "quantity": 0,
+                    "unit_cost": float(it["estimated_unit_price"] or 0)
+                }
+            consolidated[pid]["quantity"] += it["quantity"]
+            
+        # 3. Create PO
+        po_number = f"PO-IND-{datetime.now().strftime('%y%m%d%H%M%S')}"
+        po_data = {
+            "order_number": po_number,
+            "supplier_id": supplier_id,
+            "order_date": request.get("orderDate", datetime.now().date().isoformat()),
+            "status": "draft",
+            "notes": f"Consolidated from Indents: {', '.join(indent_ids)}"
+        }
+        
+        po_res = client.table("purchase_orders").insert(po_data).execute()
+        new_po = po_res.data[0]
+        
+        # 4. Create PO Items
+        po_items = []
+        for pid, data in consolidated.items():
+            po_items.append({
+                "purchase_order_id": new_po["id"],
+                "product_id": pid,
+                "quantity": data["quantity"],
+                "cost_price": data["unit_cost"], # PO uses cost_price
+                "total": data["quantity"] * data["unit_cost"]
+            })
+        client.table("purchase_order_items").insert(po_items).execute()
+        
+        # 5. Link back and Update Status
+        client.table("purchase_indent_items").update({"purchase_order_id": new_po["id"]}).in_("indent_id", indent_ids).execute()
+        client.table("purchase_indents").update({"status": "converted"}).in_("id", indent_ids).execute()
+        
+        return JSONResponse(content={"status": "success", "purchaseOrderId": new_po["id"]})
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error consolidating indents: {str(e)}")

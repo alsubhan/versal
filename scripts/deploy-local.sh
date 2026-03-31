@@ -41,6 +41,7 @@ Environment Variables:
     your custom services (api, app) with it.
 
 Examples:
+    ./scripts/deploy-local.sh --target all  --project-name versal --core
     ./deploy-local.sh --target supabase
     ./deploy-local.sh --target supabase --core
     ./deploy-local.sh --target supabase --blank-db

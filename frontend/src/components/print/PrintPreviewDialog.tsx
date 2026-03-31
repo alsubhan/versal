@@ -79,11 +79,13 @@ export function PrintPreviewDialog({ open, onOpenChange, documentType, data }: P
         ref={contentRef}
         className="bg-white text-black w-[210mm] min-h-[297mm] p-8"
       >
-        {documentType === 'saleInvoice' && templateKey === 'standard' ? (
-          <SaleInvoiceStandardTemplate data={data as any} settings={settings as any} />
-        ) : (
-          // @ts-ignore
-          <TemplateComponent documentType={documentType} data={data} settings={settings as any} />
+        {data && (
+          documentType === 'saleInvoice' && templateKey === 'standard' ? (
+            <SaleInvoiceStandardTemplate data={data as any} settings={settings as any} />
+          ) : (
+            // @ts-ignore
+            <TemplateComponent documentType={documentType} data={data} settings={settings as any} />
+          )
         )}
       </div>
     </div>

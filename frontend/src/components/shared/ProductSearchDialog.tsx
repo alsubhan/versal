@@ -132,15 +132,15 @@ export const ProductSearchDialog = ({
   };
 
   // Serial lookup for sale mode: if search looks like a serial, try resolving it
+  // Using a timeout for debouncing to avoid excessive API calls
   useEffect(() => {
-    const controller = new AbortController();
-    const tryLookup = async () => {
-      if (!open || mode !== 'sale') return;
-      const term = searchTerm.trim();
-      if (!term) return;
-      // Heuristic: long non-whitespace tokens might be serials; always allow manual try
-      if (term.length < 4) return;
+    if (!open || mode !== 'sale') return;
+    const term = searchTerm.trim();
+    if (!term || term.length < 4) return;
+
+    const handler = setTimeout(async () => {
       try {
+        console.log('DEBUG: Attempting serial lookup for term:', term);
         const res: any = await lookupSerial(term);
         if (res && res.found && res.product && res.status === 'available') {
           // Build a minimal product-like object and auto-open configure with 1 qty and the serial prefilled
@@ -157,6 +157,8 @@ export const ProductSearchDialog = ({
             sale_tax_type: res.product?.sale_tax_type,
             units: res.product?.units || { name: 'Unit', abbreviation: 'Unit' }
           } as any;
+          
+          console.log('DEBUG: Serial found, opening configure for:', base.name);
           openConfigure(base);
           setConfigQty(1);
           setSerialInput(term);
@@ -168,12 +170,12 @@ export const ProductSearchDialog = ({
             setConfigUnitPrice(base.sale_price);
           }
         }
-      } catch (_) {
-        // ignore lookup errors silently
+      } catch (err) {
+        console.warn('Silent failure in serial lookup:', err);
       }
-    };
-    tryLookup();
-    return () => controller.abort();
+    }, 500); // 500ms debounce
+
+    return () => clearTimeout(handler);
   }, [searchTerm, mode, open, products]);
 
   useEffect(() => {

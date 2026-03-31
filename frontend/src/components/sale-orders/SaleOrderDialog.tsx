@@ -21,9 +21,19 @@ import { toast } from "sonner";
 import { type SalesOrder, type SalesOrderItem } from "@/types/sales-order";
 import { type Customer } from "@/types/customer";
 import { useCurrencyStore } from "@/stores/currencyStore";
-import { getSalesOrder, getProducts, getTaxes, getCustomers } from "@/lib/api";
+import { getSalesOrder, getProducts, getTaxes, getCustomers, getFrequentItems } from "@/lib/api";
 import { ProductSearchDialog } from "@/components/shared/ProductSearchDialog";
 import { useSystemSettings } from "@/hooks/useSystemSettings";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 interface SaleOrderDialogProps {
   open: boolean;
@@ -43,6 +53,8 @@ export const SaleOrderDialog = ({ open, onOpenChange, salesOrder, onSave }: Sale
   const [dataLoading, setDataLoading] = useState(false);
   const [showProductSearch, setShowProductSearch] = useState(false);
   const [recentProducts, setRecentProducts] = useState<any[]>([]);
+  const [showFrequentItemsDialog, setShowFrequentItemsDialog] = useState(false);
+  const [frequentItems, setFrequentItems] = useState<any[]>([]);
   
   const [formData, setFormData] = useState<Partial<SalesOrder>>({
     orderNumber: "",
@@ -249,8 +261,61 @@ export const SaleOrderDialog = ({ open, onOpenChange, salesOrder, onSave }: Sale
     setFormData({ ...formData, [name]: value });
   };
   
-  const handleSelectChange = (name: string, value: string) => {
-    setFormData({ ...formData, [name]: value });
+  const handleSelectChange = async (name: string, value: string) => {
+    if (name === "customerId" && value) {
+      try {
+        const data = await getFrequentItems(value);
+        if (data && data.length > 0) {
+          setFrequentItems(data);
+          setShowFrequentItemsDialog(true);
+        }
+      } catch (error) {
+        console.error('Error fetching frequent items:', error);
+      }
+    }
+
+    setFormData((prev) => {
+      const updates: Partial<SalesOrder> = { [name]: value };
+      if (name === "customerId") {
+        const selectedCustomer = customers.find(c => c.id === value);
+        // If customer has a shipping address, use it. Otherwise, reset to empty address structure
+        if (selectedCustomer && selectedCustomer.shippingAddress && Object.keys(selectedCustomer.shippingAddress).length > 0) {
+          updates.shippingAddress = { 
+            street: selectedCustomer.shippingAddress.street || "",
+            city: selectedCustomer.shippingAddress.city || "",
+            state: selectedCustomer.shippingAddress.state || "",
+            zipCode: selectedCustomer.shippingAddress.zipCode || "",
+            country: selectedCustomer.shippingAddress.country || ""
+          };
+        } else {
+          updates.shippingAddress = { street: "", city: "", state: "", zipCode: "", country: "" };
+        }
+      }
+      return { ...prev, ...updates };
+    });
+  };
+
+  const applyFrequentItems = () => {
+    if (frequentItems.length > 0) {
+      // Map frequent items to the form items structure
+      const newItems = frequentItems.map(item => ({
+        ...item,
+        id: undefined, // Clear ID to ensure it's treated as a new item on save
+        quantity: 1
+      }));
+      setItems(newItems);
+      toast.success(`Added ${newItems.length} frequently purchased items`);
+    }
+  };
+
+  const handleShippingAddressChange = (field: string, value: string) => {
+    setFormData(prev => ({
+      ...prev,
+      shippingAddress: {
+        ...(prev.shippingAddress || { street: "", city: "", state: "", zipCode: "", country: "" }),
+        [field]: value
+      }
+    }));
   };
   
   const handleDateChange = (name: string, date: Date | undefined) => {
@@ -649,6 +714,20 @@ export const SaleOrderDialog = ({ open, onOpenChange, salesOrder, onSave }: Sale
                 </SelectContent>
               </Select>
             </div>
+
+              <div>
+                <Label htmlFor="customerPoNumber" className="text-sm font-medium text-gray-700">
+                  Customer PO #
+                </Label>
+                <Input
+                  id="customerPoNumber"
+                  name="customerPoNumber"
+                  value={formData.customerPoNumber || ""}
+                  onChange={handleInputChange}
+                  className="mt-1"
+                  placeholder="Optional"
+                />
+              </div>
             
               <div>
                 <Label htmlFor="orderDate" className="text-sm font-medium text-gray-700">
@@ -709,6 +788,58 @@ export const SaleOrderDialog = ({ open, onOpenChange, salesOrder, onSave }: Sale
               <div>
                 <Label className="text-sm font-medium text-gray-700">Status</Label>
                 <Input value={formData.status ? (formData.status.charAt(0).toUpperCase() + formData.status.slice(1)) : 'Draft'} className="mt-1 bg-gray-50" disabled />
+              </div>
+            </div>
+            
+            {/* SHIPPING ADDRESS SECTION */}
+            <div className="mt-6 border rounded-lg p-4 bg-gray-50">
+              <h3 className="text-sm font-semibold text-gray-900 mb-3">Shipping Address (Optional)</h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+                <div className="lg:col-span-1">
+                  <Label htmlFor="shippingStreet" className="text-xs text-gray-600">Street</Label>
+                  <Input 
+                    id="shippingStreet"
+                    value={formData.shippingAddress?.street || ""} 
+                    onChange={(e) => handleShippingAddressChange("street", e.target.value)} 
+                    className="mt-1 h-8 text-sm"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="shippingCity" className="text-xs text-gray-600">City</Label>
+                  <Input 
+                    id="shippingCity"
+                    value={formData.shippingAddress?.city || ""} 
+                    onChange={(e) => handleShippingAddressChange("city", e.target.value)} 
+                    className="mt-1 h-8 text-sm"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="shippingState" className="text-xs text-gray-600">State / Province</Label>
+                  <Input 
+                    id="shippingState"
+                    value={formData.shippingAddress?.state || ""} 
+                    onChange={(e) => handleShippingAddressChange("state", e.target.value)} 
+                    className="mt-1 h-8 text-sm"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="shippingZipCode" className="text-xs text-gray-600">ZIP / Postal Code</Label>
+                  <Input 
+                    id="shippingZipCode"
+                    value={formData.shippingAddress?.zipCode || ""} 
+                    onChange={(e) => handleShippingAddressChange("zipCode", e.target.value)} 
+                    className="mt-1 h-8 text-sm"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="shippingCountry" className="text-xs text-gray-600">Country</Label>
+                  <Input 
+                    id="shippingCountry"
+                    value={formData.shippingAddress?.country || ""} 
+                    onChange={(e) => handleShippingAddressChange("country", e.target.value)} 
+                    className="mt-1 h-8 text-sm"
+                  />
+                </div>
               </div>
             </div>
             
@@ -945,6 +1076,28 @@ export const SaleOrderDialog = ({ open, onOpenChange, salesOrder, onSave }: Sale
         mode="sale"
         context="planning"
       />
+
+      <AlertDialog open={showFrequentItemsDialog} onOpenChange={setShowFrequentItemsDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Auto-populate Frequent Items?</AlertDialogTitle>
+            <AlertDialogDescription>
+              We've found {frequentItems.length} products this customer frequently purchases. 
+              Would you like to add them to this order automatically?
+              <br /><br />
+              <span className="text-amber-600 font-medium font-sm italic uppercase">
+                Note: This will replace any items currently in the list.
+              </span>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Skip</AlertDialogCancel>
+            <AlertDialogAction onClick={applyFrequentItems}>
+              Add Items
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Dialog>
   );
 };

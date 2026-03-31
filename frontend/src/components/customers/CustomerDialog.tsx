@@ -112,46 +112,48 @@ export function CustomerDialog({
   const useShippingAsBilling = form.watch("useShippingAsBilling");
 
   React.useEffect(() => {
-    if (customer) {
-      // Check if billing and shipping addresses are the same
-      const billingAddress: Address = customer.billingAddress || defaultAddress;
-      const shippingAddress: Address = customer.shippingAddress || defaultAddress;
-      const addressesAreSame = 
-        billingAddress.street === shippingAddress.street &&
-        billingAddress.city === shippingAddress.city &&
-        billingAddress.state === shippingAddress.state &&
-        billingAddress.zipCode === shippingAddress.zipCode &&
-        billingAddress.country === shippingAddress.country;
+    if (open) {
+      if (customer) {
+        // Check if billing and shipping addresses are the same
+        const billingAddress: Address = customer.billingAddress || defaultAddress;
+        const shippingAddress: Address = customer.shippingAddress || defaultAddress;
+        const addressesAreSame = 
+          billingAddress.street === shippingAddress.street &&
+          billingAddress.city === shippingAddress.city &&
+          billingAddress.state === shippingAddress.state &&
+          billingAddress.zipCode === shippingAddress.zipCode &&
+          billingAddress.country === shippingAddress.country;
 
-      form.reset({
-        name: customer.name,
-        email: customer.email,
-        phone: customer.phone,
-        billingAddress: billingAddress,
-        useShippingAsBilling: addressesAreSame,
-        shippingAddress: shippingAddress,
-        taxId: customer.taxId || "",
-        notes: customer.notes || "",
-        creditLimit: customer.creditLimit || 0,
-        customerType: customer.customerType || "retail",
-        isActive: customer.isActive ?? true,
-      });
-    } else {
-      form.reset({
-        name: "",
-        email: "",
-        phone: "",
-        billingAddress: defaultAddress,
-        useShippingAsBilling: false,
-        shippingAddress: defaultAddress,
-        taxId: "",
-        notes: "",
-        creditLimit: 0,
-        customerType: "retail",
-        isActive: true,
-      });
+        form.reset({
+          name: customer.name,
+          email: customer.email,
+          phone: customer.phone,
+          billingAddress: billingAddress,
+          useShippingAsBilling: addressesAreSame,
+          shippingAddress: shippingAddress,
+          taxId: customer.taxId || "",
+          notes: customer.notes || "",
+          creditLimit: customer.creditLimit || 0,
+          customerType: customer.customerType || "retail",
+          isActive: customer.isActive ?? true,
+        });
+      } else {
+        form.reset({
+          name: "",
+          email: "",
+          phone: "",
+          billingAddress: defaultAddress,
+          useShippingAsBilling: false,
+          shippingAddress: defaultAddress,
+          taxId: "",
+          notes: "",
+          creditLimit: 0,
+          customerType: "retail",
+          isActive: true,
+        });
+      }
     }
-  }, [customer, form]);
+  }, [open, customer, form]);
 
   const handleSubmit = async (data: z.infer<typeof formSchema>) => {
     console.log("CustomerDialog - Form submitted:", data);

@@ -20,9 +20,10 @@ import {
 } from "@/components/ui/alert-dialog";
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/useAuth";
+import { useNavigate } from "react-router-dom";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { PermissionGuard } from "@/components/ui/permission-guard";
-import { getGoodReceiveNotes, getGoodReceiveNote, createGoodReceiveNote, updateGoodReceiveNote, deleteGoodReceiveNote } from "@/lib/api";
+import { getGoodReceiveNotes, getGoodReceiveNote, createGoodReceiveNote, updateGoodReceiveNote, deleteGoodReceiveNote, createQualityCheck } from "@/lib/api";
 import { PrintPreviewDialog } from "@/components/print/PrintPreviewDialog";
 
 export default function GRNsPage() {
@@ -37,12 +38,13 @@ export default function GRNsPage() {
   const [grnToDelete, setGrnToDelete] = useState<GoodsReceiveNote | undefined>(undefined);
   const [printDialogOpen, setPrintDialogOpen] = useState(false);
   const [printingGrn, setPrintingGrn] = useState<GoodsReceiveNote | null>(null);
-  
+
   // For returns processing
   const [returnDialogOpen, setReturnDialogOpen] = useState(false);
   const [selectedReturnGrn, setSelectedReturnGrn] = useState<GoodsReceiveNote | undefined>(undefined);
 
   const { hasPermission } = useAuth();
+  const navigate = useNavigate();
   const canCreateGRN = hasPermission('grn_create');
   const canEditGRN = hasPermission('grn_edit');
   const canDeleteGRN = hasPermission('grn_delete');
@@ -73,11 +75,11 @@ export default function GRNsPage() {
 
   const handleEdit = (grn: GoodsReceiveNote) => {
     // Check if GRN can be edited based on status
-    if (grn.status === 'completed' || grn.status === 'rejected') {
+    if (grn.status === 'completed' || grn.status === 'rejected' || grn.status === 'received') {
       toast.error(`Cannot edit GRN with status "${grn.status}". Only draft and partial GRNs can be edited.`);
       return;
     }
-    
+
     setSelectedGrn(grn);
     setDialogOpen(true);
   };
@@ -102,13 +104,13 @@ export default function GRNsPage() {
 
   const handleDeleteClick = (id: string) => {
     const grn = data.find(g => g.id === id);
-    
+
     // Check if GRN can be deleted based on status
     if (grn?.status === 'completed' || grn?.status === 'rejected') {
       toast.error(`Cannot delete GRN with status "${grn.status}". Only draft and partial GRNs can be deleted.`);
       return;
     }
-    
+
     setGrnToDelete(grn);
     setDeleteDialogOpen(true);
   };
@@ -133,12 +135,37 @@ export default function GRNsPage() {
     setReturnDialogOpen(true);
   };
 
+  const handleSendToQC = async (grn: GoodsReceiveNote) => {
+    try {
+      // Generate QC number
+      const date = new Date();
+      const dateStr = date.getFullYear().toString() +
+        (date.getMonth() + 1).toString().padStart(2, '0') +
+        date.getDate().toString().padStart(2, '0');
+      const random = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
+      const qcNumber = `QC-${dateStr}-${random}`;
+
+      await createQualityCheck({
+        qcNumber,
+        grnId: grn.id,
+        status: "pending",
+      });
+
+      toast.success(`QC ${qcNumber} created for GRN ${grn.grnNumber}. GRN status set to received.`);
+      loadData();
+      navigate('/quality-checks');
+    } catch (error: any) {
+      console.error('Error creating QC:', error);
+      toast.error(error?.message || "Failed to create quality check");
+    }
+  };
+
   const handleProcessReturnData = (returnData: any) => {
     // Handle the return data - this could update the GRN status, create return records, etc.
     console.log('Processing GRN return:', returnData);
-    
+
     toast.success(`Return processed for GRN ${returnData.grnNumber}. Total return amount: ${returnData.returnTotal}`);
-    
+
     // Reload data to reflect changes
     loadData();
   };
@@ -161,7 +188,7 @@ export default function GRNsPage() {
   };
 
   // Filter GRNs based on search term
-  const filteredGRNs = data.filter(grn => 
+  const filteredGRNs = data.filter(grn =>
     grn.grnNumber?.toLowerCase().includes(searchTerm.toLowerCase()) ||
     grn.purchaseOrder?.orderNumber?.toLowerCase().includes(searchTerm.toLowerCase()) ||
     grn.status?.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -169,7 +196,7 @@ export default function GRNsPage() {
   );
 
   return (
-    <PermissionGuard 
+    <PermissionGuard
       requiredPermission="grn_view"
       fallbackMessage="You do not have permission to view goods receive notes. Please contact an administrator."
     >
@@ -218,6 +245,7 @@ export default function GRNsPage() {
           onDelete={canDeleteGRN ? handleDeleteClick : undefined}
           onPrint={handlePrint}
           onProcessReturn={handleProcessReturn}
+          onSendToQC={canCreateGRN ? handleSendToQC : undefined}
           canEdit={canEditGRN}
           canDelete={canDeleteGRN}
           canProcessReturn={hasPermission('grn_edit')}

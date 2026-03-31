@@ -20,7 +20,7 @@ export async function apiFetch(path: string, options: RequestInit = {}) {
 
   // Get session and try to refresh if needed
   let { data: sessionData, error: sessionError } = await supabase.auth.getSession();
-  
+
   // If no session or token expired, try to refresh
   if (!sessionData?.session?.access_token || sessionError) {
     console.log('⚠️ Session expired or missing, attempting to refresh...');
@@ -31,9 +31,9 @@ export async function apiFetch(path: string, options: RequestInit = {}) {
     }
     sessionData = refreshData;
   }
-  
+
   const accessToken = sessionData.session?.access_token;
-  
+
   // Debug logging
   if (!accessToken) {
     console.error('⚠️ No access token found in session:', {
@@ -46,9 +46,9 @@ export async function apiFetch(path: string, options: RequestInit = {}) {
     });
     throw new Error('No access token available. Please log in again.');
   }
-  
+
   console.log('✅ Access token found, making request to:', `${API_BASE_URL}${path}`);
-  
+
   const res = await fetch(`${API_BASE_URL}${path}`, {
     ...options,
     headers: {
@@ -57,19 +57,19 @@ export async function apiFetch(path: string, options: RequestInit = {}) {
       'Content-Type': 'application/json',
     },
   });
-  
+
   if (!res.ok) {
     // Clone the response so we can read it multiple times
     const responseClone = res.clone();
-    
+
     // Try to get the error text first
     try {
       const errorText = await responseClone.text();
-      
+
       // Try to parse as JSON
       try {
         const errorData = JSON.parse(errorText);
-        
+
         // Return error response instead of throwing
         return {
           error: true,
@@ -99,7 +99,7 @@ export async function apiFetch(path: string, options: RequestInit = {}) {
       };
     }
   }
-  
+
   return res.json();
 }
 
@@ -110,10 +110,10 @@ export async function apiUpload(path: string, file: File) {
   } catch (error) {
     supabase = getFallbackSupabaseClient();
   }
-  
+
   // Get session and try to refresh if needed
   let { data: sessionData, error: sessionError } = await supabase.auth.getSession();
-  
+
   // If no session or token expired, try to refresh
   if (!sessionData?.session?.access_token || sessionError) {
     console.log('⚠️ Session expired or missing, attempting to refresh...');
@@ -124,9 +124,9 @@ export async function apiUpload(path: string, file: File) {
     }
     sessionData = refreshData;
   }
-  
+
   const accessToken = sessionData.session?.access_token;
-  
+
   if (!accessToken) {
     throw new Error('No access token available. Please log in again.');
   }
@@ -155,25 +155,25 @@ export async function getUsers() {
 
 export async function createUser(user: any) {
   const result = await apiFetch('/users', { method: 'POST', body: JSON.stringify(user) });
-  
+
   // Check if the result is an error response
   if (result && result.error) {
     throw new Error(result.detail);
   }
-  
+
   return result;
 }
 
 export async function updateUser(id: string, user: any) {
   const result = await apiFetch(`/users/${id}`, { method: 'PUT', body: JSON.stringify(user) });
-  
+
   // Check if the result is an error response
   if (result && result.error) {
     const error = new Error(result.detail);
     (error as any).status = result.status;
     throw error;
   }
-  
+
   return result;
 }
 
@@ -188,25 +188,25 @@ export async function getRoles() {
 
 export async function createRole(role: any) {
   const result = await apiFetch('/roles', { method: 'POST', body: JSON.stringify(role) });
-  
+
   // Check if the result is an error response
   if (result && result.error) {
     throw new Error(result.detail);
   }
-  
+
   return result;
 }
 
 export async function updateRole(roleName: string, role: any) {
   const result = await apiFetch(`/roles/${roleName}`, { method: 'PUT', body: JSON.stringify(role) });
-  
+
   // Check if the result is an error response
   if (result && result.error) {
     const error = new Error(result.detail);
     (error as any).status = result.status;
     throw error;
   }
-  
+
   return result;
 }
 
@@ -221,27 +221,27 @@ export async function getUnits() {
 
 export async function createUnit(unit: any) {
   const result = await apiFetch('/units', { method: 'POST', body: JSON.stringify(unit) });
-  
+
   // Check if the result is an error response
   if (result && result.error) {
     const error = new Error(result.detail);
     (error as any).status = result.status;
     throw error;
   }
-  
+
   return result;
 }
 
 export async function updateUnit(id: string, unit: any) {
   const result = await apiFetch(`/units/${id}`, { method: 'PUT', body: JSON.stringify(unit) });
-  
+
   // Check if the result is an error response
   if (result && result.error) {
     const error = new Error(result.detail);
     (error as any).status = result.status;
     throw error;
   }
-  
+
   return result;
 }
 
@@ -256,27 +256,27 @@ export async function getTaxes() {
 
 export async function createTax(tax: any) {
   const result = await apiFetch('/taxes', { method: 'POST', body: JSON.stringify(tax) });
-  
+
   // Check if the result is an error response
   if (result && result.error) {
     const error = new Error(result.detail);
     (error as any).status = result.status;
     throw error;
   }
-  
+
   return result;
 }
 
 export async function updateTax(id: string, tax: any) {
   const result = await apiFetch(`/taxes/${id}`, { method: 'PUT', body: JSON.stringify(tax) });
-  
+
   // Check if the result is an error response
   if (result && result.error) {
     const error = new Error(result.detail);
     (error as any).status = result.status;
     throw error;
   }
-  
+
   return result;
 }
 
@@ -291,27 +291,27 @@ export async function getSuppliers() {
 
 export async function createSupplier(supplier: any) {
   const result = await apiFetch('/suppliers', { method: 'POST', body: JSON.stringify(supplier) });
-  
+
   // Check if the result is an error response
   if (result && result.error) {
     const error = new Error(result.detail);
     (error as any).status = result.status;
     throw error;
   }
-  
+
   return result;
 }
 
 export async function updateSupplier(id: string, supplier: any) {
   const result = await apiFetch(`/suppliers/${id}`, { method: 'PUT', body: JSON.stringify(supplier) });
-  
+
   // Check if the result is an error response
   if (result && result.error) {
     const error = new Error(result.detail);
     (error as any).status = result.status;
     throw error;
   }
-  
+
   return result;
 }
 
@@ -324,29 +324,33 @@ export async function getCustomers() {
   return apiFetch('/customers');
 }
 
+export async function getFrequentItems(customerId: string) {
+  return apiFetch(`/customers/${customerId}/frequent-items`);
+}
+
 export async function createCustomer(customer: any) {
   const result = await apiFetch('/customers', { method: 'POST', body: JSON.stringify(customer) });
-  
+
   // Check if the result is an error response
   if (result && result.error) {
     const error = new Error(result.detail);
     (error as any).status = result.status;
     throw error;
   }
-  
+
   return result;
 }
 
 export async function updateCustomer(id: string, customer: any) {
   const result = await apiFetch(`/customers/${id}`, { method: 'PUT', body: JSON.stringify(customer) });
-  
+
   // Check if the result is an error response
   if (result && result.error) {
     const error = new Error(result.detail);
     (error as any).status = result.status;
     throw error;
   }
-  
+
   return result;
 }
 
@@ -361,17 +365,17 @@ export async function getCustomerCreditBalance(customerId: string) {
 // NEW: Get invoices for a specific customer
 export async function getCustomerInvoices(customerId: string) {
   console.log('API - getCustomerInvoices called with customerId:', customerId);
-  
+
   // Filter sale invoices by customer ID
   const allInvoices = await getSaleInvoices();
   console.log('API - getSaleInvoices response:', allInvoices);
-  
+
   if (allInvoices && !allInvoices.error) {
     const filteredInvoices = allInvoices.filter((invoice: any) => invoice.customerId === customerId);
     console.log('API - Filtered invoices for customer:', filteredInvoices);
     return filteredInvoices;
   }
-  
+
   console.log('API - No invoices found or error occurred');
   return [];
 }
@@ -435,7 +439,7 @@ export async function getSystemSettings() {
 export async function getPublicSystemSettings(signal?: AbortSignal) {
   // This function doesn't use apiFetch since it doesn't require authentication
   const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:7001';
-  
+
   const res = await fetch(`${API_BASE_URL}/public/system-settings`, {
     method: 'GET',
     headers: {
@@ -443,11 +447,11 @@ export async function getPublicSystemSettings(signal?: AbortSignal) {
     },
     signal,
   });
-  
+
   if (!res.ok) {
     throw new Error(await res.text());
   }
-  
+
   return res.json();
 }
 
@@ -476,14 +480,14 @@ export async function createStockLevel(stockLevel: any) {
 
 export async function updateStockLevel(id: string, stockLevel: any) {
   const result = await apiFetch(`/inventory/stock-levels/${id}`, { method: 'PUT', body: JSON.stringify(stockLevel) });
-  
+
   // Check if the result is an error response
   if (result && result.error) {
     const error = new Error(result.detail);
     (error as any).status = result.status;
     throw error;
   }
-  
+
   return result;
 }
 
@@ -521,14 +525,14 @@ export async function getInventoryMovements() {
 
 export async function createInventoryMovement(movement: any) {
   const result = await apiFetch('/inventory/movements', { method: 'POST', body: JSON.stringify(movement) });
-  
+
   // Check if the result is an error response
   if (result && result.error) {
     const error = new Error(result.detail);
     (error as any).status = result.status;
     throw error;
   }
-  
+
   return result;
 }
 
@@ -556,27 +560,27 @@ export async function getProducts() {
 
 export async function createProduct(product: any) {
   const result = await apiFetch('/products', { method: 'POST', body: JSON.stringify(product) });
-  
+
   // Check if the result is an error response
   if (result && result.error) {
     const error = new Error(result.detail);
     (error as any).status = result.status;
     throw error;
   }
-  
+
   return result;
 }
 
 export async function updateProduct(id: string, product: any) {
   const result = await apiFetch(`/products/${id}`, { method: 'PUT', body: JSON.stringify(product) });
-  
+
   // Check if the result is an error response
   if (result && result.error) {
     const error = new Error(result.detail);
     (error as any).status = result.status;
     throw error;
   }
-  
+
   return result;
 }
 
@@ -591,40 +595,40 @@ export async function getCategories() {
 
 export async function createCategory(category: any) {
   const result = await apiFetch('/categories', { method: 'POST', body: JSON.stringify(category) });
-  
+
   // Check if the result is an error response
   if (result && result.error) {
     const error = new Error(result.detail);
     (error as any).status = result.status;
     throw error;
   }
-  
+
   return result;
 }
 
 export async function updateCategory(id: string, category: any) {
   const result = await apiFetch(`/categories/${id}`, { method: 'PUT', body: JSON.stringify(category) });
-  
+
   // Check if the result is an error response
   if (result && result.error) {
     const error = new Error(result.detail);
     (error as any).status = result.status;
     throw error;
   }
-  
+
   return result;
 }
 
 export async function deleteCategory(id: string) {
   const result = await apiFetch(`/categories/${id}`, { method: 'DELETE' });
-  
+
   // Check if the result is an error response
   if (result && result.error) {
     const error = new Error(result.detail);
     (error as any).status = result.status;
     throw error;
   }
-  
+
   return result;
 }
 
@@ -643,25 +647,25 @@ export async function getPurchaseOrder(id: string) {
 
 export async function createPurchaseOrder(purchaseOrder: any) {
   const result = await apiFetch('/purchase-orders', { method: 'POST', body: JSON.stringify(purchaseOrder) });
-  
+
   if (result && result.error) {
     const error = new Error(result.detail);
     (error as any).status = result.status;
     throw error;
   }
-  
+
   return result;
 }
 
 export async function updatePurchaseOrder(id: string, purchaseOrder: any) {
   const result = await apiFetch(`/purchase-orders/${id}`, { method: 'PUT', body: JSON.stringify(purchaseOrder) });
-  
+
   if (result && result.error) {
     const error = new Error(result.detail);
     (error as any).status = result.status;
     throw error;
   }
-  
+
   return result;
 }
 
@@ -686,6 +690,44 @@ export async function deletePurchaseOrderItem(itemId: string) {
   return apiFetch(`/purchase-orders/items/${itemId}`, { method: 'DELETE' });
 }
 
+// Purchase Indents API functions
+export async function getPurchaseIndents(status?: string) {
+  const query = status ? `?status=${status}` : '';
+  return apiFetch(`/purchase-indents${query}`);
+}
+
+export async function getPurchaseIndent(id: string) {
+  return apiFetch(`/purchase-indents/${id}`);
+}
+
+export async function createPurchaseIndent(indent: any) {
+  const result = await apiFetch('/purchase-indents', { method: 'POST', body: JSON.stringify(indent) });
+  if (result && result.error) {
+    throw new Error(result.detail);
+  }
+  return result;
+}
+
+export async function updatePurchaseIndent(id: string, indent: any) {
+  const result = await apiFetch(`/purchase-indents/${id}`, { method: 'PUT', body: JSON.stringify(indent) });
+  if (result && result.error) {
+    throw new Error(result.detail);
+  }
+  return result;
+}
+
+export async function deletePurchaseIndent(id: string) {
+  return apiFetch(`/purchase-indents/${id}`, { method: 'DELETE' });
+}
+
+export async function consolidateIndentsToPO(data: { indentIds: string[], supplierId: string, orderDate?: string }) {
+  const result = await apiFetch('/purchase-orders/from-indents', { method: 'POST', body: JSON.stringify(data) });
+  if (result && result.error) {
+    throw new Error(result.detail);
+  }
+  return result;
+}
+
 // Sales Orders API functions
 export async function getSalesOrders() {
   return apiFetch('/sales-orders');
@@ -701,25 +743,25 @@ export async function getSalesOrder(id: string) {
 
 export async function createSalesOrder(salesOrder: any) {
   const result = await apiFetch('/sales-orders', { method: 'POST', body: JSON.stringify(salesOrder) });
-  
+
   if (result && result.error) {
     const error = new Error(result.detail);
     (error as any).status = result.status;
     throw error;
   }
-  
+
   return result;
 }
 
 export async function updateSalesOrder(id: string, salesOrder: any) {
   const result = await apiFetch(`/sales-orders/${id}`, { method: 'PUT', body: JSON.stringify(salesOrder) });
-  
+
   if (result && result.error) {
     const error = new Error(result.detail);
     (error as any).status = result.status;
     throw error;
   }
-  
+
   return result;
 }
 
@@ -755,13 +797,13 @@ export async function getSaleInvoice(id: string) {
 
 export async function createSaleInvoice(saleInvoice: any) {
   const result = await apiFetch('/sale-invoices', { method: 'POST', body: JSON.stringify(saleInvoice) });
-  
+
   if (result && result.error) {
     const error = new Error(result.detail);
     (error as any).status = result.status;
     throw error;
   }
-  
+
   return result;
 }
 
@@ -780,37 +822,37 @@ export async function getCustomerPayment(id: string) {
 
 export async function createCustomerPayment(payment: any) {
   const result = await apiFetch('/customer-payments', { method: 'POST', body: JSON.stringify(payment) });
-  
+
   if (result && result.error) {
     const error = new Error(result.detail);
     (error as any).status = result.status;
     throw error;
   }
-  
+
   return result;
 }
 
 export async function updateCustomerPayment(id: string, payment: any) {
   const result = await apiFetch(`/customer-payments/${id}`, { method: 'PUT', body: JSON.stringify(payment) });
-  
+
   if (result && result.error) {
     const error = new Error(result.detail);
     (error as any).status = result.status;
     throw error;
   }
-  
+
   return result;
 }
 
 export async function deleteCustomerPayment(id: string) {
   const result = await apiFetch(`/customer-payments/${id}`, { method: 'DELETE' });
-  
+
   if (result && result.error) {
     const error = new Error(result.detail);
     (error as any).status = result.status;
     throw error;
   }
-  
+
   return result;
 }
 
@@ -820,25 +862,25 @@ export async function getInvoicePayments(invoiceId: string) {
 
 export async function addInvoicePayment(invoiceId: string, payment: any) {
   const result = await apiFetch(`/sale-invoices/${invoiceId}/payments`, { method: 'POST', body: JSON.stringify(payment) });
-  
+
   if (result && result.error) {
     const error = new Error(result.detail);
     (error as any).status = result.status;
     throw error;
   }
-  
+
   return result;
 }
 
 export async function updateSaleInvoice(id: string, saleInvoice: any) {
   const result = await apiFetch(`/sale-invoices/${id}`, { method: 'PUT', body: JSON.stringify(saleInvoice) });
-  
+
   if (result && result.error) {
     const error = new Error(result.detail);
     (error as any).status = result.status;
     throw error;
   }
-  
+
   return result;
 }
 
@@ -874,25 +916,25 @@ export async function getGoodReceiveNote(id: string) {
 
 export async function createGoodReceiveNote(goodReceiveNote: any) {
   const result = await apiFetch('/good-receive-notes', { method: 'POST', body: JSON.stringify(goodReceiveNote) });
-  
+
   if (result && result.error) {
     const error = new Error(result.detail);
     (error as any).status = result.status;
     throw error;
   }
-  
+
   return result;
 }
 
 export async function updateGoodReceiveNote(id: string, goodReceiveNote: any) {
   const result = await apiFetch(`/good-receive-notes/${id}`, { method: 'PUT', body: JSON.stringify(goodReceiveNote) });
-  
+
   if (result && result.error) {
     const error = new Error(result.detail);
     (error as any).status = result.status;
     throw error;
   }
-  
+
   return result;
 }
 
@@ -915,4 +957,165 @@ export async function updateGoodReceiveNoteItem(itemId: string, item: any) {
 
 export async function deleteGoodReceiveNoteItem(itemId: string) {
   return apiFetch(`/good-receive-notes/items/${itemId}`, { method: 'DELETE' });
-} 
+}
+
+// ==================== Quality Checks (QC) ====================
+
+export async function getQualityChecks() {
+  return apiFetch('/quality-checks');
+}
+
+export async function getQualityCheck(id: string) {
+  return apiFetch(`/quality-checks/${id}`);
+}
+
+export async function createQualityCheck(qualityCheck: any) {
+  const result = await apiFetch('/quality-checks', {
+    method: 'POST',
+    body: JSON.stringify(qualityCheck),
+  });
+  return result;
+}
+
+export async function updateQualityCheck(id: string, qualityCheck: any) {
+  const result = await apiFetch(`/quality-checks/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(qualityCheck),
+  });
+  return result;
+}
+
+export async function deleteQualityCheck(id: string) {
+  return apiFetch(`/quality-checks/${id}`, { method: 'DELETE' });
+}
+
+// ==================== Put Aways ====================
+
+export async function getPutAways() {
+  return apiFetch('/put-aways');
+}
+
+export async function getPutAway(id: string) {
+  return apiFetch(`/put-aways/${id}`);
+}
+
+export async function createPutAway(putAway: any) {
+  const result = await apiFetch('/put-aways', {
+    method: 'POST',
+    body: JSON.stringify(putAway),
+  });
+  return result;
+}
+
+export async function updatePutAway(id: string, putAway: any) {
+  const result = await apiFetch(`/put-aways/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(putAway),
+  });
+  return result;
+}
+
+export async function deletePutAway(id: string) {
+  return apiFetch(`/put-aways/${id}`, { method: 'DELETE' });
+}
+
+export async function getInventoryLocations() {
+  return apiFetch('/inventory/locations');
+}
+
+// ==================== Delivery Challans ====================
+
+export async function getDeliveryChallans() {
+  return apiFetch('/delivery-challans');
+}
+
+export async function getDeliveryChallan(id: string) {
+  return apiFetch(`/delivery-challans/${id}`);
+}
+
+export async function createDeliveryChallan(dc: any) {
+  return apiFetch('/delivery-challans', {
+    method: 'POST',
+    body: JSON.stringify(dc),
+  });
+}
+
+export async function updateDeliveryChallan(id: string, dc: any) {
+  return apiFetch(`/delivery-challans/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(dc),
+  });
+}
+
+export async function deleteDeliveryChallan(id: string) {
+  return apiFetch(`/delivery-challans/${id}`, { method: 'DELETE' });
+}
+
+// ==================== Pick Lists ====================
+
+export async function getPickLists() {
+  return apiFetch('/pick-lists');
+}
+
+export async function getPickList(id: string) {
+  return apiFetch(`/pick-lists/${id}`);
+}
+
+export async function createPickList(pl: any) {
+  return apiFetch('/pick-lists', {
+    method: 'POST',
+    body: JSON.stringify(pl),
+  });
+}
+
+export async function updatePickList(id: string, pl: any) {
+  return apiFetch(`/pick-lists/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(pl),
+  });
+}
+
+export async function deletePickList(id: string) {
+  return apiFetch(`/pick-lists/${id}`, { method: 'DELETE' });
+}
+
+export async function convertDCToInvoice(dcId: string) {
+  return apiFetch(`/delivery-challans/${dcId}/convert-to-invoice`, {
+    method: 'POST',
+  });
+}
+
+// ==================== Return Delivery Challans ====================
+
+export async function getReturnDCs() {
+  return apiFetch('/return-delivery-challans');
+}
+
+export async function getReturnDC(id: string) {
+  return apiFetch(`/return-delivery-challans/${id}`);
+}
+
+export async function createReturnDC(rdc: any) {
+  return apiFetch('/return-delivery-challans', {
+    method: 'POST',
+    body: JSON.stringify(rdc),
+  });
+}
+
+export async function updateReturnDC(id: string, rdc: any) {
+  return apiFetch(`/return-delivery-challans/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(rdc),
+  });
+}
+
+export async function deleteReturnDC(id: string) {
+  return apiFetch(`/return-delivery-challans/${id}`, { method: 'DELETE' });
+}
+export async function getProductSerials(productId?: string, status?: string) {
+  const query = new URLSearchParams();
+  if (productId) query.append('product_id', productId);
+  if (status) query.append('status', status);
+  const qs = query.toString();
+  return apiFetch(`/inventory/serials${qs ? `?${qs}` : ''}`);
+}

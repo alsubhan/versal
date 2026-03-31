@@ -389,7 +389,14 @@ export function StandardTemplate({
 export function SaleInvoiceStandardTemplate({ data, settings }: { data: Partial<SaleInvoice>; settings: Record<string, any> }) {
   const inv = (data ?? {}) as Partial<SaleInvoice>;
   const currency = settings?.default_currency || 'INR';
-  const fmt = (n?: number) => (typeof n === 'number' ? new Intl.NumberFormat(undefined, { style: 'currency', currency }).format(n) : '');
+  const fmt = (n?: number) => {
+    try {
+      return (typeof n === 'number' ? new Intl.NumberFormat(undefined, { style: 'currency', currency }).format(n) : '');
+    } catch (e) {
+      console.error('Format error:', e);
+      return (typeof n === 'number' ? `${currency} ${n.toFixed(2)}` : '');
+    }
+  };
   return (
     <div className="space-y-6">
       <div className="flex justify-between">

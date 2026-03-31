@@ -23,10 +23,18 @@ export interface SaleInvoiceItem {
 export interface SaleInvoice {
   id: string;
   invoiceNumber: string;
+  customerPoNumber?: string;
   salesOrderId?: string;
   salesOrder?: SalesOrder;
   customerId: string;
   customer?: Customer;
+  shippingAddress?: {
+    street: string;
+    city: string;
+    state: string;
+    zipCode: string;
+    country: string;
+  };
   invoiceDate: Date;
   dueDate?: Date;
   status: "draft" | "sent" | "partial" | "paid" | "overdue" | "cancelled";

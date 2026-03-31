@@ -111,9 +111,20 @@ const SettingsPage = () => {
         setSystemSettings(data);
         
         // Parse address into components
-        const parseAddress = (address: string) => {
+        const parseAddress = (address: any) => {
+          if (typeof address === 'object' && address !== null) {
+            return {
+              street: address.street || '',
+              city: address.city || '',
+              stateZip: `${address.state || ''} ${address.zip || ''}`.trim(),
+              country: address.country || ''
+            };
+          }
+          if (typeof address !== 'string') {
+            return { street: '', city: '', stateZip: '', country: '' };
+          }
           // Example: "123 Business Street, Tech City, TC 12345, USA"
-          const parts = address.split(',').map(part => part.trim());
+          const parts = address.split(',').map((part: string) => part.trim());
           if (parts.length >= 4) {
             return {
               street: parts[0],
@@ -126,11 +137,12 @@ const SettingsPage = () => {
         };
         
         // Parse address components
-        const address = data.find(s => s.key === 'company_address')?.value || '';
-        const addressParts = parseAddress(address);
+        const addressData = data.find(s => s.key === 'company_address')?.value || '';
+        const addressParts = parseAddress(addressData);
         const stateZipParts = addressParts.stateZip.split(' ');
         const state = stateZipParts[0] || '';
         const zip = stateZipParts.slice(1).join(' ') || '';
+        const displayAddress = typeof addressData === 'object' && addressData !== null ? (addressData as any).street || '' : String(addressData);
         
         // Helper function to get setting value with proper type conversion
         const getSettingValue = (key: string, defaultValue: string | number | boolean = '') => {
@@ -152,7 +164,7 @@ const SettingsPage = () => {
         const newFormData = {
           // Company Information
           companyName: getStringValue('company_name', ''),
-          companyAddress: address,
+          companyAddress: displayAddress,
           companyCity: getStringValue('company_city', addressParts.city),
           companyState: getStringValue('company_state', state),
           companyZip: getStringValue('company_zip', zip),
@@ -391,7 +403,49 @@ const SettingsPage = () => {
       const changedSettings = [];
       const updatePromises = systemSettings.map(async (setting) => {
         const settingKey = setting.key;
+        
+        // Special case: company_address is stored as a JSON object, but split into multiple UI fields
+        if (settingKey === 'company_address') {
+            const originalValue = setting.value as any;
+            
+            // Reconstruct the new address object from form data
+            const newAddressValue = {
+                street: formData.companyAddress,
+                city: formData.companyCity,
+                state: formData.companyState,
+                zip: formData.companyZip,
+                country: formData.companyCountry
+            };
+            
+            // Check if any of the address parts changed
+            const isAddressChanged = 
+                typeof originalValue !== 'object' || 
+                originalValue === null ||
+                originalValue.street !== newAddressValue.street ||
+                originalValue.city !== newAddressValue.city ||
+                originalValue.state !== newAddressValue.state ||
+                originalValue.zip !== newAddressValue.zip ||
+                originalValue.country !== newAddressValue.country;
+                
+            if (isAddressChanged) {
+                changedSettings.push(settingKey);
+                return updateSystemSetting(setting.id, {
+                    key: setting.key,
+                    value: newAddressValue,
+                    type: 'json',
+                    description: setting.description,
+                    isPublic: true
+                });
+            }
+            return null;
+        }
+
         const formField = Object.keys(formToSettingMap).find(key => formToSettingMap[key as keyof typeof formToSettingMap] === settingKey);
+        
+        // Skip individual address parts as they are handled above
+        if (['companyCity', 'companyState', 'companyZip', 'companyCountry'].includes(formField as string)) {
+            return null;
+        }
         
         if (formField && formData[formField as keyof typeof formData] !== undefined) {
           const newValue = formData[formField as keyof typeof formData];

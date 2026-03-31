@@ -122,6 +122,9 @@ export function SalesInvoiceTable({
             <TableHead className="cursor-pointer" onClick={() => handleSort("customer.name")}>
               Customer
             </TableHead>
+            <TableHead className="cursor-pointer" onClick={() => handleSort("customerPoNumber")}>
+              Customer PO #
+            </TableHead>
             <TableHead className="cursor-pointer" onClick={() => handleSort("invoiceDate")}>Invoice Date</TableHead>
             <TableHead className="cursor-pointer" onClick={() => handleSort("dueDate")}>
               Due Date
@@ -146,6 +149,7 @@ export function SalesInvoiceTable({
             </TableRow> : sortedInvoices.map(invoice => <TableRow key={invoice.id}>
                 <TableCell>{invoice.invoiceNumber || 'N/A'}</TableCell>
                 <TableCell>{invoice.customer?.name || 'N/A'}</TableCell>
+                <TableCell>{invoice.customerPoNumber || '-'}</TableCell>
                 <TableCell>{invoice.invoiceDate ? formatDate(invoice.invoiceDate) : 'N/A'}</TableCell>
                 <TableCell>{invoice.dueDate ? formatDate(invoice.dueDate) : 'N/A'}</TableCell>
                 <TableCell>

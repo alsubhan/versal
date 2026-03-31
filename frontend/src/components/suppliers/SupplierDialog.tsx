@@ -85,74 +85,76 @@ export function SupplierDialog({ open, onOpenChange, supplier, onSubmit }: Suppl
   });
 
   useEffect(() => {
-    if (supplier) {
-      // Check if billing and shipping addresses are the same
-      const billingAddress = supplier.billingAddress || {
-        street: "",
-        city: "",
-        state: "",
-        zipCode: "",
-        country: ""
-      };
-      const shippingAddress = supplier.shippingAddress || {
-        street: "",
-        city: "",
-        state: "",
-        zipCode: "",
-        country: ""
-      };
-      const addressesAreSame = 
-        billingAddress.street === shippingAddress.street &&
-        billingAddress.city === shippingAddress.city &&
-        billingAddress.state === shippingAddress.state &&
-        billingAddress.zipCode === shippingAddress.zipCode &&
-        billingAddress.country === shippingAddress.country;
+    if (open) {
+      if (supplier) {
+        // Check if billing and shipping addresses are the same
+        const billingAddress = supplier.billingAddress || {
+          street: "",
+          city: "",
+          state: "",
+          zipCode: "",
+          country: ""
+        };
+        const shippingAddress = supplier.shippingAddress || {
+          street: "",
+          city: "",
+          state: "",
+          zipCode: "",
+          country: ""
+        };
+        const addressesAreSame = 
+          billingAddress.street === shippingAddress.street &&
+          billingAddress.city === shippingAddress.city &&
+          billingAddress.state === shippingAddress.state &&
+          billingAddress.zipCode === shippingAddress.zipCode &&
+          billingAddress.country === shippingAddress.country;
 
-      form.reset({
-        name: supplier.name,
-        contactName: supplier.contactName,
-        email: supplier.email,
-        phone: supplier.phone,
-        billingStreet: billingAddress.street || "",
-        billingCity: billingAddress.city || "",
-        billingState: billingAddress.state || "",
-        billingZipCode: billingAddress.zipCode || "",
-        billingCountry: billingAddress.country || "",
-        shippingStreet: shippingAddress.street || billingAddress.street || "",
-        shippingCity: shippingAddress.city || billingAddress.city || "",
-        shippingState: shippingAddress.state || billingAddress.state || "",
-        shippingZipCode: shippingAddress.zipCode || billingAddress.zipCode || "",
-        shippingCountry: shippingAddress.country || billingAddress.country || "",
-        useBillingAsShipping: addressesAreSame,
-        paymentTerms: supplier.paymentTerms,
-        isActive: supplier.isActive,
-        taxId: supplier.taxId || "",
-        notes: supplier.notes || "",
-      });
-    } else {
-      form.reset({
-        name: "",
-        contactName: "",
-        email: "",
-        phone: "",
-        billingStreet: "",
-        billingCity: "",
-        billingState: "",
-        billingZipCode: "",
-        billingCountry: "",
-        shippingStreet: "",
-        shippingCity: "",
-        shippingState: "",
-        shippingZipCode: "",
-        shippingCountry: "",
-        useBillingAsShipping: false,
-        paymentTerms: "Net 30",
-        isActive: true,
-        taxId: "",
-        notes: "",
-      });
+        form.reset({
+          name: supplier.name,
+          contactName: supplier.contactName,
+          email: supplier.email,
+          phone: supplier.phone,
+          billingStreet: billingAddress.street || "",
+          billingCity: billingAddress.city || "",
+          billingState: billingAddress.state || "",
+          billingZipCode: billingAddress.zipCode || "",
+          billingCountry: billingAddress.country || "",
+          shippingStreet: shippingAddress.street || billingAddress.street || "",
+          shippingCity: shippingAddress.city || billingAddress.city || "",
+          shippingState: shippingAddress.state || billingAddress.state || "",
+          shippingZipCode: shippingAddress.zipCode || billingAddress.zipCode || "",
+          shippingCountry: shippingAddress.country || billingAddress.country || "",
+          useBillingAsShipping: addressesAreSame,
+          paymentTerms: supplier.paymentTerms,
+          isActive: supplier.isActive,
+          taxId: supplier.taxId || "",
+          notes: supplier.notes || "",
+        });
+      } else {
+        form.reset({
+          name: "",
+          contactName: "",
+          email: "",
+          phone: "",
+          billingStreet: "",
+          billingCity: "",
+          billingState: "",
+          billingZipCode: "",
+          billingCountry: "",
+          shippingStreet: "",
+          shippingCity: "",
+          shippingState: "",
+          shippingZipCode: "",
+          shippingCountry: "",
+          useBillingAsShipping: false,
+          paymentTerms: "Net 30",
+          isActive: true,
+          taxId: "",
+          notes: "",
+        });
+      }
     }
-  }, [supplier, form]);
+  }, [open, supplier, form]);
 
   const handleSubmit = async (data: FormValues) => {
     console.log("Form submitted:", data);

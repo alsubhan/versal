@@ -117,6 +117,12 @@ export function SaleOrderTable({
             </TableHead>
             <TableHead
               className="cursor-pointer"
+              onClick={() => handleSort("customerPoNumber")}
+            >
+              Customer PO #
+            </TableHead>
+            <TableHead
+              className="cursor-pointer"
               onClick={() => handleSort("orderDate")}
             >
               Order Date
@@ -148,6 +154,7 @@ export function SaleOrderTable({
               <TableRow key={order.id}>
                 <TableCell>{order.orderNumber || 'N/A'}</TableCell>
                 <TableCell>{order.customer?.name || 'N/A'}</TableCell>
+                <TableCell>{order.customerPoNumber || '-'}</TableCell>
                 <TableCell>{order.orderDate ? formatDate(order.orderDate) : 'N/A'}</TableCell>
                 <TableCell>
                   <span className={`capitalize px-2 py-1 rounded-full text-xs ${

@@ -21,8 +21,16 @@ export interface SalesOrderItem {
 export interface SalesOrder {
   id: string;
   orderNumber: string;
+  customerPoNumber?: string;
   customerId: string;
   customer?: Customer;
+  shippingAddress?: {
+    street: string;
+    city: string;
+    state: string;
+    zipCode: string;
+    country: string;
+  };
   orderDate: Date;
   dueDate?: Date;
   status: "draft" | "pending" | "approved" | "sent" | "partial" | "fulfilled" | "overdue" | "cancelled";

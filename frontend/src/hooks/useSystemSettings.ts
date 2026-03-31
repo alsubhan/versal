@@ -21,9 +21,13 @@ export function useSystemSettings() {
 
   useEffect(() => {
     const fetchSettings = async () => {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s timeout
+
       try {
         setLoading(true);
-        const data = await getPublicSystemSettings();
+        // Try fetching public settings with timeout
+        const data = await getPublicSystemSettings(controller.signal);
         
         // Convert array of settings to object
         const settingsObj: SystemSettings = {
@@ -33,23 +37,24 @@ export function useSystemSettings() {
           defaultCurrency: 'INR'
         };
         
-        data.forEach((setting: any) => {
-          if (setting.key && setting.value !== undefined) {
-            // Map snake_case keys to camelCase
-            if (setting.key === 'rounding_method') {
-              settingsObj.roundingMethod = setting.value;
-            } else if (setting.key === 'rounding_precision') {
-              settingsObj.roundingPrecision = setting.value;
-            } else if (setting.key === 'tax_rate') {
-              settingsObj.taxRate = setting.value;
-            } else if (setting.key === 'default_currency') {
-              settingsObj.defaultCurrency = setting.value;
-            } else {
-              // For other settings, use the key as is
-              settingsObj[setting.key] = setting.value;
+        if (Array.isArray(data)) {
+          data.forEach((setting: any) => {
+            if (setting.key && setting.value !== undefined) {
+              // Map snake_case keys to camelCase
+              if (setting.key === 'rounding_method') {
+                settingsObj.roundingMethod = setting.value;
+              } else if (setting.key === 'rounding_precision') {
+                settingsObj.roundingPrecision = setting.value;
+              } else if (setting.key === 'tax_rate') {
+                settingsObj.taxRate = setting.value;
+              } else if (setting.key === 'default_currency') {
+                settingsObj.defaultCurrency = setting.value;
+              } else {
+                settingsObj[setting.key] = setting.value;
+              }
             }
-          }
-        });
+          });
+        }
 
         // Attempt to fetch private settings (requires auth); merge for keys like invoice_format_template
         try {
@@ -71,14 +76,22 @@ export function useSystemSettings() {
               }
             });
           }
-        } catch {
-          // ignore if not authenticated
+        } catch (privateErr) {
+          console.warn('Could not fetch private system settings, using defaults/public:', privateErr);
         }
         
         setSettings(settingsObj);
-      } catch (err) {
-        setError('Failed to load system settings');
+        setError(null);
+      } catch (err: any) {
+        console.error('System settings fetch error:', err);
+        if (err.name === 'AbortError') {
+          setError('System settings request timed out');
+        } else {
+          setError('Failed to load system settings');
+        }
+        // Don't stay in loading forever; use default state if fetch fails
       } finally {
+        clearTimeout(timeoutId);
         setLoading(false);
       }
     };

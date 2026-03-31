@@ -17,9 +17,16 @@ import CustomersPage from "@/pages/CustomersPage";
 import TaxesPage from "@/pages/TaxesPage";
 import ReportsPage from "@/pages/ReportsPage";
 import PurchaseOrdersPage from "@/pages/PurchaseOrdersPage";
+import PurchaseIndentsPage from "@/pages/PurchaseIndentsPage";
+
 import GRNsPage from "@/pages/GRNsPage";
+import QualityChecksPage from "@/pages/QualityChecksPage";
+import PutAwaysPage from "@/pages/PutAwaysPage";
 import SaleOrdersPage from "@/pages/SaleOrdersPage";
 import SaleInvoicesPage from "@/pages/SaleInvoicesPage";
+import DeliveryChallansPage from "@/pages/DeliveryChallansPage";
+import PickListsPage from "@/pages/PickListsPage";
+import ReturnDCsPage from "@/pages/ReturnDCsPage";
 import CreditNotesPage from "@/pages/CreditNotesPage";
 import BackupPage from "@/pages/BackupPage";
 import BarcodePage from "@/pages/BarcodePage";
@@ -57,9 +64,16 @@ const App = () => {
               <Route path="taxes" element={<TaxesPage />} />
               <Route path="reports" element={<ReportsPage />} />
               <Route path="purchase-orders" element={<PurchaseOrdersPage />} />
+              <Route path="purchase-indents" element={<PurchaseIndentsPage />} />
+
               <Route path="grns" element={<GRNsPage />} />
-                      <Route path="sale-orders" element={<SaleOrdersPage />} />
-        <Route path="sale-invoices" element={<SaleInvoicesPage />} />
+              <Route path="quality-checks" element={<QualityChecksPage />} />
+              <Route path="put-aways" element={<PutAwaysPage />} />
+              <Route path="sale-orders" element={<SaleOrdersPage />} />
+              <Route path="sale-invoices" element={<SaleInvoicesPage />} />
+              <Route path="delivery-challans" element={<DeliveryChallansPage />} />
+              <Route path="pick-lists" element={<PickListsPage />} />
+              <Route path="return-delivery-challans" element={<ReturnDCsPage />} />
               <Route path="credit-notes" element={<CreditNotesPage />} />
               <Route path="backup" element={<BackupPage />} />
               <Route path="barcodes" element={<BarcodePage />} />

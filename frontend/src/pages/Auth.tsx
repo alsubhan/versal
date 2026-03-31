@@ -61,9 +61,9 @@ export default function Auth() {
         // Create abort controller for request cancellation
         const controller = new AbortController();
         timeoutId = setTimeout(() => {
-          console.log('⏰ Settings fetch timeout (3s) - aborting');
+          console.warn('⏰ Settings fetch timeout (10s) - aborting');
           controller.abort();
-        }, 3000); // 3 second timeout
+        }, 10000); // 10 second timeout
         
         console.log('📡 Calling getPublicSystemSettings...');
         const settings = await getPublicSystemSettings(controller.signal);
@@ -103,7 +103,7 @@ export default function Auth() {
 
     // Add fallback timeout
     const fallbackTimeoutId = setTimeout(() => {
-      console.log('⏰ Fallback timeout (3s) triggered');
+      console.log('⏰ Fallback timeout (10s) triggered');
       if (!settingsCompletedRef.current) {
         console.warn('⏰ Settings fetch timeout, defaulting to disabled signup');
         sessionStorage.setItem('auth_settings_fetched', 'true');
@@ -115,7 +115,7 @@ export default function Auth() {
       } else {
         console.log('⏰ Fallback timeout but settings already completed');
       }
-    }, 3000); // 3 second fallback timeout to match abort timeout
+    }, 10000); // 10 second fallback timeout to match abort timeout
 
     fetchSettings();
 
@@ -179,10 +179,27 @@ export default function Auth() {
   if (loading || settingsLoading) {
     console.log('⏳ Showing loading spinner - loading:', loading, 'settingsLoading:', settingsLoading);
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin" />
-        <div className="ml-3 text-sm text-muted-foreground">
-          {loading ? 'Initializing authentication...' : 'Loading settings...'}
+      <div className="min-h-screen flex flex-col items-center justify-center space-y-4">
+        <div className="flex items-center">
+          <Loader2 className="h-8 w-8 animate-spin" />
+          <div className="ml-3 text-sm text-muted-foreground">
+            {loading ? 'Initializing authentication...' : 'Loading settings...'}
+          </div>
+        </div>
+        
+        {/* EMERGENCY BYPASS BUTTON - shows after 5s */}
+        <div className="animate-in fade-in duration-1000 delay-5000">
+           <Button 
+             variant="ghost" 
+             size="sm" 
+             className="text-xs text-muted-foreground hover:text-primary"
+             onClick={() => {
+               console.warn('🚨 User triggered emergency bypass');
+               setSettingsLoading(false);
+             }}
+           >
+             Can't wait? Click to bypass loading
+           </Button>
         </div>
       </div>
     );
