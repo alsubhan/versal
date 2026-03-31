@@ -92,15 +92,21 @@ export const useAuth = () => {
       lastPermissionCheck.current = now;
       console.log('Fetching permissions for user:', userId);
       
-      // Get profile with role text directly
+      // Get profile with associated role and permissions
       const { data: profile, error: profileError } = await supabaseClient
         .from('profiles')
-        .select('role')
+        .select(`
+          role_id,
+          roles (
+            name,
+            permissions
+          )
+        `)
         .eq('id', userId)
         .single();
       
       if (profileError || !profile) {
-        console.log('No profile found or error occurred');
+        console.error('Error fetching user profile:', profileError);
         setPermissions([]);
         setRole(null);
         // Cache empty permissions
@@ -108,36 +114,49 @@ export const useAuth = () => {
         return;
       }
       
-      if (profile.role) {
-        // Since roles table is gone, we hardcode permissions based on the ENUM
-        const userRole = profile.role || null;
-        let userPermissions: string[] = [];
+      if (profile.roles) {
+        // Robustly handle if roles is returned as an object or an array
+        const roleData = Array.isArray(profile.roles) ? profile.roles[0] : profile.roles;
         
-        // Give admins all common permissions required by the frontend
-        if (userRole === 'admin') {
-           userPermissions = ['*']; 
+        if (roleData) {
+          const userRole = roleData.name;
+          const userPermissions = Array.isArray(roleData.permissions) 
+            ? roleData.permissions 
+            : [];
+          
+          // Handle admin override
+          if (userRole?.toLowerCase() === 'admin' || userRole?.toLowerCase() === 'administrator') {
+            if (!userPermissions.includes('*')) {
+              userPermissions.push('*');
+            }
+          }
+          
+          console.log('✅ Set permissions:', userPermissions);
+          console.log('✅ Set role:', userRole);
+          
+          setPermissions(userPermissions);
+          setRole(userRole);
+          
+          // Cache the permissions
+          permissionsCache.set(userId, { 
+            permissions: userPermissions, 
+            role: userRole, 
+            timestamp: now 
+          });
+        } else {
+          console.warn('⚠️ Role data is empty after extraction');
+          setPermissions([]);
+          setRole(null);
+          permissionsCache.set(userId, { permissions: [], role: null, timestamp: now });
         }
-        
-        console.log('Set permissions:', userPermissions);
-        console.log('Set role:', userRole);
-        
-        setPermissions(userPermissions);
-        setRole(userRole);
-        
-        // Cache the permissions
-        permissionsCache.set(userId, { 
-          permissions: userPermissions, 
-          role: userRole, 
-          timestamp: now 
-        });
       } else {
-        console.log('No role found for user');
+        console.warn('⚠️ No role found for user profile record');
         setPermissions([]);
         setRole(null);
         permissionsCache.set(userId, { permissions: [], role: null, timestamp: now });
       }
     } catch (e) {
-      console.error('Error fetching permissions:', e);
+      console.error('Error in fetchUserPermissions:', e);
       setPermissions([]);
       setRole(null);
     } finally {

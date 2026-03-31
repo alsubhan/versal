@@ -24,8 +24,8 @@ export const PermissionGuard: React.FC<PermissionGuardProps> = ({
 }) => {
   const { hasPermission, loading, permissions } = useAuth();
 
-  // Show loading spinner while auth state is being determined OR permissions are not yet loaded
-  if (loading || permissions.length === 0) {
+  // Show loading spinner while auth state is being determined
+  if (loading) {
     return (
       <div className="flex items-center justify-center min-h-[400px]">
         <div className="flex flex-col items-center space-y-4">

@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -18,7 +18,7 @@ import {
   Users,
   Settings,
   LogOut,
-  MenuIcon,
+  Menu,
   User,
   Shield,
   Home,
@@ -200,7 +200,19 @@ export const Sidebar = ({ onPerformanceToggle }: SidebarProps) => {
     hour12: true
   });
 
-  const initials = user?.user_metadata?.full_name ? `${user.user_metadata.full_name.split(' ')[0][0]}${user.user_metadata.full_name.split(' ')[1]?.[0] || ''}` : user?.email?.[0]?.toUpperCase() || 'U';
+  const userInitials = useMemo(() => {
+    try {
+      if (!user) return '??';
+      const name = user.user_metadata?.full_name || user.email || 'User';
+      const parts = name.split(/[\s.@]+/).filter(Boolean);
+      if (parts.length === 0) return 'U';
+      if (parts.length === 1) return parts[0].substring(0, 2).toUpperCase();
+      return (parts[0][0] + (parts[1]?.[0] || '')).toUpperCase();
+    } catch (e) {
+      console.error('Error calculating initials:', e);
+      return '??';
+    }
+  }, [user]);
 
   // Filter navigation items based on user permissions
   const filteredSidebarLinks = sidebarLinks.filter(link => {
@@ -228,7 +240,7 @@ export const Sidebar = ({ onPerformanceToggle }: SidebarProps) => {
       )}
       <div className="flex items-center gap-1">
         <Button variant="ghost" size="icon" onClick={() => setCollapsed(!collapsed)} className="h-8 w-8">
-          <MenuIcon size={20} />
+          <Menu size={20} />
         </Button>
       </div>
     </div>
@@ -242,7 +254,7 @@ export const Sidebar = ({ onPerformanceToggle }: SidebarProps) => {
         {filteredSidebarLinks.map(link => {
           const isActive = location.pathname === link.href;
           return <Link key={link.name} to={link.href} className={cn("flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors", isActive ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground hover:bg-muted")}>
-            <link.icon className={collapsed ? "h-7 w-7" : "h-5 w-5"} />
+            {link.icon && <link.icon className={collapsed ? "h-7 w-7" : "h-5 w-5"} />}
             {!collapsed && <span>{link.name}</span>}
           </Link>;
         })}
@@ -255,7 +267,7 @@ export const Sidebar = ({ onPerformanceToggle }: SidebarProps) => {
           <Button variant="ghost" className="w-full flex items-center justify-start gap-2">
             <Avatar className="h-6 w-6">
               <AvatarImage src="" />
-              <AvatarFallback className="text-xs">{initials}</AvatarFallback>
+              <AvatarFallback className="text-xs">{userInitials}</AvatarFallback>
             </Avatar>
             {!collapsed && <div className="flex flex-col items-start text-sm">
               <span className="font-medium">{user?.user_metadata?.full_name || user?.email || 'User'}</span>
