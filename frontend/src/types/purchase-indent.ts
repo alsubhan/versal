@@ -12,8 +12,13 @@ export interface PurchaseIndentItem {
   hsnCode: string;
   quantity: number;
   estimatedUnitPrice: number;
-
+  discount: number;
+  tax: number;
+  total: number;
+  purchaseTaxType?: 'inclusive' | 'exclusive';
+  unitAbbreviation?: string;
   purchaseOrderId?: string;
+
   createdAt: Date;
   updatedAt: Date;
   product?: Product;

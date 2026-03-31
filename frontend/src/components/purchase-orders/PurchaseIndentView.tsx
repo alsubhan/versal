@@ -89,9 +89,11 @@ export const PurchaseIndentView = ({ open, onOpenChange, indent }: PurchaseInden
                     <TableCell className="text-right">{item.quantity}</TableCell>
                     <TableCell className="text-right">{formatCurrency(item.estimatedUnitPrice, currency)}</TableCell>
 
-                    <TableCell className="text-right font-medium">
-                        {formatCurrency(item.quantity * item.estimatedUnitPrice, currency)}
+                    <TableCell className="text-right font-mono text-xs">{formatCurrency(item.tax || 0, currency)}</TableCell>
+                    <TableCell className="text-right font-semibold">
+                        {formatCurrency(item.total || 0, currency)}
                     </TableCell>
+
                   </TableRow>
                 ))
               ) : (

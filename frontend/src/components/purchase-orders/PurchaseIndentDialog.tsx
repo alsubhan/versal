@@ -145,7 +145,8 @@ export const PurchaseIndentDialog = ({ open, onOpenChange, indent, onSave }: Pur
     });
     
     const unroundedTotal = subtotal - discountAmount + taxAmount;
-    const totalAmount = applyRounding(unroundedTotal, systemSettings?.roundingMethod || 'nearest', systemSettings?.roundingPrecision || 0);
+    const totalAmount = applyRounding(unroundedTotal, systemSettings?.roundingMethod || 'nearest', String(systemSettings?.roundingPrecision || '0.01'));
+
     const roundingAdjustment = totalAmount - unroundedTotal;
     
     setSummary({
@@ -177,10 +178,13 @@ export const PurchaseIndentDialog = ({ open, onOpenChange, indent, onSave }: Pur
       hsnCode: product.hsn_code,
       quantity: quantity,
       estimatedUnitPrice: unitPrice,
+      discount: 0,
       tax: tax,
       purchaseTaxType: product.purchase_tax_type,
-      total: calculateItemTotal(product, quantity, unitPrice, 0, tax)
+      total: calculateItemTotal(product, quantity, unitPrice, 0, tax),
+      unitAbbreviation: product.units?.abbreviation || ''
     };
+
 
 
     let newItems = [...items];
@@ -240,11 +244,15 @@ export const PurchaseIndentDialog = ({ open, onOpenChange, indent, onSave }: Pur
         productName: item.productName,
         skuCode: item.skuCode,
         hsnCode: item.hsnCode,
-        quantity: item.quantity,
-        estimatedUnitPrice: item.estimatedUnitPrice,
-        tax: item.tax,
-        total: item.total
+        quantity: Number(item.quantity),
+        estimatedUnitPrice: Number(item.estimatedUnitPrice),
+        discount: Number(item.discount || 0),
+        tax: Number(item.tax || 0),
+        total: Number(item.total || 0),
+        purchaseTaxType: item.purchaseTaxType,
+        unitAbbreviation: item.unitAbbreviation
       }))
+
 
     };
 
