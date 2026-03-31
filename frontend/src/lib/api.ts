@@ -3,7 +3,7 @@ import { getSupabaseClient, getFallbackSupabaseClient } from './supabase-config'
 // Determine API base URL - check environment variable first, then default
 // If VITE_API_BASE_URL is set to /api, use it (for production with proxy)
 // Otherwise, default to localhost:7001 (backend default port)
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:7001';
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api';
 
 // Log the API base URL for debugging
 console.log('🔧 API_BASE_URL:', API_BASE_URL);
@@ -438,7 +438,7 @@ export async function getSystemSettings() {
 
 export async function getPublicSystemSettings(signal?: AbortSignal) {
   // This function doesn't use apiFetch since it doesn't require authentication
-  const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:7001';
+  const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api';
 
   const res = await fetch(`${API_BASE_URL}/public/system-settings`, {
     method: 'GET',

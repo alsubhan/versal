@@ -86,8 +86,8 @@ export async function getSupabaseClient() {
 
 // Fallback configuration (for development or if backend is not available)
 const FALLBACK_CONFIG = {
-  url: "https://bmyaefeddtcbnmpzvxmf.supabase.co",
-  publishable_key: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJteWFlZmVkZHRjYm5tcHp2eG1mIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTM1MTMzODcsImV4cCI6MjA2OTA4OTM4N30.4f-TJKsR-4ZPlBxdGD8QZ3Gsb1z8OPRlWK26Eq8T4_c"
+  url: "https://versaldb.tolor.com:9000",
+  publishable_key: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZlcnNhbGRiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3MDQxNTM2MDAsImV4cCI6MjAyMDkxNTIwMH0.X-X" // This needs to be the actual anon key from .env
 };
 
 export function getFallbackSupabaseClient() {
