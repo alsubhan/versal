@@ -123,17 +123,35 @@ const allPermissions: Permission[] = [
   { id: "inventory_locations_view", name: "View Locations", description: "Can view warehouse locations", module: "Inventory" },
   { id: "inventory_locations_manage", name: "Manage Locations", description: "Can add, edit, and delete warehouse locations", module: "Inventory" },
   
+  // Indent Orders permissions
+  { id: "purchase_indents_view", name: "View Indent Orders", description: "Can view indent orders", module: "Indent Orders" },
+  { id: "purchase_indents_create", name: "Create Indent Orders", description: "Can create indent orders", module: "Indent Orders" },
+  { id: "purchase_indents_edit", name: "Edit Indent Orders", description: "Can edit indent orders", module: "Indent Orders" },
+  { id: "purchase_indents_delete", name: "Delete Indent Orders", description: "Can delete indent orders", module: "Indent Orders" },
+
   // Purchase Orders permissions
   { id: "purchase_orders_view", name: "View Purchase Orders", description: "Can view purchase orders", module: "Purchase Orders" },
   { id: "purchase_orders_create", name: "Create Purchase Orders", description: "Can create purchase orders", module: "Purchase Orders" },
   { id: "purchase_orders_edit", name: "Edit Purchase Orders", description: "Can edit purchase orders", module: "Purchase Orders" },
   { id: "purchase_orders_delete", name: "Delete Purchase Orders", description: "Can delete purchase orders", module: "Purchase Orders" },
-  
+
   // GRN permissions
   { id: "grn_view", name: "View GRN", description: "Can view good receive notes", module: "Good Receive Notes" },
   { id: "grn_create", name: "Create GRN", description: "Can create good receive notes", module: "Good Receive Notes" },
   { id: "grn_edit", name: "Edit GRN", description: "Can edit good receive notes", module: "Good Receive Notes" },
   { id: "grn_delete", name: "Delete GRN", description: "Can delete good receive notes", module: "Good Receive Notes" },
+
+  // Quality Checks permissions
+  { id: "quality_checks_view", name: "View Quality Checks", description: "Can view quality checks", module: "Quality Checks" },
+  { id: "quality_checks_create", name: "Create Quality Checks", description: "Can create quality checks", module: "Quality Checks" },
+  { id: "quality_checks_edit", name: "Edit Quality Checks", description: "Can edit quality checks", module: "Quality Checks" },
+  { id: "quality_checks_delete", name: "Delete Quality Checks", description: "Can delete quality checks", module: "Quality Checks" },
+
+  // Put Aways permissions
+  { id: "put_aways_view", name: "View Put Aways", description: "Can view put aways", module: "Put Aways" },
+  { id: "put_aways_create", name: "Create Put Aways", description: "Can create put aways", module: "Put Aways" },
+  { id: "put_aways_edit", name: "Edit Put Aways", description: "Can edit put aways", module: "Put Aways" },
+  { id: "put_aways_delete", name: "Delete Put Aways", description: "Can delete put aways", module: "Put Aways" },
   
   // Sale Orders permissions
   { id: "sale_orders_view", name: "View Sale Orders", description: "Can view sale orders", module: "Sale Orders" },
@@ -146,6 +164,24 @@ const allPermissions: Permission[] = [
   { id: "sale_invoices_create", name: "Create Sale Invoices", description: "Can create sale invoices", module: "Sale Invoices" },
   { id: "sale_invoices_edit", name: "Edit Sale Invoices", description: "Can edit sale invoices", module: "Sale Invoices" },
   { id: "sale_invoices_delete", name: "Delete Sale Invoices", description: "Can delete sale invoices", module: "Sale Invoices" },
+
+  // Delivery Challans permissions
+  { id: "delivery_challans_view", name: "View Delivery Challans", description: "Can view delivery challans", module: "Delivery Challans" },
+  { id: "delivery_challans_create", name: "Create Delivery Challans", description: "Can create delivery challans", module: "Delivery Challans" },
+  { id: "delivery_challans_edit", name: "Edit Delivery Challans", description: "Can edit delivery challans", module: "Delivery Challans" },
+  { id: "delivery_challans_delete", name: "Delete Delivery Challans", description: "Can delete delivery challans", module: "Delivery Challans" },
+
+  // Pick Lists permissions
+  { id: "pick_lists_view", name: "View Pick Lists", description: "Can view pick lists", module: "Pick Lists" },
+  { id: "pick_lists_create", name: "Create Pick Lists", description: "Can create pick lists", module: "Pick Lists" },
+  { id: "pick_lists_edit", name: "Edit Pick Lists", description: "Can edit pick lists", module: "Pick Lists" },
+  { id: "pick_lists_delete", name: "Delete Pick Lists", description: "Can delete pick lists", module: "Pick Lists" },
+
+  // Return DCs permissions
+  { id: "return_delivery_challans_view", name: "View Return DCs", description: "Can view return delivery challans", module: "Return DCs" },
+  { id: "return_delivery_challans_create", name: "Create Return DCs", description: "Can create return delivery challans", module: "Return DCs" },
+  { id: "return_delivery_challans_edit", name: "Edit Return DCs", description: "Can edit return delivery challans", module: "Return DCs" },
+  { id: "return_delivery_challans_delete", name: "Delete Return DCs", description: "Can delete return delivery challans", module: "Return DCs" },
   
   // Credit Notes permissions
   { id: "credit_notes_view", name: "View Credit Notes", description: "Can view credit notes", module: "Credit Notes" },

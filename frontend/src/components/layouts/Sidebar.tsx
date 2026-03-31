@@ -87,7 +87,7 @@ const sidebarLinks = [{
   name: "Indent Orders",
   href: "/purchase-indents",
   icon: ClipboardCheck,
-  permission: 'purchase_orders_view'
+  permission: 'purchase_indents_view'
 }, {
   name: "Purchase Orders",
   href: "/purchase-orders",
@@ -102,12 +102,12 @@ const sidebarLinks = [{
   name: "Quality Checks",
   href: "/quality-checks",
   icon: SearchCheck,
-  permission: 'grn_view'
+  permission: 'quality_checks_view'
 }, {
   name: "Put Aways",
   href: "/put-aways",
   icon: PackageOpen,
-  permission: 'grn_view'
+  permission: 'put_aways_view'
 }, {
   name: "Sales Orders",
   href: "/sale-orders",
@@ -122,17 +122,17 @@ const sidebarLinks = [{
   name: "Delivery Challans",
   href: "/delivery-challans",
   icon: ClipboardCheck,
-  permission: 'sale_invoices_view'
+  permission: 'delivery_challans_view'
 }, {
   name: "Pick Lists",
   href: "/pick-lists",
   icon: ShoppingCart,
-  permission: 'sale_invoices_view'
+  permission: 'pick_lists_view'
 }, {
   name: "Return DCs",
   href: "/return-delivery-challans",
   icon: UploadCloud,
-  permission: 'sale_invoices_view'
+  permission: 'return_delivery_challans_view'
 }, {
   name: "Credit Notes",
   href: "/credit-notes",
