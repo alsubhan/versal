@@ -470,12 +470,14 @@ def require_permission(required_permission: str):
             user_info = await get_user_role_and_permissions(user_id, client)
             
             user_permissions = user_info["permissions"]
+            user_role = user_info["role"]
 
             # Admin check: '*' bypasses any specific permission
-            if "*" in user_permissions or "admin" == user_info["role"]:
+            if "*" in user_permissions or "admin" == user_role:
                  return payload
                  
             if required_permission not in user_permissions:
+                print(f"DEBUG: Permission DENIED. User {user_id} (Role: {user_role}) lacks '{required_permission}'. Available: {user_permissions}")
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN, 
                     detail=f"Forbidden: missing permission '{required_permission}'"
@@ -485,6 +487,7 @@ def require_permission(required_permission: str):
         except HTTPException:
             raise
         except Exception as e:
+            print(f"ERROR in require_permission: {str(e)}")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, 
                 detail=f"Error checking permissions: {str(e)}"
@@ -3911,11 +3914,11 @@ def to_camel_case_purchase_order_item(item):
         "productName": item.get("products", {}).get("name") if item.get("products") else item.get("product_name"),
         "skuCode": item.get("products", {}).get("sku_code") if item.get("products") else item.get("sku_code"),
         "hsnCode": item.get("products", {}).get("hsn_code") if item.get("products") else item.get("hsn_code"),
-        "quantity": item.get("quantity"),
-        "costPrice": item.get("cost_price"),
-        "discount": item.get("discount"),
-        "tax": item.get("tax"),
-        "total": item.get("total"),
+        "quantity": float(item.get("quantity") or 0),
+        "costPrice": float(item.get("cost_price") or 0),
+        "discount": float(item.get("discount") or 0),
+        "tax": float(item.get("tax") or 0),
+        "total": float(item.get("total") or 0),
         "purchaseTaxType": item.get("purchase_tax_type", "exclusive"), # Added
         "unitAbbreviation": item.get("unit_abbreviation", ""), # Added
         "createdAt": item.get("created_at"),
@@ -3924,15 +3927,17 @@ def to_camel_case_purchase_order_item(item):
 
 def to_camel_case_purchase_indent(indent):
     """Convert purchase indent data from snake_case to camelCase"""
+    if not indent:
+        return {}
     return {
         "id": indent.get("id"),
         "indentNumber": indent.get("indent_number"),
         "requesterId": indent.get("requester_id"),
-        "requester": indent.get("requester", {}),
+        "requester": indent.get("requester", {}) or {},
         "department": indent.get("department"),
         "requiredDate": indent.get("required_date"),
         "status": indent.get("status"),
-        "totalEstimatedValue": float(indent.get("total_estimated_value", 0)),
+        "totalEstimatedValue": float(indent.get("total_estimated_value") or 0),
         "notes": indent.get("notes"),
         "createdAt": indent.get("created_at"),
         "updatedAt": indent.get("updated_at")
@@ -3940,14 +3945,16 @@ def to_camel_case_purchase_indent(indent):
 
 def to_camel_case_purchase_indent_item(item):
     """Convert purchase indent item data from snake_case to camelCase"""
+    if not item:
+        return {}
     return {
         "id": item.get("id"),
         "indentId": item.get("indent_id"),
         "productId": item.get("product_id"),
         "productName": item.get("product", {}).get("name") if item.get("product") else item.get("product_name"),
         "skuCode": item.get("product", {}).get("sku_code") if item.get("product") else item.get("sku_code"),
-        "quantity": item.get("quantity"),
-        "estimatedUnitPrice": float(item.get("estimated_unit_price", 0)),
+        "quantity": float(item.get("quantity") or 0),
+        "estimatedUnitPrice": float(item.get("estimated_unit_price") or 0),
         "purchaseOrderId": item.get("purchase_order_id"),
         "createdAt": item.get("created_at"),
         "updatedAt": item.get("updated_at")
@@ -5505,6 +5512,8 @@ def to_camel_case_quality_check(qc):
 
 def to_camel_case_quality_check_item(item):
     """Convert quality check item data from snake_case to camelCase"""
+    if not item:
+        return {}
     return {
         "id": item.get("id"),
         "qcId": item.get("qc_id"),
@@ -5512,10 +5521,10 @@ def to_camel_case_quality_check_item(item):
         "productId": item.get("product_id"),
         "productName": item.get("product_name") or (item.get("products", {}).get("name") if item.get("products") else None),
         "skuCode": item.get("sku_code") or (item.get("products", {}).get("sku_code") if item.get("products") else None),
-        "receivedQuantity": item.get("received_quantity", 0),
-        "inspectedQuantity": item.get("inspected_quantity", 0),
-        "passedQuantity": item.get("passed_quantity", 0),
-        "failedQuantity": item.get("failed_quantity", 0),
+        "receivedQuantity": float(item.get("received_quantity") or 0),
+        "inspectedQuantity": float(item.get("inspected_quantity") or 0),
+        "passedQuantity": float(item.get("passed_quantity") or 0),
+        "failedQuantity": float(item.get("failed_quantity") or 0),
         "failureReason": item.get("failure_reason"),
         "notes": item.get("notes"),
         "createdAt": item.get("created_at"),
@@ -5523,7 +5532,7 @@ def to_camel_case_quality_check_item(item):
     }
 
 @app.get("/quality-checks")
-def get_quality_checks(payload=Depends(require_permission("grn_view"))):
+def get_quality_checks(payload=Depends(require_permission("quality_checks_view"))):
     """Get all quality checks with related data."""
     try:
         fresh_supabase = get_supabase_client()
@@ -5606,10 +5615,10 @@ def get_quality_check(qc_id: str, payload=Depends(require_permission("grn_view")
         raise HTTPException(status_code=500, detail=f"Error fetching quality check: {str(e)}")
 
 @app.post("/quality-checks")
-def create_quality_check(quality_check: dict = Body(...), payload=Depends(require_permission("grn_create"))):
+def create_quality_check(qc: dict = Body(...), payload=Depends(require_permission("quality_checks_create"))):
     """Create a quality check from a GRN."""
     try:
-        grn_id = quality_check.get("grnId")
+        grn_id = qc.get("grnId")
         if not grn_id:
             raise HTTPException(status_code=400, detail="GRN ID is required")
         
@@ -5630,12 +5639,12 @@ def create_quality_check(quality_check: dict = Body(...), payload=Depends(requir
         
         # Create QC record
         qc_data = {
-            "qc_number": quality_check["qcNumber"],
+            "qc_number": qc["qcNumber"],
             "grn_id": grn_id,
-            "inspector_id": quality_check.get("inspectorId") or payload["sub"],
-            "qc_date": quality_check.get("qcDate", date.today().isoformat()),
-            "status": quality_check.get("status", "pending"),
-            "notes": quality_check.get("notes", ""),
+            "inspector_id": qc.get("inspectorId") or payload["sub"],
+            "qc_date": qc.get("qcDate", date.today().isoformat()),
+            "status": qc.get("status", "pending"),
+            "notes": qc.get("notes", ""),
             "created_by": payload["sub"]
         }
         
@@ -5648,7 +5657,7 @@ def create_quality_check(quality_check: dict = Body(...), payload=Depends(requir
         # Get GRN items and create QC items from them
         grn_items = fresh_supabase.table("good_receive_note_items").select("*, products(name, sku_code)").eq("grn_id", grn_id).execute()
         
-        items = quality_check.get("items", [])
+        items = qc.get("items", [])
         if items:
             # Use items from request
             items_data = []
@@ -5704,7 +5713,7 @@ def create_quality_check(quality_check: dict = Body(...), payload=Depends(requir
         raise HTTPException(status_code=500, detail=f"Failed to create quality check: {str(e)}")
 
 @app.put("/quality-checks/{qc_id}")
-def update_quality_check(qc_id: str, quality_check: dict = Body(...), payload=Depends(require_permission("grn_edit"))):
+def update_quality_check(qc_id: str, qc: dict = Body(...), payload=Depends(require_permission("quality_checks_edit"))):
     """Update a quality check and its items."""
     try:
         fresh_supabase = get_supabase_client()
@@ -5723,10 +5732,10 @@ def update_quality_check(qc_id: str, quality_check: dict = Body(...), payload=De
         
         # Update QC record
         qc_data = {
-            "inspector_id": quality_check.get("inspectorId"),
-            "qc_date": quality_check.get("qcDate"),
-            "status": quality_check.get("status", current_status),
-            "notes": quality_check.get("notes")
+            "inspector_id": qc.get("inspectorId"),
+            "qc_date": qc.get("qcDate"),
+            "status": qc.get("status", current_status),
+            "notes": qc.get("notes")
         }
         # Remove None values
         qc_data = {k: v for k, v in qc_data.items() if v is not None}
@@ -5738,7 +5747,7 @@ def update_quality_check(qc_id: str, quality_check: dict = Body(...), payload=De
         updated_qc = result.data[0]
         
         # Handle items update
-        items = quality_check.get("items", [])
+        items = qc.get("items", [])
         if items:
             # Delete existing items and re-insert
             fresh_supabase.table("quality_check_items").delete().eq("qc_id", qc_id).execute()
@@ -5764,7 +5773,7 @@ def update_quality_check(qc_id: str, quality_check: dict = Body(...), payload=De
                 fresh_supabase.table("quality_check_items").insert(items_data).execute()
         
         # Update GRN quality_check_status based on QC status
-        new_status = quality_check.get("status", current_status)
+        new_status = qc.get("status", current_status)
         qc_status_map = {
             "pending": "pending",
             "in_progress": "pending",
@@ -5783,7 +5792,7 @@ def update_quality_check(qc_id: str, quality_check: dict = Body(...), payload=De
         raise HTTPException(status_code=500, detail=f"Failed to update quality check: {str(e)}")
 
 @app.delete("/quality-checks/{qc_id}")
-def delete_quality_check(qc_id: str, payload=Depends(require_permission("grn_delete"))):
+def delete_quality_check(qc_id: str, payload=Depends(require_permission("quality_checks_delete"))):
     """Delete a quality check (only pending/in_progress)."""
     try:
         fresh_supabase = get_supabase_client()
@@ -5853,6 +5862,8 @@ def to_camel_case_put_away(pa):
 
 def to_camel_case_put_away_item(item):
     """Convert put away item data from snake_case to camelCase"""
+    if not item:
+        return {}
     return {
         "id": item.get("id"),
         "putAwayId": item.get("put_away_id"),
@@ -5860,8 +5871,8 @@ def to_camel_case_put_away_item(item):
         "productId": item.get("product_id"),
         "productName": item.get("product_name"),
         "skuCode": item.get("sku_code"),
-        "quantity": item.get("quantity", 0),
-        "placedQuantity": item.get("placed_quantity", 0),
+        "quantity": float(item.get("quantity") or 0),
+        "placedQuantity": float(item.get("placed_quantity") or 0),
         "locationId": item.get("location_id"),
         "locationName": item.get("location_name") or (item.get("locations", {}).get("name") if item.get("locations") else None),
         "batchNumber": item.get("batch_number"),
@@ -5872,12 +5883,12 @@ def to_camel_case_put_away_item(item):
     }
 
 @app.get("/put-aways")
-def get_put_aways(payload=Depends(require_permission("grn_view"))):
+def get_put_aways(payload=Depends(require_permission("put_aways_view"))):
     """Get all put aways with related data."""
     try:
         fresh_supabase = get_supabase_client()
         data = fresh_supabase.table("put_aways").select(
-            "*, quality_checks(qc_number, status), good_receive_notes(grn_number, status), assigned_user:profiles!put_aways_assigned_to_fkey(full_name, username), items:put_away_items(*)"
+            "*, quality_checks(qc_number, status), good_receive_notes(grn_number, status), assigned_user:profiles(full_name, username), items:put_away_items(*, locations(name))"
         ).order("created_at", desc=True).execute()
         
         return JSONResponse(content=[to_camel_case_put_away(pa) for pa in (data.data or [])])
@@ -5905,24 +5916,24 @@ def get_put_away(pa_id: str, payload=Depends(require_permission("grn_view"))):
         raise HTTPException(status_code=500, detail=f"Failed to fetch put away: {str(e)}")
 
 @app.post("/put-aways")
-def create_put_away(put_away: dict = Body(...), payload=Depends(require_permission("grn_create"))):
+def create_put_away(pa: dict = Body(...), payload=Depends(require_permission("put_aways_create"))):
     """Create a put away from a quality check."""
     try:
         fresh_supabase = get_supabase_client()
         user_id = payload.get("sub")
         
-        qc_id = put_away.get("qualityCheckId")
-        grn_id = put_away.get("grnId")
+        qc_id = pa.get("qualityCheckId")
+        grn_id = pa.get("grnId")
         
         # Build put away record
         pa_record = {
-            "put_away_number": put_away.get("putAwayNumber", f"PA-{datetime.now().strftime('%Y%m%d%H%M%S')}"),
+            "put_away_number": pa.get("putAwayNumber", f"PA-{datetime.now().strftime('%Y%m%d%H%M%S')}"),
             "quality_check_id": qc_id,
             "grn_id": grn_id,
-            "assigned_to": put_away.get("assignedTo"),
-            "status": put_away.get("status", "pending"),
-            "put_away_date": put_away.get("putAwayDate", datetime.now().strftime("%Y-%m-%d")),
-            "notes": put_away.get("notes"),
+            "assigned_to": pa.get("assignedTo"),
+            "status": pa.get("status", "pending"),
+            "put_away_date": pa.get("putAwayDate", datetime.now().strftime("%Y-%m-%d")),
+            "notes": pa.get("notes"),
             "created_by": user_id,
         }
         
@@ -5934,7 +5945,7 @@ def create_put_away(put_away: dict = Body(...), payload=Depends(require_permissi
         pa_id = result.data[0]["id"]
         
         # Insert items if provided
-        items = put_away.get("items", [])
+        items = pa.get("items", [])
         if items:
             for item in items:
                 item_record = {
@@ -5970,7 +5981,7 @@ def create_put_away(put_away: dict = Body(...), payload=Depends(require_permissi
                     fresh_supabase.table("put_away_items").insert(item_record).execute()
         
         # If status is completed on creation, increase stock
-        status = put_away.get("status", "pending")
+        status = pa.get("status", "pending")
         if status == "completed":
             pa_items = fresh_supabase.table("put_away_items").select("*").eq("put_away_id", pa_id).execute()
             for pai in (pa_items.data or []):
@@ -6014,7 +6025,7 @@ def create_put_away(put_away: dict = Body(...), payload=Depends(require_permissi
         
         # Fetch and return the created record
         created = fresh_supabase.table("put_aways").select(
-            "*, quality_checks(qc_number, status), good_receive_notes(grn_number, status), items:put_away_items(*)"
+            "*, quality_checks(qc_number, status), good_receive_notes(grn_number, status), items:put_away_items(*, locations(name))"
         ).eq("id", pa_id).execute()
         
         return JSONResponse(content=to_camel_case_put_away(created.data[0]) if created.data else result.data[0])
@@ -6027,7 +6038,7 @@ def create_put_away(put_away: dict = Body(...), payload=Depends(require_permissi
         raise HTTPException(status_code=500, detail=f"Failed to create put away: {str(e)}")
 
 @app.put("/put-aways/{pa_id}")
-def update_put_away(pa_id: str, put_away: dict = Body(...), payload=Depends(require_permission("grn_edit"))):
+def update_put_away(pa_id: str, pa: dict = Body(...), payload=Depends(require_permission("put_aways_edit"))):
     """Update a put away. If status changed to 'completed', increase stock."""
     try:
         fresh_supabase = get_supabase_client()
@@ -6038,7 +6049,7 @@ def update_put_away(pa_id: str, put_away: dict = Body(...), payload=Depends(requ
             raise HTTPException(status_code=404, detail="Put away not found")
         
         old_status = current.data[0]["status"]
-        new_status = put_away.get("status", old_status)
+        new_status = pa.get("status", old_status)
         grn_id = current.data[0]["grn_id"]
         
         if old_status == "completed":
@@ -6046,14 +6057,14 @@ def update_put_away(pa_id: str, put_away: dict = Body(...), payload=Depends(requ
         
         # Update main record
         update_data = {}
-        if "assignedTo" in put_away:
-            update_data["assigned_to"] = put_away["assignedTo"]
-        if "status" in put_away:
-            update_data["status"] = put_away["status"]
-        if "notes" in put_away:
-            update_data["notes"] = put_away["notes"]
-        if "putAwayDate" in put_away:
-            update_data["put_away_date"] = put_away["putAwayDate"]
+        if "assignedTo" in pa:
+            update_data["assigned_to"] = pa["assignedTo"]
+        if "status" in pa:
+            update_data["status"] = pa["status"]
+        if "notes" in pa:
+            update_data["notes"] = pa["notes"]
+        if "putAwayDate" in pa:
+            update_data["put_away_date"] = pa["putAwayDate"]
         
         if new_status == "completed":
             update_data["completed_date"] = datetime.now().isoformat()
@@ -6062,7 +6073,7 @@ def update_put_away(pa_id: str, put_away: dict = Body(...), payload=Depends(requ
             fresh_supabase.table("put_aways").update(update_data).eq("id", pa_id).execute()
         
         # Update items
-        items = put_away.get("items", [])
+        items = pa.get("items", [])
         for item in items:
             item_id = item.get("id")
             if item_id:
@@ -6130,7 +6141,7 @@ def update_put_away(pa_id: str, put_away: dict = Body(...), payload=Depends(requ
         
         # Return updated record
         updated = fresh_supabase.table("put_aways").select(
-            "*, quality_checks(qc_number, status), good_receive_notes(grn_number, status), assigned_user:profiles!put_aways_assigned_to_fkey(full_name, username), items:put_away_items(*)"
+            "*, quality_checks(qc_number, status), good_receive_notes(grn_number, status), assigned_user:profiles!put_aways_assigned_to_fkey(full_name, username), items:put_away_items(*, locations(name))"
         ).eq("id", pa_id).execute()
         
         return JSONResponse(content=to_camel_case_put_away(updated.data[0]) if updated.data else {})
@@ -6143,7 +6154,7 @@ def update_put_away(pa_id: str, put_away: dict = Body(...), payload=Depends(requ
         raise HTTPException(status_code=500, detail=f"Failed to update put away: {str(e)}")
 
 @app.delete("/put-aways/{pa_id}")
-def delete_put_away(pa_id: str, payload=Depends(require_permission("grn_delete"))):
+def delete_put_away(pa_id: str, payload=Depends(require_permission("put_aways_delete"))):
     """Delete a put away (only pending/in_progress)."""
     try:
         fresh_supabase = get_supabase_client()
@@ -6213,16 +6224,16 @@ def to_camel_case_delivery_challan_item(item):
         "productId": item.get("product_id"),
         "productName": item.get("product_name"),
         "skuCode": item.get("sku_code"),
-        "quantity": item.get("quantity", 0),
-        "dispatchedQuantity": item.get("dispatched_quantity", 0),
-        "unitPrice": item.get("unit_price", 0),
+        "quantity": float(item.get("quantity") or 0),
+        "dispatchedQuantity": float(item.get("dispatched_quantity") or 0),
+        "unitPrice": float(item.get("unit_price") or 0),
         "notes": item.get("notes"),
         "createdAt": item.get("created_at"),
         "updatedAt": item.get("updated_at"),
     }
 
 @app.get("/delivery-challans")
-def get_delivery_challans(payload=Depends(require_permission("sale_invoices_view"))):
+def get_delivery_challans(payload=Depends(require_permission("delivery_challans_view"))):
     """Get all delivery challans with related data."""
     try:
         fresh_supabase = get_supabase_client()
@@ -6255,7 +6266,7 @@ def get_delivery_challan(dc_id: str, payload=Depends(require_permission("sale_in
         raise HTTPException(status_code=500, detail=f"Failed to fetch delivery challan: {str(e)}")
 
 @app.post("/delivery-challans")
-def create_delivery_challan(dc: dict = Body(...), payload=Depends(require_permission("sale_invoices_create"))):
+def create_delivery_challan(dc: dict = Body(...), payload=Depends(require_permission("delivery_challans_create"))):
     """Create a delivery challan (from invoice, SO, or standalone)."""
     try:
         fresh_supabase = get_supabase_client()
@@ -6572,10 +6583,10 @@ def to_camel_case_pick_list(pl):
         "updatedAt": pl.get("updated_at"),
     }
 
-PICK_LIST_SELECT = "*, delivery_challans(dc_number, status), assigned_user:profiles!pick_lists_assigned_to_fkey(full_name, username), items:pick_list_items(*)"
+PICK_LIST_SELECT = "*, delivery_challans(dc_number, status), assigned_user:profiles(full_name, username), items:pick_list_items(*)"
 
 @app.get("/pick-lists")
-def get_pick_lists(payload=Depends(require_permission("sale_invoices_view"))):
+def get_pick_lists(payload=Depends(require_permission("pick_lists_view"))):
     """Get all pick lists."""
     try:
         fresh_supabase = get_supabase_client()
@@ -6601,7 +6612,7 @@ def get_pick_list(pl_id: str, payload=Depends(require_permission("sale_invoices_
 
 
 @app.post("/pick-lists")
-def create_pick_list(pl: dict = Body(...), payload=Depends(require_permission("sale_invoices_create"))):
+def create_pick_list(pl: dict = Body(...), payload=Depends(require_permission("pick_lists_create"))):
     """Create a pick list (from DC)."""
     try:
         fresh_supabase = get_supabase_client()
@@ -6662,7 +6673,7 @@ def create_pick_list(pl: dict = Body(...), payload=Depends(require_permission("s
         raise HTTPException(status_code=500, detail=f"Failed to create pick list: {str(e)}")
 
 @app.put("/pick-lists/{pl_id}")
-def update_pick_list(pl_id: str, pl: dict = Body(...), payload=Depends(require_permission("sale_invoices_edit"))):
+def update_pick_list(pl_id: str, pl: dict = Body(...), payload=Depends(require_permission("pick_lists_edit"))):
     """Update a pick list. If completed, decrease stock and dispatch DC."""
     try:
         fresh_supabase = get_supabase_client()
@@ -6763,7 +6774,7 @@ def update_pick_list(pl_id: str, pl: dict = Body(...), payload=Depends(require_p
         raise HTTPException(status_code=500, detail=f"Failed to update pick list: {str(e)}")
 
 @app.delete("/pick-lists/{pl_id}")
-def delete_pick_list(pl_id: str, payload=Depends(require_permission("sale_invoices_delete"))):
+def delete_pick_list(pl_id: str, payload=Depends(require_permission("pick_lists_delete"))):
     """Delete a pick list (only pending)."""
     try:
         fresh_supabase = get_supabase_client()
@@ -6784,15 +6795,17 @@ def delete_pick_list(pl_id: str, payload=Depends(require_permission("sale_invoic
 # ==================== Return Delivery Challan API ====================
 
 def to_camel_case_return_dc_item(item):
+    if not item:
+        return {}
     return {
         "id": item.get("id"),
         "returnDcId": item.get("return_dc_id"),
         "productId": item.get("product_id"),
         "productName": item.get("product_name"),
         "skuCode": item.get("sku_code"),
-        "deliveredQuantity": item.get("delivered_quantity", 0),
-        "returnQuantity": item.get("return_quantity", 0),
-        "receivedQuantity": item.get("received_quantity", 0),
+        "deliveredQuantity": float(item.get("delivered_quantity") or 0),
+        "returnQuantity": float(item.get("return_quantity") or 0),
+        "receivedQuantity": float(item.get("received_quantity") or 0),
         "reason": item.get("reason"),
         "condition": item.get("condition", "good"),
         "notes": item.get("notes"),
@@ -6829,7 +6842,7 @@ def to_camel_case_return_dc(rdc):
 RETURN_DC_SELECT = "*, delivery_challans(dc_number, status), customers(name, phone), items:return_delivery_challan_items(*)"
 
 @app.get("/return-delivery-challans")
-def get_return_dcs(payload=Depends(require_permission("sale_invoices_view"))):
+def get_return_dcs(payload=Depends(require_permission("return_delivery_challans_view"))):
     try:
         fresh_supabase = get_supabase_client()
         data = fresh_supabase.table("return_delivery_challans").select(RETURN_DC_SELECT).order("created_at", desc=True).execute()
@@ -6838,7 +6851,7 @@ def get_return_dcs(payload=Depends(require_permission("sale_invoices_view"))):
         raise HTTPException(status_code=500, detail=f"Failed to fetch return DCs: {str(e)}")
 
 @app.get("/return-delivery-challans/{rdc_id}")
-def get_return_dc(rdc_id: str, payload=Depends(require_permission("sale_invoices_view"))):
+def get_return_dc(rdc_id: str, payload=Depends(require_permission("return_delivery_challans_view"))):
     try:
         fresh_supabase = get_supabase_client()
         data = fresh_supabase.table("return_delivery_challans").select(RETURN_DC_SELECT).eq("id", rdc_id).execute()
@@ -6851,7 +6864,7 @@ def get_return_dc(rdc_id: str, payload=Depends(require_permission("sale_invoices
         raise HTTPException(status_code=500, detail=f"Failed to fetch return DC: {str(e)}")
 
 @app.post("/return-delivery-challans")
-def create_return_dc(rdc: dict = Body(...), payload=Depends(require_permission("sale_invoices_create"))):
+def create_return_dc(rdc: dict = Body(...), payload=Depends(require_permission("return_delivery_challans_create"))):
     try:
         fresh_supabase = get_supabase_client()
         user_id = payload.get("sub")
@@ -6912,7 +6925,7 @@ def create_return_dc(rdc: dict = Body(...), payload=Depends(require_permission("
         raise HTTPException(status_code=500, detail=f"Failed to create return DC: {str(e)}")
 
 @app.put("/return-delivery-challans/{rdc_id}")
-def update_return_dc(rdc_id: str, rdc: dict = Body(...), payload=Depends(require_permission("sale_invoices_edit"))):
+def update_return_dc(rdc_id: str, rdc: dict = Body(...), payload=Depends(require_permission("return_delivery_challans_edit"))):
     """Update return DC. On completion: increase stock for good items, update DC status."""
     try:
         fresh_supabase = get_supabase_client()
@@ -7031,7 +7044,7 @@ def update_return_dc(rdc_id: str, rdc: dict = Body(...), payload=Depends(require
         raise HTTPException(status_code=500, detail=f"Failed to update return DC: {str(e)}")
 
 @app.delete("/return-delivery-challans/{rdc_id}")
-def delete_return_dc(rdc_id: str, payload=Depends(require_permission("sale_invoices_delete"))):
+def delete_return_dc(rdc_id: str, payload=Depends(require_permission("return_delivery_challans_delete"))):
     try:
         fresh_supabase = get_supabase_client()
         current = fresh_supabase.table("return_delivery_challans").select("id, status").eq("id", rdc_id).execute()
@@ -7509,7 +7522,7 @@ if __name__ == "__main__":
 # --- Purchase Indents API Endpoints ---
 
 @app.get("/purchase-indents")
-def get_purchase_indents(status: Optional[str] = None, payload=Depends(require_permission("purchase_orders_view"))):
+def get_purchase_indents(status: Optional[str] = None, payload=Depends(require_permission("purchase_indents_view"))):
     try:
         client = get_supabase_client()
         query = client.table("purchase_indents").select("*, requester:profiles(*)")
@@ -7523,7 +7536,7 @@ def get_purchase_indents(status: Optional[str] = None, payload=Depends(require_p
         raise HTTPException(status_code=500, detail=f"Error fetching indents: {str(e)}")
 
 @app.get("/purchase-indents/{indent_id}")
-def get_purchase_indent(indent_id: str, payload=Depends(require_permission("purchase_orders_view"))):
+def get_purchase_indent(indent_id: str, payload=Depends(require_permission("purchase_indents_view"))):
     try:
         client = get_supabase_client()
         indent_data = client.table("purchase_indents").select("*, requester:profiles(*)").eq("id", indent_id).single().execute()
@@ -7540,7 +7553,7 @@ def get_purchase_indent(indent_id: str, payload=Depends(require_permission("purc
         raise HTTPException(status_code=500, detail=f"Error fetching indent: {str(e)}")
 
 @app.post("/purchase-indents")
-def create_purchase_indent(indent: dict = Body(...), payload=Depends(require_permission("purchase_orders_create"))):
+def create_purchase_indent(indent: dict = Body(...), payload=Depends(require_permission("purchase_indents_create"))):
     try:
         client = get_supabase_client()
         
@@ -7576,7 +7589,7 @@ def create_purchase_indent(indent: dict = Body(...), payload=Depends(require_per
         raise HTTPException(status_code=500, detail=f"Error creating indent: {str(e)}")
 
 @app.put("/purchase-indents/{indent_id}")
-def update_purchase_indent(indent_id: str, indent: dict = Body(...), payload=Depends(require_permission("purchase_orders_edit"))):
+def update_purchase_indent(indent_id: str, indent: dict = Body(...), payload=Depends(require_permission("purchase_indents_edit"))):
     try:
         client = get_supabase_client()
         
@@ -7611,7 +7624,7 @@ def update_purchase_indent(indent_id: str, indent: dict = Body(...), payload=Dep
         raise HTTPException(status_code=500, detail=f"Error updating indent: {str(e)}")
 
 @app.delete("/purchase-indents/{indent_id}")
-def delete_purchase_indent(indent_id: str, payload=Depends(require_permission("purchase_orders_delete"))):
+def delete_purchase_indent(indent_id: str, payload=Depends(require_permission("purchase_indents_delete"))):
     try:
         client = get_supabase_client()
         client.table("purchase_indents").delete().eq("id", indent_id).execute()
