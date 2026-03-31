@@ -315,7 +315,7 @@ const UsersPage = () => {
     try {
       setUsersLoading(true);
       const data = await getUsers();
-      const userData = data || [];
+      const userData = Array.isArray(data) ? data : [];
       setUsers(userData);
       setLastFetchTime(Date.now());
       
@@ -344,7 +344,7 @@ const UsersPage = () => {
     try {
       setRolesLoading(true);
       const data = await getRoles();
-      const roleData = data || [];
+      const roleData = Array.isArray(data) ? data : [];
       setRoles(roleData);
       setLastFetchTime(Date.now());
       
@@ -1179,7 +1179,7 @@ const UsersPage = () => {
                       <div className="mt-4">
                         <p className="text-sm font-medium mb-2">Permissions:</p>
                         <div className="flex flex-wrap gap-2">
-                          {role.permissions.map((permissionId) => {
+                          {(Array.isArray(role.permissions) ? role.permissions : []).map((permissionId) => {
                             const permission = allPermissions.find(p => p.id === permissionId);
                             return permission ? (
                               <span
@@ -1270,7 +1270,7 @@ const UsersPage = () => {
                   <SelectValue placeholder="Select role" />
                 </SelectTrigger>
                 <SelectContent>
-                  {roles.map((role) => (
+                  {(Array.isArray(roles) ? roles : []).map((role) => (
                     <SelectItem key={role.name} value={role.name}>
                       {role.name}
                     </SelectItem>
@@ -1370,8 +1370,9 @@ const UsersPage = () => {
                     checked={selectedPermissions.length === allPermissions.length && allPermissions.length > 0}
                     onCheckedChange={(checked) => {
                       if (checked) {
-                        setSelectedPermissions(allPermissions.map(p => p.id));
-                        setRoleFormData(prev => ({ ...prev, permissions: allPermissions.map(p => p.id) }));
+                        const allIds = allPermissions.map(p => p.id);
+                        setSelectedPermissions(allIds);
+                        setRoleFormData(prev => ({ ...prev, permissions: allIds }));
                         setModifiedRoleFields(prev => new Set(prev).add('permissions'));
                       } else {
                         setSelectedPermissions([]);
@@ -1425,7 +1426,7 @@ const UsersPage = () => {
                       </div>
                     </div>
                     <div className="grid grid-cols-2 gap-3">
-                      {permissions.map((permission) => (
+                      {(Array.isArray(permissions) ? permissions : []).map((permission) => (
                         <div key={permission.id} className="flex items-center space-x-2">
                           <Checkbox 
                             id={permission.id}

@@ -400,70 +400,95 @@ def to_camel_case_user(user):
         "updatedAt": user.get("updated_at"),
     }
 
-def require_role(allowed_roles):
-    def decorator(payload=Depends(verify_jwt)):
-        user_role = (
-            payload.get("user_metadata", {}).get("role")
-            or payload.get("role_name")
-        )
-        if user_role not in allowed_roles:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Forbidden: insufficient permissions"
-            )
-        return payload
-    return decorator
+async def get_user_role_and_permissions(user_id: str, client: Client) -> Dict[str, Any]:
+    """Helper to fetch user role and permissions from database."""
+    try:
+        # Load profile with joined roles table
+        # We try to get role (old enum) for fallback and roles(name, permissions) for newer system
+        res = client.table("profiles").select("role, role_id, roles(name, permissions)").eq("id", user_id).execute()
+        
+        if not res.data:
+            return {"role": None, "permissions": []}
+            
+        profile = res.data[0]
+        role_name = profile.get("role")  # Fallback to old enum field if present
+        
+        role_table_data = profile.get("roles")
+        permissions = []
+        
+        if role_table_data:
+            role_name = role_table_data.get("name", role_name)
+            permissions = role_table_data.get("permissions", [])
+            
+        return {
+            "role": role_name,
+            "permissions": permissions if isinstance(permissions, list) else []
+        }
+    except Exception as e:
+        print(f"Error fetching user role: {str(e)}")
+        return {"role": None, "permissions": []}
 
-def require_permission(required_permission):
-    def decorator(payload=Depends(verify_jwt)):
+def require_role(allowed_roles: List[str]):
+    async def decorator(payload=Depends(verify_jwt)):
         # Bypass permissions for service_role
         if payload.get("role") == "service_role":
             return payload
 
-        # Get user ID from JWT payload
         user_id = payload.get("sub")
         if not user_id:
+            raise HTTPException(status_code=401, detail="Invalid token")
+
+        client = get_supabase_client()
+        user_info = await get_user_role_and_permissions(user_id, client)
+        
+        if user_info["role"] not in allowed_roles:
+            # Special case for admin: if they have '*' permission, they pass everything
+            if "*" in user_info["permissions"]:
+                return payload
+                
             raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid token: missing user ID"
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Forbidden: role '{user_info['role']}' not authorized"
             )
+        return payload
+    return decorator
+
+def require_permission(required_permission: str):
+    async def decorator(payload=Depends(verify_jwt)):
+        # Bypass permissions for service_role
+        if payload.get("role") == "service_role":
+            return payload
+
+        user_id = payload.get("sub")
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Invalid token")
 
         try:
             debug_log(f"Checking permission '{required_permission}' for user {user_id}")
             
             client = get_supabase_client()
+            user_info = await get_user_role_and_permissions(user_id, client)
+            
+            user_permissions = user_info["permissions"]
 
-            # Load profile with role ENUM
-            try:
-                profile_data = client.table("profiles").select("role").eq("id", user_id).execute()
-            except httpx.RemoteProtocolError:
-                client = get_supabase_client()
-                profile_data = client.table("profiles").select("role").eq("id", user_id).execute()
-
-            if not profile_data.data:
-                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="User profile not found")
-
-            user_role = profile_data.data[0].get("role")
-            if not user_role:
-                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="User has no assigned role")
-
-            # Since the roles table is gone, we hardcode permissions based on the ENUM for now.
-            # 'admin' has all permissions ('*'), 'staff' has limited permissions.
-            user_permissions = []
-            if user_role == "admin":
-                user_permissions = ["*"]  # Matches frontend wildcard logic
-            elif user_role == "staff":
-                # Fallback permissions for staff if needed, or leave empty if restricted
-                user_permissions = ["view_dashboard", "view_products"] 
-
-            if "*" not in user_permissions and required_permission not in user_permissions:
-                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Forbidden: missing permission '{required_permission}'")
+            # Admin check: '*' bypasses any specific permission
+            if "*" in user_permissions or "admin" == user_info["role"]:
+                 return payload
+                 
+            if required_permission not in user_permissions:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN, 
+                    detail=f"Forbidden: missing permission '{required_permission}'"
+                )
 
             return payload
         except HTTPException:
             raise
         except Exception as e:
-            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Error checking permissions: {str(e)}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, 
+                detail=f"Error checking permissions: {str(e)}"
+            )
 
     return decorator
 
@@ -2340,34 +2365,27 @@ def delete_category(category_id: str, payload=Depends(require_role(['admin']))):
 # --- Roles Endpoints ---
 @app.get("/roles")
 def get_roles(payload=Depends(require_role(["admin"]))):
-    # Since the roles table is gone, return hardcoded roles based on the ENUM
-    roles = [
-        {
-            "id": "admin",
-            "name": "admin",
-            "description": "Administrator with full access",
-            "permissions": ["*"],
-            "createdAt": "2026-03-26T22:43:45.517158+00:00",
-            "updatedAt": "2026-03-26T22:43:45.517158+00:00"
-        },
-        {
-            "id": "staff",
-            "name": "staff",
-            "description": "Staff member with limited access",
-            "permissions": ["view_dashboard", "view_products"],
-            "createdAt": "2026-03-26T22:43:45.517158+00:00",
-            "updatedAt": "2026-03-26T22:43:45.517158+00:00"
-        }
-    ]
-    return JSONResponse(content=roles)
+    try:
+        res = supabase.table("roles").select("*").execute()
+        roles_data = [to_camel_case_role(role) for role in res.data]
+        return JSONResponse(content=roles_data)
+    except Exception as e:
+        print(f"Error fetching roles: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error fetching roles: {str(e)}"
+        )
 
 # Helper function to check for duplicate role names
-def check_duplicate_role_name(name: str, exclude_role_name: str = None):
-    # Simply check against known roles since the table is gone
-    known_roles = ["admin", "staff"]
-    if name in known_roles:
-        return name != exclude_role_name
-    return False
+def check_duplicate_role_name(name: str, exclude_role_id: str = None):
+    try:
+        query = supabase.table("roles").select("id").eq("name", name)
+        if exclude_role_id:
+            query = query.neq("id", exclude_role_id)
+        result = query.execute()
+        return len(result.data) > 0
+    except Exception:
+        return False
 
 # Helper function to check for duplicate category names with same parent
 def check_duplicate_category_name(name: str, parent_id: str = None, exclude_category_id: str = None):
@@ -2500,18 +2518,29 @@ def check_duplicate_ean_code(ean_code: str, exclude_product_id: str = None):
         return False
 
 @app.post("/roles")
-def create_role(role: dict = Body(...), payload=Depends(require_role(["admin"]))):
+def create_role(role_data: dict = Body(...), payload=Depends(require_role(["admin"]))):
     # Check for duplicate role name
-    # Role management is now handled via the user_role ENUM on profiles.
-    # We no longer support creating random roles.
-    return JSONResponse(content={"message": "Role creation is disabled. Use the roles enum directly."}, status_code=501)
+    if check_duplicate_role_name(role_data.get("name")):
+        raise HTTPException(status_code=409, detail=f"A role with name '{role_data.get('name')}' already exists")
+    
+    # Map camelCase to snake_case
+    if "createdAt" in role_data:
+        role_data["created_at"] = role_data.pop("createdAt")
+    if "updatedAt" in role_data:
+        role_data["updated_at"] = role_data.pop("updatedAt")
+    
+    try:
+        data = supabase.table("roles").insert(role_data).execute()
+        return JSONResponse(content=to_camel_case_role(data.data[0]))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
-@app.put("/roles/{role_name}")
-def update_role(role_name: str, role: dict = Body(...), payload=Depends(require_role(["admin"]))):
+@app.put("/roles/{role_id}")
+def update_role(role_id: str, role: dict = Body(...), payload=Depends(require_role(["admin"]))):
     # Check for duplicate role name if name is being changed
     new_role_name = role.get("name")
-    if new_role_name and new_role_name != role_name:
-        if check_duplicate_role_name(new_role_name, role_name):
+    if new_role_name:
+        if check_duplicate_role_name(new_role_name, role_id):
             raise HTTPException(status_code=409, detail=f"A role with name '{new_role_name}' already exists")
     
     # Map camelCase to snake_case for timestamp fields
@@ -2533,25 +2562,34 @@ def update_role(role_name: str, role: dict = Body(...), payload=Depends(require_
     # but we can allow updated_at to be set (though the trigger will handle it)
     if "created_at" in role:
         # Only allow created_at to be set if it's not already set in the database
-        existing_role = supabase.table("roles").select("created_at").eq("name", role_name).execute()
+        existing_role = supabase.table("roles").select("created_at").eq("id", role_id).execute()
         if existing_role.data and existing_role.data[0].get("created_at"):
             role.pop("created_at")  # Don't update existing created_at
     
-    data = supabase.table("roles").update(role).eq("name", role_name).execute()
-    return JSONResponse(content=data.data)
+    data = supabase.table("roles").update(role).eq("id", role_id).execute()
+    return JSONResponse(content=to_camel_case_role(data.data[0]))
 
-@app.delete("/roles/{role_name}")
-def delete_role(role_name: str, payload=Depends(require_role(["admin"]))):
-    # Role management is disabled.
-    return JSONResponse(content={"message": "Role deletion is disabled."}, status_code=501)
-    return JSONResponse(content=data.data)
+@app.delete("/roles/{role_id}")
+def delete_role(role_id: str, payload=Depends(require_role(["admin"]))):
+    try:
+        # Check if any users are assigned to this role
+        users_count = supabase.table("profiles").select("id", count="exact").eq("role_id", role_id).execute()
+        if users_count.count and users_count.count > 0:
+            raise HTTPException(status_code=400, detail="Cannot delete role that is assigned to users")
+            
+        data = supabase.table("roles").delete().eq("id", role_id).execute()
+        return JSONResponse(content={"message": "Role deleted successfully"})
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 # --- Users Endpoints ---
 @app.get("/users")
 def get_users(payload=Depends(require_role(["admin"]))):
     try:
-        # Get profiles data with role ENUM directly
-        profiles_data = supabase.table("profiles").select("id, username, full_name, is_active, role, created_at, updated_at").execute()
+        # Get profiles data with joined roles
+        profiles_data = supabase.table("profiles").select("id, username, full_name, is_active, role, role_id, created_at, updated_at, roles(name, permissions)").execute()
     except Exception as e:
         print(f"Error fetching profiles: {str(e)}")
         return JSONResponse(content=[])
@@ -2559,8 +2597,13 @@ def get_users(payload=Depends(require_role(["admin"]))):
     users = []
     
     for profile in profiles_data.data:
-        # Role is now directly on the profile
+        # Get role name from linked roles table or fallback to role (enum)
+        role_table_data = profile.get("roles")
         role_name = profile.get("role", "staff")
+        role_id = profile.get("role_id")
+        
+        if role_table_data:
+            role_name = role_table_data.get("name", role_name)
         
         # Try to get auth user data, but don't fail if it doesn't exist
         auth_user = {}
@@ -2585,6 +2628,7 @@ def get_users(payload=Depends(require_role(["admin"]))):
             "name": profile.get("full_name") or "No Name",  # Use full_name since 'name' column doesn't exist
             "email": auth_user.get("email") or f"{profile.get('username', 'user')}@example.com",  # Fallback email
             "role": role_name,
+            "role_id": role_id,
             "status": "Active" if profile.get("is_active", True) else "Inactive",
             "lastLogin": auth_user.get("last_sign_in_at"),
             "createdAt": profile.get("created_at"),

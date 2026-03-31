@@ -59,45 +59,17 @@ export async function apiFetch(path: string, options: RequestInit = {}) {
   });
 
   if (!res.ok) {
-    // Clone the response so we can read it multiple times
-    const responseClone = res.clone();
-
-    // Try to get the error text first
+    const errorText = await res.text();
+    let errorMessage = `HTTP ${res.status}: ${res.statusText}`;
+    
     try {
-      const errorText = await responseClone.text();
-
-      // Try to parse as JSON
-      try {
-        const errorData = JSON.parse(errorText);
-
-        // Return error response instead of throwing
-        return {
-          error: true,
-          status: res.status,
-          statusText: res.statusText,
-          detail: errorData.detail || errorData.message || errorText,
-          data: errorData
-        };
-      } catch (jsonError) {
-        // If JSON parsing fails, use the raw text
-        return {
-          error: true,
-          status: res.status,
-          statusText: res.statusText,
-          detail: errorText || `HTTP ${res.status}: ${res.statusText}`,
-          data: null
-        };
-      }
-    } catch (textError) {
-      // If even text reading fails, use status info
-      return {
-        error: true,
-        status: res.status,
-        statusText: res.statusText,
-        detail: `HTTP ${res.status}: ${res.statusText}`,
-        data: null
-      };
+      const errorData = JSON.parse(errorText);
+      errorMessage = errorData.detail || errorData.message || errorMessage;
+    } catch (e) {
+      errorMessage = errorText || errorMessage;
     }
+    
+    throw new Error(errorMessage);
   }
 
   return res.json();
@@ -154,65 +126,34 @@ export async function getUsers() {
 }
 
 export async function createUser(user: any) {
-  const result = await apiFetch('/users', { method: 'POST', body: JSON.stringify(user) });
+  return apiFetch('/users', { method: 'POST', body: JSON.stringify(user) });
+}
 
-  // Check if the result is an error response
-  if (result && result.error) {
-    throw new Error(result.detail);
-  }
+export async function getRoles() {
+  return apiFetch('/roles');
+}
 
-  return result;
+export async function createRole(role: any) {
+  return apiFetch('/roles', { method: 'POST', body: JSON.stringify(role) });
+}
+
+export async function updateRole(roleId: string, role: any) {
+  return apiFetch(`/roles/${roleId}`, { method: 'PUT', body: JSON.stringify(role) });
+}
+
+export async function deleteRole(roleId: string) {
+  return apiFetch(`/roles/${roleId}`, { method: 'DELETE' });
 }
 
 export async function updateUser(id: string, user: any) {
-  const result = await apiFetch(`/users/${id}`, { method: 'PUT', body: JSON.stringify(user) });
-
-  // Check if the result is an error response
-  if (result && result.error) {
-    const error = new Error(result.detail);
-    (error as any).status = result.status;
-    throw error;
-  }
-
-  return result;
+  return apiFetch(`/users/${id}`, { method: 'PUT', body: JSON.stringify(user) });
 }
 
 export async function deleteUser(id: string) {
   return apiFetch(`/users/${id}`, { method: 'DELETE' });
 }
 
-// Role management API functions
-export async function getRoles() {
-  return apiFetch('/roles');
-}
-
-export async function createRole(role: any) {
-  const result = await apiFetch('/roles', { method: 'POST', body: JSON.stringify(role) });
-
-  // Check if the result is an error response
-  if (result && result.error) {
-    throw new Error(result.detail);
-  }
-
-  return result;
-}
-
-export async function updateRole(roleName: string, role: any) {
-  const result = await apiFetch(`/roles/${roleName}`, { method: 'PUT', body: JSON.stringify(role) });
-
-  // Check if the result is an error response
-  if (result && result.error) {
-    const error = new Error(result.detail);
-    (error as any).status = result.status;
-    throw error;
-  }
-
-  return result;
-}
-
-export async function deleteRole(roleName: string) {
-  return apiFetch(`/roles/${roleName}`, { method: 'DELETE' });
-}
+// Role management API functions are integrated above under User management
 
 // Units API functions
 export async function getUnits() {
@@ -220,29 +161,11 @@ export async function getUnits() {
 }
 
 export async function createUnit(unit: any) {
-  const result = await apiFetch('/units', { method: 'POST', body: JSON.stringify(unit) });
-
-  // Check if the result is an error response
-  if (result && result.error) {
-    const error = new Error(result.detail);
-    (error as any).status = result.status;
-    throw error;
-  }
-
-  return result;
+  return apiFetch('/units', { method: 'POST', body: JSON.stringify(unit) });
 }
 
 export async function updateUnit(id: string, unit: any) {
-  const result = await apiFetch(`/units/${id}`, { method: 'PUT', body: JSON.stringify(unit) });
-
-  // Check if the result is an error response
-  if (result && result.error) {
-    const error = new Error(result.detail);
-    (error as any).status = result.status;
-    throw error;
-  }
-
-  return result;
+  return apiFetch(`/units/${id}`, { method: 'PUT', body: JSON.stringify(unit) });
 }
 
 export async function deleteUnit(id: string) {
@@ -255,29 +178,11 @@ export async function getTaxes() {
 }
 
 export async function createTax(tax: any) {
-  const result = await apiFetch('/taxes', { method: 'POST', body: JSON.stringify(tax) });
-
-  // Check if the result is an error response
-  if (result && result.error) {
-    const error = new Error(result.detail);
-    (error as any).status = result.status;
-    throw error;
-  }
-
-  return result;
+  return apiFetch('/taxes', { method: 'POST', body: JSON.stringify(tax) });
 }
 
 export async function updateTax(id: string, tax: any) {
-  const result = await apiFetch(`/taxes/${id}`, { method: 'PUT', body: JSON.stringify(tax) });
-
-  // Check if the result is an error response
-  if (result && result.error) {
-    const error = new Error(result.detail);
-    (error as any).status = result.status;
-    throw error;
-  }
-
-  return result;
+  return apiFetch(`/taxes/${id}`, { method: 'PUT', body: JSON.stringify(tax) });
 }
 
 export async function deleteTax(id: string) {
@@ -290,16 +195,7 @@ export async function getSuppliers() {
 }
 
 export async function createSupplier(supplier: any) {
-  const result = await apiFetch('/suppliers', { method: 'POST', body: JSON.stringify(supplier) });
-
-  // Check if the result is an error response
-  if (result && result.error) {
-    const error = new Error(result.detail);
-    (error as any).status = result.status;
-    throw error;
-  }
-
-  return result;
+  return apiFetch('/suppliers', { method: 'POST', body: JSON.stringify(supplier) });
 }
 
 export async function updateSupplier(id: string, supplier: any) {
