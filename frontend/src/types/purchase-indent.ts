@@ -7,10 +7,12 @@ export interface PurchaseIndentItem {
   id: string;
   indentId: string;
   productId: string;
-  productName?: string;
-  skuCode?: string;
+  productName: string;
+  skuCode: string;
+  hsnCode: string;
   quantity: number;
   estimatedUnitPrice: number;
+
   purchaseOrderId?: string;
   createdAt: Date;
   updatedAt: Date;

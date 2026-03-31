@@ -174,12 +174,14 @@ export const PurchaseIndentDialog = ({ open, onOpenChange, indent, onSave }: Pur
       productId: product.id,
       productName: product.name,
       skuCode: product.sku_code,
+      hsnCode: product.hsn_code,
       quantity: quantity,
       estimatedUnitPrice: unitPrice,
       tax: tax,
       purchaseTaxType: product.purchase_tax_type,
       total: calculateItemTotal(product, quantity, unitPrice, 0, tax)
     };
+
 
     let newItems = [...items];
     if (hasValidEditingIndex) {
@@ -235,11 +237,15 @@ export const PurchaseIndentDialog = ({ open, onOpenChange, indent, onSave }: Pur
       totalEstimatedValue: summary.totalAmount,
       items: items.map(item => ({
         productId: item.productId,
+        productName: item.productName,
+        skuCode: item.skuCode,
+        hsnCode: item.hsnCode,
         quantity: item.quantity,
         estimatedUnitPrice: item.estimatedUnitPrice,
         tax: item.tax,
         total: item.total
       }))
+
     };
 
     onSave(payload);
@@ -327,7 +333,9 @@ export const PurchaseIndentDialog = ({ open, onOpenChange, indent, onSave }: Pur
                 <TableRow className="bg-muted/50">
                   <TableHead className="w-[350px]">Product</TableHead>
                   <TableHead>SKU</TableHead>
+                  <TableHead>HSN</TableHead>
                   <TableHead className="w-[100px] text-right">Qty</TableHead>
+
                   <TableHead className="w-[150px] text-right">Est. Unit Price</TableHead>
                   <TableHead className="w-[120px] text-right">Tax</TableHead>
                   <TableHead className="text-right">Total Est.</TableHead>
@@ -356,6 +364,8 @@ export const PurchaseIndentDialog = ({ open, onOpenChange, indent, onSave }: Pur
                         </div>
                       </TableCell>
                       <TableCell className="font-mono text-xs text-muted-foreground">{item.skuCode || "-"}</TableCell>
+                      <TableCell className="font-mono text-xs text-muted-foreground">{item.hsnCode || "-"}</TableCell>
+
                       <TableCell>
                         <Input type="number" value={item.quantity} onChange={e => handleItemChange(index, "quantity", parseInt(e.target.value) || 1)} className="text-right h-8" />
                       </TableCell>

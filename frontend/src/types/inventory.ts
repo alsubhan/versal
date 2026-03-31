@@ -53,3 +53,43 @@ export interface StockLevel {
   reorderPoint: number; // Default to 0 since not in schema
   lastUpdated: Date;
 }
+
+export interface Product {
+  id: string;
+  name: string;
+  sku_code: string;
+  hsn_code: string;
+  barcode: string;
+  cost_price: number;
+  sale_price: number;
+  mrp?: number;
+  purchase_tax_type?: 'inclusive' | 'exclusive';
+  sale_tax_type?: 'inclusive' | 'exclusive';
+  allow_override_price?: boolean;
+  is_serialized?: boolean;
+  unit_conversions?: Record<string, number> | string | null;
+  purchase_tax?: {
+    id: string;
+    name: string;
+    rate: number;
+  };
+  sale_tax?: {
+    id: string;
+    name: string;
+    rate: number;
+  };
+  units?: {
+    name: string;
+    abbreviation: string;
+  };
+  category?: {
+    name: string;
+  };
+  // Enriched fields produced by dialogs for consumers
+  _selectedQuantity?: number;
+  _selectedUnitLabel?: string;
+  _selectedUnitMultiplier?: number;
+  _selectedUnitPrice?: number;
+  _serialNumbers?: string[];
+}
+

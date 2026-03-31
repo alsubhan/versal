@@ -73,6 +73,7 @@ export const PurchaseIndentView = ({ open, onOpenChange, indent }: PurchaseInden
               <TableRow className="bg-muted/50">
                 <TableHead>Product</TableHead>
                 <TableHead>SKU</TableHead>
+                <TableHead>HSN</TableHead>
                 <TableHead className="text-right">Quantity</TableHead>
                 <TableHead className="text-right">Est. Unit Price</TableHead>
                 <TableHead className="text-right">Total Est.</TableHead>
@@ -84,8 +85,10 @@ export const PurchaseIndentView = ({ open, onOpenChange, indent }: PurchaseInden
                   <TableRow key={item.id || index}>
                     <TableCell className="font-medium">{item.productName || 'Unknown'}</TableCell>
                     <TableCell className="font-mono text-xs">{item.skuCode || '-'}</TableCell>
+                    <TableCell className="font-mono text-xs">{item.hsnCode || '-'}</TableCell>
                     <TableCell className="text-right">{item.quantity}</TableCell>
                     <TableCell className="text-right">{formatCurrency(item.estimatedUnitPrice, currency)}</TableCell>
+
                     <TableCell className="text-right font-medium">
                         {formatCurrency(item.quantity * item.estimatedUnitPrice, currency)}
                     </TableCell>

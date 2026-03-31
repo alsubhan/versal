@@ -297,7 +297,7 @@ export const PurchaseOrderDialog = ({ open, onOpenChange, purchaseOrder, onSave 
       return;
     }
     
-    if (!product?.cost_price) {
+    if (product?.cost_price === undefined || product?.cost_price === null) {
       toast({
         title: "Invalid Product",
         description: `Product ${product?.name} (${product?.sku_code}) is missing cost price. Please update the product.`,
@@ -305,6 +305,7 @@ export const PurchaseOrderDialog = ({ open, onOpenChange, purchaseOrder, onSave 
       });
       return;
     }
+
     
     // Check if we're editing an existing item
     const editingIndexStr = sessionStorage.getItem('editingItemIndex');
@@ -433,7 +434,8 @@ export const PurchaseOrderDialog = ({ open, onOpenChange, purchaseOrder, onSave 
   
   const calculateTotals = (itemsList: Partial<PurchaseOrderItem>[]) => {
     let subtotal = 0;
-    let taxAmount = 0;
+    let displayTaxAmount = 0;
+    let exclusiveTaxForTotal = 0;
     let discountAmount = 0;
     
     itemsList.forEach(item => {
@@ -445,17 +447,20 @@ export const PurchaseOrderDialog = ({ open, onOpenChange, purchaseOrder, onSave 
       subtotal += itemSubtotal;
       discountAmount += discount;
       
-      // For tax calculation in order summary:
-      // - Exclusive tax: Add the tax amount to the total
-      // - Inclusive tax: Tax is already included in cost price, so don't add it again
+      // Always add to display tax amount
+      displayTaxAmount += Number(item.tax) || 0;
+      
+      // For total calculation:
+      // - Exclusive tax: MUST be added to the total
+      // - Inclusive tax: ALREADY included in subtotal, so don't double-count
       if (item.purchaseTaxType === 'exclusive') {
-        taxAmount += Number(item.tax) || 0;
+        exclusiveTaxForTotal += Number(item.tax) || 0;
       }
-      // For inclusive tax, we don't add the tax amount because it's already included in the cost price
     });
     
-    // Calculate unrounded total
-    const unroundedTotal = subtotal - discountAmount + taxAmount;
+    // Calculate unrounded total using the core formula:
+    // Total = Subtotal (which includes inclusive taxes) - Discount + Exclusive Taxes
+    const unroundedTotal = subtotal - discountAmount + exclusiveTaxForTotal;
     
     // Apply rounding only to the total
     const totalAmount = applyRounding(unroundedTotal, systemSettings.roundingMethod, systemSettings.roundingPrecision);
@@ -466,12 +471,13 @@ export const PurchaseOrderDialog = ({ open, onOpenChange, purchaseOrder, onSave 
     setFormData(prev => ({
       ...prev,
       subtotal: subtotal,
-      taxAmount: taxAmount,
+      taxAmount: displayTaxAmount,
       discountAmount: discountAmount,
       totalAmount,
       roundingAdjustment
     }));
   };
+
   
   // Check if form is valid
   const isFormValid = () => {
@@ -759,9 +765,9 @@ export const PurchaseOrderDialog = ({ open, onOpenChange, purchaseOrder, onSave 
                           onChange={(e) => 
                             handleItemChange(index, "costPrice", parseFloat(e.target.value) || 0)
                           }
-                          className="w-24 bg-gray-50"
-                          disabled
-                          title="Cost price is set from product data and cannot be changed"
+                          className="w-24 border-blue-200"
+                          title="Cost price is editable and pre-filled from product or indent data"
+
                         />
                       </TableCell>
                       <TableCell>
