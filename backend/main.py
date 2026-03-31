@@ -32,7 +32,8 @@ app = FastAPI(
     title="Versal API",
     description="Inventory Management System API",
     version="1.0.0",
-    debug=DEBUG_MODE
+    debug=DEBUG_MODE,
+    root_path="/api"
 )
 
 def _create_serials_for_grn_item(product_id: str, serial_numbers: List[str], grn_item_id: str):
