@@ -5888,7 +5888,7 @@ def get_put_aways(payload=Depends(require_permission("put_aways_view"))):
     try:
         fresh_supabase = get_supabase_client()
         data = fresh_supabase.table("put_aways").select(
-            "*, quality_checks(qc_number, status), good_receive_notes(grn_number, status), assigned_user:profiles(full_name, username), items:put_away_items(*, locations(name))"
+            "*, quality_checks(qc_number, status), good_receive_notes(grn_number, status), assigned_user:profiles!put_aways_assigned_to_fkey(full_name, username), items:put_away_items(*, locations(name))"
         ).order("created_at", desc=True).execute()
         
         return JSONResponse(content=[to_camel_case_put_away(pa) for pa in (data.data or [])])
@@ -6025,7 +6025,7 @@ def create_put_away(pa: dict = Body(...), payload=Depends(require_permission("pu
         
         # Fetch and return the created record
         created = fresh_supabase.table("put_aways").select(
-            "*, quality_checks(qc_number, status), good_receive_notes(grn_number, status), items:put_away_items(*, locations(name))"
+            "*, quality_checks(qc_number, status), good_receive_notes(grn_number, status), assigned_user:profiles!put_aways_assigned_to_fkey(full_name, username), items:put_away_items(*, locations(name))"
         ).eq("id", pa_id).execute()
         
         return JSONResponse(content=to_camel_case_put_away(created.data[0]) if created.data else result.data[0])
@@ -6583,7 +6583,7 @@ def to_camel_case_pick_list(pl):
         "updatedAt": pl.get("updated_at"),
     }
 
-PICK_LIST_SELECT = "*, delivery_challans(dc_number, status), assigned_user:profiles(full_name, username), items:pick_list_items(*)"
+PICK_LIST_SELECT = "*, delivery_challans(dc_number, status), assigned_user:profiles!pick_lists_assigned_to_fkey(full_name, username), items:pick_list_items(*)"
 
 @app.get("/pick-lists")
 def get_pick_lists(payload=Depends(require_permission("pick_lists_view"))):
@@ -7525,7 +7525,7 @@ if __name__ == "__main__":
 def get_purchase_indents(status: Optional[str] = None, payload=Depends(require_permission("purchase_indents_view"))):
     try:
         client = get_supabase_client()
-        query = client.table("purchase_indents").select("*, requester:profiles(*)")
+        query = client.table("purchase_indents").select("*, requester:profiles!requester_id(*)")
         if status:
             query = query.eq("status", status)
         data = query.order("created_at", desc=True).execute()
@@ -7539,7 +7539,7 @@ def get_purchase_indents(status: Optional[str] = None, payload=Depends(require_p
 def get_purchase_indent(indent_id: str, payload=Depends(require_permission("purchase_indents_view"))):
     try:
         client = get_supabase_client()
-        indent_data = client.table("purchase_indents").select("*, requester:profiles(*)").eq("id", indent_id).single().execute()
+        indent_data = client.table("purchase_indents").select("*, requester:profiles!requester_id(*)").eq("id", indent_id).single().execute()
         if not indent_data.data:
             return JSONResponse(content={"error": "Indent not found"}, status_code=404)
             
