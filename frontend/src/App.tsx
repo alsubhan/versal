@@ -23,6 +23,7 @@ import GRNsPage from "@/pages/GRNsPage";
 import QualityChecksPage from "@/pages/QualityChecksPage";
 import PutAwaysPage from "@/pages/PutAwaysPage";
 import SaleOrdersPage from "@/pages/SaleOrdersPage";
+import SaleQuotationsPage from "@/pages/SaleQuotationsPage";
 import SaleInvoicesPage from "@/pages/SaleInvoicesPage";
 import DeliveryChallansPage from "@/pages/DeliveryChallansPage";
 import PickListsPage from "@/pages/PickListsPage";
@@ -69,6 +70,7 @@ const App = () => {
               <Route path="grns" element={<GRNsPage />} />
               <Route path="quality-checks" element={<QualityChecksPage />} />
               <Route path="put-aways" element={<PutAwaysPage />} />
+              <Route path="sale-quotations" element={<SaleQuotationsPage />} />
               <Route path="sale-orders" element={<SaleOrdersPage />} />
               <Route path="sale-invoices" element={<SaleInvoicesPage />} />
               <Route path="delivery-challans" element={<DeliveryChallansPage />} />

@@ -25,7 +25,7 @@ import { type GoodsReceiveNote, type GoodsReceiveNoteItem } from "@/types/grn";
 import { type PurchaseOrder } from "@/types/purchase-order";
 import { type Supplier } from "@/types/supplier";
 import { useCurrencyStore } from "@/stores/currencyStore";
-import { getGoodReceiveNote, getProducts, getTaxes, getPurchaseOrders, getAvailablePurchaseOrdersForGRN, getSuppliers, getPurchaseOrder, createGoodReceiveNote, updateGoodReceiveNote, listSerials } from "@/lib/api";
+import { getGoodReceiveNote, getProducts, getTaxes, getPurchaseOrders, getAvailablePurchaseOrdersForGRN, getSuppliers, getPurchaseOrder, getPurchaseOrderRemainingItems, createGoodReceiveNote, updateGoodReceiveNote, listSerials } from "@/lib/api";
 import { ProductSearchDialog } from "@/components/shared/ProductSearchDialog";
 import { useSystemSettings } from "@/hooks/useSystemSettings";
 import { useAuthStore } from "@/stores/authStore";
@@ -210,74 +210,63 @@ export const GRNDialog = ({ open, onOpenChange, grn, onSave }: GRNDialogProps): 
     }
   };
 
-  // Load PO items when PO is selected in linked mode
+  // Load PO items when PO is selected in linked mode — uses remaining-items endpoint
+  // so already-received quantities are subtracted and the user only sees what's left to receive.
   const handlePurchaseOrderSelect = async (purchaseOrderId: string) => {
     if (!purchaseOrderId) {
       setItems([]);
       calculateTotals([]);
       return;
     }
-    
+
     try {
-      if (DEBUG_MODE) {
-        console.log('Loading purchase order:', purchaseOrderId);
-      }
-      
-      // Fetch complete purchase order data including items
-      const completePO = await getPurchaseOrder(purchaseOrderId);
-      
-      if (DEBUG_MODE) {
-        console.log('Complete PO data:', completePO);
-        console.log('PO items:', completePO?.items);
-      }
-      
-      if (completePO && completePO.items && completePO.items.length > 0) {
-        // Convert PO items to GRN items
-        const grnItems = completePO.items.map((item, index) => {
-          if (DEBUG_MODE) {
-            console.log(`Processing item ${index}:`, item);
-          }
-          
-          return {
-            id: `temp-${Date.now()}-${index}`,
-            goodReceiveNoteId: "",
-            purchaseOrderItemId: item.id, // CRITICAL: Link to the purchase order item
-            productId: item.productId,
-            productName: item.productName,
-            skuCode: item.skuCode,
-            hsnCode: item.hsnCode,
-            orderedQuantity: item.quantity,
-            receivedQuantity: 0, // Start with 0 received
-            unitCost: item.costPrice,
-            discount: item.discount || 0,
-            tax: item.tax || 0,
-            total: 0, // Will be calculated when quantity is entered
-            purchaseTaxType: item.purchaseTaxType,
-            unitAbbreviation: item.unitAbbreviation,
-          };
-        });
-        
-        if (DEBUG_MODE) {
-          console.log('Converted GRN items:', grnItems);
+      if (DEBUG_MODE) console.log('Loading remaining items for PO:', purchaseOrderId);
+
+      const remainingItems: any[] = await getPurchaseOrderRemainingItems(purchaseOrderId);
+
+      if (DEBUG_MODE) console.log('Remaining items:', remainingItems);
+
+      if (remainingItems && remainingItems.length > 0) {
+        // Filter out items already fully received
+        const itemsToReceive = remainingItems.filter(item => item.remainingQty > 0);
+
+        if (itemsToReceive.length === 0) {
+          toast.info("All items on this purchase order have already been fully received.");
+          setItems([]);
+          calculateTotals([]);
+          return;
         }
-        
+
+        const grnItems = itemsToReceive.map((item, index) => ({
+          id: `temp-${Date.now()}-${index}`,
+          goodReceiveNoteId: "",
+          purchaseOrderItemId: item.id,
+          productId: item.productId,
+          productName: item.productName,
+          skuCode: item.skuCode,
+          hsnCode: item.hsnCode,
+          orderedQuantity: item.orderedQuantity,
+          alreadyReceived: item.alreadyReceived,   // displayed to user as context
+          remainingQty: item.remainingQty,           // hard cap for input
+          receivedQuantity: 0,                       // start at 0
+          unitCost: item.costPrice,
+          discount: item.discount || 0,
+          tax: item.tax || 0,
+          total: 0,
+          purchaseTaxType: item.purchaseTaxType,
+          unitAbbreviation: item.unitAbbreviation,
+        }));
+
         setItems(grnItems);
         calculateTotals(grnItems);
-        
-        toast.success(`Loaded ${grnItems.length} items from purchase order`);
+        toast.success(`Loaded ${grnItems.length} item(s) with remaining quantity from purchase order`);
       } else {
-        if (DEBUG_MODE) {
-          console.log('No items found in purchase order or completePO is null');
-        }
         setItems([]);
         calculateTotals([]);
-        
-        if (completePO) {
-          toast.info("The selected purchase order has no items");
-        }
+        toast.info("The selected purchase order has no items");
       }
     } catch (error) {
-      console.error('Error loading purchase order items:', error);
+      console.error('Error loading purchase order remaining items:', error);
       toast.error(`Failed to load purchase order items: ${error.message}`);
       setItems([]);
       calculateTotals([]);
@@ -616,10 +605,19 @@ export const GRNDialog = ({ open, onOpenChange, grn, onSave }: GRNDialogProps): 
     // Recalculate item total and tax
     if (["receivedQuantity", "unitCost", "discount"].includes(field)) {
       const item = newItems[index];
-      const receivedQuantity = Number(item.receivedQuantity) || 0;
+      let receivedQuantity = Number(item.receivedQuantity) || 0;
+
+      // Cap received quantity to remaining qty (linked mode only)
+      const remainingQty = (item as any).remainingQty;
+      if (field === "receivedQuantity" && remainingQty !== undefined && receivedQuantity > remainingQty) {
+        receivedQuantity = remainingQty;
+        newItems[index].receivedQuantity = remainingQty;
+        toast.warning(`Cannot receive more than the remaining quantity (${remainingQty})`);
+      }
+
       const unitCost = Number(item.unitCost) || 0;
       const discount = Number(item.discount) || 0;
-      
+
       // Find the product to get its tax rate
       const product = products.find(p => p.id === item.productId);
       if (product) {
@@ -1091,9 +1089,13 @@ export const GRNDialog = ({ open, onOpenChange, grn, onSave }: GRNDialogProps): 
                       <TableHead className="font-medium text-gray-700">SKU</TableHead>
                       <TableHead className="font-medium text-gray-700">HSN</TableHead>
                       {creationMode === 'linked' && (
-                        <TableHead className="font-medium text-gray-700">Ordered</TableHead>
+                        <>
+                          <TableHead className="font-medium text-gray-700 text-center">Ordered</TableHead>
+                          <TableHead className="font-medium text-amber-700 text-center">Prev. Rcvd</TableHead>
+                          <TableHead className="font-medium text-green-700 text-center">Remaining</TableHead>
+                        </>
                       )}
-                      <TableHead className="font-medium text-gray-700">Received</TableHead>
+                      <TableHead className="font-medium text-gray-700">Receive Qty</TableHead>
                       <TableHead className="font-medium text-gray-700">Unit Cost</TableHead>
                       <TableHead className="font-medium text-gray-700">Discount</TableHead>
                       <TableHead className="font-medium text-gray-700">Tax</TableHead>
@@ -1134,31 +1136,36 @@ export const GRNDialog = ({ open, onOpenChange, grn, onSave }: GRNDialogProps): 
                           <TableCell className="font-mono text-sm">{item.skuCode || '-'}</TableCell>
                           <TableCell className="font-mono text-sm">{item.hsnCode || '-'}</TableCell>
                           {creationMode === 'linked' && (
-                            <TableCell className="text-center">
-                              <span className="text-sm font-medium">{item.orderedQuantity || 0}</span>
-                            </TableCell>
+                            <>
+                              <TableCell className="text-center text-sm font-medium">
+                                {(item as any).orderedQuantity ?? 0}
+                              </TableCell>
+                              <TableCell className="text-center text-sm text-amber-700 font-medium">
+                                {(item as any).alreadyReceived ?? 0}
+                              </TableCell>
+                              <TableCell className="text-center text-sm text-green-700 font-semibold">
+                                {(item as any).remainingQty ?? (item as any).orderedQuantity ?? 0}
+                              </TableCell>
+                            </>
                           )}
                           <TableCell>
                             <div className="flex items-center gap-1">
                               <Input
                                 type="number"
                                 min={0}
-                                max={creationMode === 'linked' ? item.orderedQuantity : undefined}
+                                max={creationMode === 'linked' ? ((item as any).remainingQty ?? (item as any).orderedQuantity) : undefined}
                                 value={item.receivedQuantity}
                                 onChange={(e) => {
                                   const v = parseInt(e.target.value, 10);
                                   let safe = isNaN(v) ? 0 : Math.max(0, v);
-                                  
-                                  // In linked mode, don't allow received quantity to exceed ordered quantity
-                                  if (creationMode === 'linked' && item.orderedQuantity) {
-                                    safe = Math.min(safe, item.orderedQuantity);
+                                  const cap = (item as any).remainingQty ?? (item as any).orderedQuantity;
+                                  if (creationMode === 'linked' && cap != null) {
+                                    safe = Math.min(safe, cap);
                                   }
-                                  
                                   handleItemChange(index, "receivedQuantity", safe);
                                 }}
                                 className="w-16"
-                                disabled={creationMode === 'linked' && false}
-                                title={creationMode === 'linked' ? `Cannot exceed ordered quantity (${item.orderedQuantity})` : ""}
+                                title={creationMode === 'linked' ? `Max receivable: ${(item as any).remainingQty ?? (item as any).orderedQuantity}` : ""}
                               />
                               {item.unitAbbreviation && (
                                 <span className="text-sm text-gray-500 font-medium">

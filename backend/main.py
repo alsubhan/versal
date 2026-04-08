@@ -3884,6 +3884,49 @@ def delete_system_setting(setting_id: str, payload=Depends(require_permission("s
     data = supabase.table("system_settings").delete().eq("id", setting_id).execute()
     return JSONResponse(content=data.data)
 
+# ============================================================
+# GST Helpers — Indian tax breakup
+# ============================================================
+
+def _determine_gst_type(company_state: str, billing_state: str = "", shipping_state: str = "") -> str:
+    """Return 'CGST_SGST' (intra-state) or 'IGST' (inter-state)."""
+    cs = (company_state or "").strip().lower()
+    party = (billing_state or "").strip().lower() or (shipping_state or "").strip().lower()
+    if not cs or not party:
+        return "IGST"  # safe default when states unknown
+    return "CGST_SGST" if cs == party else "IGST"
+
+def _compute_gst_breakup(tax_amount: float, gst_type: str) -> dict:
+    """Return dict with cgst_amount, sgst_amount, igst_amount."""
+    tax = float(tax_amount or 0)
+    if gst_type == "CGST_SGST":
+        half = round(tax / 2, 2)
+        return {"cgst_amount": half, "sgst_amount": round(tax - half, 2), "igst_amount": 0.0}
+    return {"cgst_amount": 0.0, "sgst_amount": 0.0, "igst_amount": tax}
+
+def _get_company_state() -> str:
+    """Fetch company_state from system_settings."""
+    try:
+        res = supabase.table("system_settings").select("setting_value").eq("setting_key", "company_state").maybe_single().execute()
+        raw = res.data.get("setting_value", "") if res.data else ""
+        # Values are stored as JSON strings like '"Karnataka"'
+        import json as _json
+        try:
+            return _json.loads(raw) if raw else ""
+        except Exception:
+            return raw.strip('"') if raw else ""
+    except Exception:
+        return ""
+
+def _gst_fields_from_row(row: dict) -> dict:
+    """Extract GST breakup fields from a DB row."""
+    return {
+        "gstType": row.get("gst_type", "CGST_SGST"),
+        "cgstAmount": float(row.get("cgst_amount") or 0),
+        "sgstAmount": float(row.get("sgst_amount") or 0),
+        "igstAmount": float(row.get("igst_amount") or 0),
+    }
+
 def to_camel_case_purchase_order(purchase_order):
     """Convert purchase order data from snake_case to camelCase"""
     return {
@@ -3900,6 +3943,10 @@ def to_camel_case_purchase_order(purchase_order):
         "totalAmount": purchase_order.get("total_amount"),
         "roundingAdjustment": purchase_order.get("rounding_adjustment", 0), # Added
         "notes": purchase_order.get("notes"),
+        "gstType": purchase_order.get("gst_type", "CGST_SGST"),
+        "cgstAmount": float(purchase_order.get("cgst_amount") or 0),
+        "sgstAmount": float(purchase_order.get("sgst_amount") or 0),
+        "igstAmount": float(purchase_order.get("igst_amount") or 0),
         "createdBy": purchase_order.get("created_by"),
         "createdAt": purchase_order.get("created_at"),
         "updatedAt": purchase_order.get("updated_at")
@@ -3990,29 +4037,136 @@ def get_purchase_orders(payload=Depends(require_permission("purchase_orders_view
 
 @app.get("/purchase-orders/available")
 def get_available_purchase_orders_for_grn(payload=Depends(require_permission("purchase_orders_view"))):
-    """Get purchase orders that are available for GRN creation (no existing GRNs)"""
+    """Get purchase orders available for GRN creation.
+    Includes:
+    - Approved POs with no GRNs at all
+    - Approved/received POs that have only partial GRNs (not all items fully received)
+    Excludes:
+    - POs with status 'received' (fully received)
+    - Cancelled POs
+    """
     try:
         client = get_supabase_client()
         data = client.table("purchase_orders").select("*, suppliers(*)").execute()
     except (httpx.RemoteProtocolError, httpx.ConnectError):
         client = get_supabase_client()
         data = client.table("purchase_orders").select("*, suppliers(*)").execute()
-    
-    # Filter out orders that already have GRNs (draft or completed) and exclude non-approved
+
     available_orders = []
     for order in data.data:
-        # Only include approved orders (exclude sent/cancelled)
-        if order.get("status") not in ["approved"]:
+        po_status = order.get("status")
+        # Only POs that could still need goods received
+        if po_status not in ["approved", "partial"]:
             continue
-        # Check if there are any GRNs for this purchase order
-        grn_check = client.table("good_receive_notes").select("id, status").eq("purchase_order_id", order["id"]).execute()
-        # Exclude orders that already have active GRNs
-        has_active_grns = any(grn.get("status") in ["draft", "completed", "partial"] for grn in (grn_check.data or []))
-        if not has_active_grns:
+
+        po_id = order["id"]
+        # Get PO items (ordered quantities)
+        po_items_res = client.table("purchase_order_items").select("id, quantity").eq("purchase_order_id", po_id).execute()
+        po_items = po_items_res.data or []
+        if not po_items:
+            continue  # No items means nothing to receive
+
+        # Get all completed/received GRNs for this PO
+        grn_res = client.table("good_receive_notes").select("id, status").eq("purchase_order_id", po_id).execute()
+        completed_grn_ids = [
+            g["id"] for g in (grn_res.data or [])
+            if g.get("status") in ["received", "completed"]
+        ]
+
+        # Sum accepted quantities per PO item across completed GRNs
+        received_by_item = {}
+        if completed_grn_ids:
+            grn_items_res = client.table("good_receive_note_items") \
+                .select("purchase_order_item_id, accepted_quantity, received_quantity") \
+                .in_("grn_id", completed_grn_ids).execute()
+            for row in (grn_items_res.data or []):
+                poi_id = row.get("purchase_order_item_id")
+                if poi_id:
+                    # Use accepted_quantity if set (post-QC), else received_quantity
+                    qty = int(row.get("accepted_quantity") or row.get("received_quantity") or 0)
+                    received_by_item[poi_id] = received_by_item.get(poi_id, 0) + qty
+
+        # Check if any item still has remaining quantity to receive
+        has_remaining = any(
+            int(poi.get("quantity") or 0) > received_by_item.get(poi["id"], 0)
+            for poi in po_items
+        )
+
+        if has_remaining:
             available_orders.append(order)
-    
+
     transformed = [to_camel_case_purchase_order(po) for po in available_orders]
     return JSONResponse(content=transformed)
+
+
+@app.get("/purchase-orders/{purchase_order_id}/remaining-items")
+def get_purchase_order_remaining_items(purchase_order_id: str, payload=Depends(require_permission("purchase_orders_view"))):
+    """Return PO items enriched with already-received and remaining quantities.
+
+    Each item includes:
+      - orderedQuantity  : quantity on the original PO line
+      - alreadyReceived  : sum of accepted/received qty across all completed GRNs
+      - remainingQty     : orderedQuantity - alreadyReceived  (>= 0)
+    """
+    try:
+        fresh = get_supabase_client()
+
+        # Fetch PO items with product details
+        items_res = fresh.table("purchase_order_items") \
+            .select("*, products(*)") \
+            .eq("purchase_order_id", purchase_order_id).execute()
+        po_items = items_res.data or []
+
+        # Get completed GRNs for this PO
+        grn_res = fresh.table("good_receive_notes") \
+            .select("id, status") \
+            .eq("purchase_order_id", purchase_order_id).execute()
+        completed_grn_ids = [
+            g["id"] for g in (grn_res.data or [])
+            if g.get("status") in ["received", "completed"]
+        ]
+
+        # Sum received qty per PO item
+        received_by_item = {}
+        if completed_grn_ids:
+            grn_items_res = fresh.table("good_receive_note_items") \
+                .select("purchase_order_item_id, accepted_quantity, received_quantity") \
+                .in_("grn_id", completed_grn_ids).execute()
+            for row in (grn_items_res.data or []):
+                poi_id = row.get("purchase_order_item_id")
+                if poi_id:
+                    qty = int(row.get("accepted_quantity") or row.get("received_quantity") or 0)
+                    received_by_item[poi_id] = received_by_item.get(poi_id, 0) + qty
+
+        # Build enriched response
+        result = []
+        for item in po_items:
+            ordered = int(item.get("quantity") or 0)
+            already = received_by_item.get(item["id"], 0)
+            remaining = max(0, ordered - already)
+
+            product = item.get("products") or {}
+            result.append({
+                "id": item["id"],
+                "productId": item.get("product_id"),
+                "productName": item.get("product_name") or product.get("name", ""),
+                "skuCode": item.get("sku_code") or product.get("sku_code", ""),
+                "hsnCode": item.get("hsn_code") or product.get("hsn_code", ""),
+                "orderedQuantity": ordered,
+                "alreadyReceived": already,
+                "remainingQty": remaining,
+                "costPrice": float(item.get("unit_cost") or item.get("cost_price") or 0),
+                "discount": float(item.get("discount") or 0),
+                "tax": float(item.get("tax") or 0),
+                "purchaseTaxType": item.get("purchase_tax_type") or product.get("purchase_tax_type", "exclusive"),
+                "unitAbbreviation": item.get("unit_abbreviation") or "",
+            })
+
+        return JSONResponse(content=result)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error fetching remaining items: {str(e)}")
+
+
 
 @app.get("/purchase-orders/{purchase_order_id}")
 def get_purchase_order(purchase_order_id: str, payload=Depends(require_permission("purchase_orders_view"))):
@@ -4067,6 +4221,10 @@ def create_purchase_order(purchase_order: dict = Body(...), payload=Depends(requ
         "total_amount": purchase_order["totalAmount"],
         "rounding_adjustment": purchase_order.get("roundingAdjustment", 0),
         "notes": purchase_order.get("notes"),
+        "gst_type": purchase_order.get("gstType", "IGST"),
+        "cgst_amount": purchase_order.get("cgstAmount", 0),
+        "sgst_amount": purchase_order.get("sgstAmount", 0),
+        "igst_amount": purchase_order.get("igstAmount", 0),
         "created_by": payload["sub"]
     }
     
@@ -4141,7 +4299,11 @@ def update_purchase_order(purchase_order_id: str, purchase_order: dict = Body(..
         "discount_amount": purchase_order["discountAmount"],
         "total_amount": purchase_order["totalAmount"],
         "rounding_adjustment": purchase_order.get("roundingAdjustment", 0),
-        "notes": purchase_order.get("notes")
+        "notes": purchase_order.get("notes"),
+        "gst_type": purchase_order.get("gstType", "IGST"),
+        "cgst_amount": purchase_order.get("cgstAmount", 0),
+        "sgst_amount": purchase_order.get("sgstAmount", 0),
+        "igst_amount": purchase_order.get("igstAmount", 0),
     }
     
     # Update the purchase order
@@ -4216,6 +4378,10 @@ def to_camel_case_sales_order(sales_order):
         "totalAmount": sales_order.get("total_amount"),
         "roundingAdjustment": sales_order.get("rounding_adjustment", 0), # Added
         "notes": sales_order.get("notes"),
+        "gstType": sales_order.get("gst_type", "CGST_SGST"),
+        "cgstAmount": float(sales_order.get("cgst_amount") or 0),
+        "sgstAmount": float(sales_order.get("sgst_amount") or 0),
+        "igstAmount": float(sales_order.get("igst_amount") or 0),
         "createdBy": sales_order.get("created_by"),
         "createdAt": sales_order.get("created_at"),
         "updatedAt": sales_order.get("updated_at")
@@ -4242,6 +4408,344 @@ def to_camel_case_sales_order_item(item):
     }
 
 # Sales Orders API endpoints
+
+# ============================================================
+# Sale Quotations API
+# ============================================================
+
+TERMINAL_QUOTATION_STATUSES = ["accepted", "rejected", "expired", "cancelled"]
+
+def to_camel_case_sale_quotation(q):
+    """Convert sale_quotation row from snake_case to camelCase."""
+    if not q:
+        return {}
+    return {
+        "id": q.get("id"),
+        "quotationNumber": q.get("quotation_number"),
+        "customerId": q.get("customer_id"),
+        "customer": q.get("customers", {}),
+        "quotationDate": q.get("quotation_date"),
+        "validUntil": q.get("valid_until"),
+        "status": q.get("status"),
+        "subtotal": float(q.get("subtotal") or 0),
+        "taxAmount": float(q.get("tax_amount") or 0),
+        "discountAmount": float(q.get("discount_amount") or 0),
+        "totalAmount": float(q.get("total_amount") or 0),
+        "roundingAdjustment": float(q.get("rounding_adjustment") or 0),
+        "gstType": q.get("gst_type", "CGST_SGST"),
+        "cgstAmount": float(q.get("cgst_amount") or 0),
+        "sgstAmount": float(q.get("sgst_amount") or 0),
+        "igstAmount": float(q.get("igst_amount") or 0),
+        "notes": q.get("notes"),
+        "termsConditions": q.get("terms_conditions"),
+        "salesOrderId": q.get("sales_order_id"),
+        "createdBy": q.get("created_by"),
+        "createdAt": q.get("created_at"),
+        "updatedAt": q.get("updated_at"),
+    }
+
+def to_camel_case_sale_quotation_item(item):
+    """Convert sale_quotation_item row from snake_case to camelCase."""
+    if not item:
+        return {}
+    return {
+        "id": item.get("id"),
+        "quotationId": item.get("quotation_id"),
+        "productId": item.get("product_id"),
+        "productName": item.get("products", {}).get("name") if item.get("products") else item.get("product_name"),
+        "skuCode": item.get("products", {}).get("sku_code") if item.get("products") else item.get("sku_code"),
+        "hsnCode": item.get("products", {}).get("hsn_code") if item.get("products") else item.get("hsn_code"),
+        "quantity": float(item.get("quantity") or 0),
+        "unitPrice": float(item.get("unit_price") or 0),
+        "discount": float(item.get("discount") or 0),
+        "tax": float(item.get("tax") or 0),
+        "saleTaxType": item.get("sale_tax_type", "exclusive"),
+        "unitAbbreviation": item.get("unit_abbreviation", ""),
+        "total": float(item.get("total") or 0),
+        "createdAt": item.get("created_at"),
+    }
+
+def _auto_expire_quotation(q: dict) -> dict:
+    """If a 'sent' quotation's valid_until is in the past, flag it as expired in-memory."""
+    from datetime import date as _date
+    if q.get("status") == "sent" and q.get("valid_until"):
+        try:
+            valid_until = _date.fromisoformat(str(q["valid_until"]))
+            if valid_until < _date.today():
+                q["status"] = "expired"
+        except Exception:
+            pass
+    return q
+
+def _insert_quotation_items(client, quotation_id: str, items: list, created_by: str):
+    """Helper to bulk-insert quotation items."""
+    if not items:
+        return
+    items_data = []
+    for item in items:
+        items_data.append({
+            "quotation_id": quotation_id,
+            "product_id": item.get("productId"),
+            "product_name": item.get("productName", ""),
+            "sku_code": item.get("skuCode", ""),
+            "hsn_code": item.get("hsnCode", ""),
+            "quantity": item.get("quantity", 0),
+            "unit_price": item.get("unitPrice", 0),
+            "discount": item.get("discount", 0),
+            "tax": item.get("tax", 0),
+            "sale_tax_type": item.get("saleTaxType", "exclusive"),
+            "unit_abbreviation": item.get("unitAbbreviation", ""),
+            "total": item.get("total", 0),
+        })
+    client.table("sale_quotations").select("id").eq("id", quotation_id).execute()  # confirm exists
+    client.table("sale_quotation_items").insert(items_data).execute()
+
+@app.get("/sale-quotations")
+def get_sale_quotations(payload=Depends(require_permission("sale_quotations_view"))):
+    """List all sale quotations."""
+    client = get_supabase_client()
+    data = client.table("sale_quotations").select("*, customers(*)").order("created_at", desc=True).execute()
+    result = [to_camel_case_sale_quotation(_auto_expire_quotation(q)) for q in (data.data or [])]
+    return JSONResponse(content=result)
+
+@app.get("/sale-quotations/{quotation_id}")
+def get_sale_quotation(quotation_id: str, payload=Depends(require_permission("sale_quotations_view"))):
+    """Get a single sale quotation with its items."""
+    client = get_supabase_client()
+    q_data = client.table("sale_quotations").select("*, customers(*)").eq("id", quotation_id).execute()
+    if not q_data.data:
+        raise HTTPException(status_code=404, detail="Quotation not found")
+    q = _auto_expire_quotation(q_data.data[0])
+    quotation = to_camel_case_sale_quotation(q)
+    items_data = client.table("sale_quotation_items").select("*, products(*)").eq("quotation_id", quotation_id).execute()
+    quotation["items"] = [to_camel_case_sale_quotation_item(i) for i in (items_data.data or [])]
+    return JSONResponse(content=quotation)
+
+@app.get("/sale-quotations/{quotation_id}/items")
+def get_sale_quotation_items(quotation_id: str, payload=Depends(require_permission("sale_quotations_view"))):
+    client = get_supabase_client()
+    data = client.table("sale_quotation_items").select("*, products(*)").eq("quotation_id", quotation_id).execute()
+    return JSONResponse(content=[to_camel_case_sale_quotation_item(i) for i in (data.data or [])])
+
+@app.post("/sale-quotations")
+def create_sale_quotation(quotation: dict = Body(...), payload=Depends(require_permission("sale_quotations_create"))):
+    """Create a new sale quotation."""
+    valid_statuses = ["draft", "sent", "rejected", "cancelled"]
+    status = quotation.get("status", "draft")
+    if status not in valid_statuses:
+        raise HTTPException(status_code=400, detail=f"Invalid status '{status}'. Valid: {valid_statuses}")
+
+    client = get_supabase_client()
+    q_data = {
+        "quotation_number": quotation["quotationNumber"],
+        "customer_id": quotation["customerId"],
+        "quotation_date": quotation.get("quotationDate", str(__import__("datetime").date.today())),
+        "valid_until": quotation.get("validUntil"),
+        "status": status,
+        "subtotal": quotation.get("subtotal", 0),
+        "tax_amount": quotation.get("taxAmount", 0),
+        "discount_amount": quotation.get("discountAmount", 0),
+        "total_amount": quotation.get("totalAmount", 0),
+        "rounding_adjustment": quotation.get("roundingAdjustment", 0),
+        "notes": quotation.get("notes"),
+        "terms_conditions": quotation.get("termsConditions"),
+        "gst_type": quotation.get("gstType", "IGST"),
+        "cgst_amount": quotation.get("cgstAmount", 0),
+        "sgst_amount": quotation.get("sgstAmount", 0),
+        "igst_amount": quotation.get("igstAmount", 0),
+        "created_by": payload["sub"],
+    }
+
+    result = client.table("sale_quotations").insert(q_data).execute()
+    created = result.data[0] if result.data else None
+    if not created:
+        raise HTTPException(status_code=500, detail="Failed to create quotation")
+
+    # Insert items
+    items = quotation.get("items", [])
+    if items:
+        items_data = []
+        for item in items:
+            items_data.append({
+                "quotation_id": created["id"],
+                "product_id": item.get("productId"),
+                "product_name": item.get("productName", ""),
+                "sku_code": item.get("skuCode", ""),
+                "hsn_code": item.get("hsnCode", ""),
+                "quantity": item.get("quantity", 0),
+                "unit_price": item.get("unitPrice", 0),
+                "discount": item.get("discount", 0),
+                "tax": item.get("tax", 0),
+                "sale_tax_type": item.get("saleTaxType", "exclusive"),
+                "unit_abbreviation": item.get("unitAbbreviation", ""),
+                "total": item.get("total", 0),
+            })
+        client.table("sale_quotation_items").insert(items_data).execute()
+
+    return JSONResponse(content=to_camel_case_sale_quotation(created))
+
+@app.put("/sale-quotations/{quotation_id}")
+def update_sale_quotation(quotation_id: str, quotation: dict = Body(...), payload=Depends(require_permission("sale_quotations_edit"))):
+    """Update a sale quotation. Blocked for accepted/expired/rejected/cancelled."""
+    client = get_supabase_client()
+    current = client.table("sale_quotations").select("status").eq("id", quotation_id).execute()
+    if not current.data:
+        raise HTTPException(status_code=404, detail="Quotation not found")
+
+    current_status = current.data[0]["status"]
+    if current_status in TERMINAL_QUOTATION_STATUSES:
+        raise HTTPException(status_code=400, detail=f"Cannot edit quotation with status '{current_status}'")
+
+    valid_statuses = ["draft", "sent", "rejected", "cancelled"]
+    new_status = quotation.get("status", current_status)
+    if new_status not in valid_statuses:
+        raise HTTPException(status_code=400, detail=f"Invalid status '{new_status}'. Valid: {valid_statuses}")
+
+    q_data = {
+        "quotation_number": quotation["quotationNumber"],
+        "customer_id": quotation["customerId"],
+        "quotation_date": quotation.get("quotationDate"),
+        "valid_until": quotation.get("validUntil"),
+        "status": new_status,
+        "subtotal": quotation.get("subtotal", 0),
+        "tax_amount": quotation.get("taxAmount", 0),
+        "discount_amount": quotation.get("discountAmount", 0),
+        "total_amount": quotation.get("totalAmount", 0),
+        "rounding_adjustment": quotation.get("roundingAdjustment", 0),
+        "notes": quotation.get("notes"),
+        "terms_conditions": quotation.get("termsConditions"),
+        "gst_type": quotation.get("gstType", "IGST"),
+        "cgst_amount": quotation.get("cgstAmount", 0),
+        "sgst_amount": quotation.get("sgstAmount", 0),
+        "igst_amount": quotation.get("igstAmount", 0),
+    }
+
+    result = client.table("sale_quotations").update(q_data).eq("id", quotation_id).execute()
+    updated = result.data[0] if result.data else None
+    if not updated:
+        raise HTTPException(status_code=404, detail="Quotation not found")
+
+    # Replace items
+    items = quotation.get("items")
+    if items is not None:
+        client.table("sale_quotation_items").delete().eq("quotation_id", quotation_id).execute()
+        if items:
+            items_data = []
+            for item in items:
+                items_data.append({
+                    "quotation_id": quotation_id,
+                    "product_id": item.get("productId"),
+                    "product_name": item.get("productName", ""),
+                    "sku_code": item.get("skuCode", ""),
+                    "hsn_code": item.get("hsnCode", ""),
+                    "quantity": item.get("quantity", 0),
+                    "unit_price": item.get("unitPrice", 0),
+                    "discount": item.get("discount", 0),
+                    "tax": item.get("tax", 0),
+                    "sale_tax_type": item.get("saleTaxType", "exclusive"),
+                    "unit_abbreviation": item.get("unitAbbreviation", ""),
+                    "total": item.get("total", 0),
+                })
+            client.table("sale_quotation_items").insert(items_data).execute()
+
+    return JSONResponse(content=to_camel_case_sale_quotation(updated))
+
+@app.delete("/sale-quotations/{quotation_id}")
+def delete_sale_quotation(quotation_id: str, payload=Depends(require_permission("sale_quotations_delete"))):
+    """Delete a quotation. Blocked for terminal statuses."""
+    client = get_supabase_client()
+    current = client.table("sale_quotations").select("status").eq("id", quotation_id).execute()
+    if not current.data:
+        raise HTTPException(status_code=404, detail="Quotation not found")
+
+    current_status = current.data[0]["status"]
+    if current_status in TERMINAL_QUOTATION_STATUSES:
+        raise HTTPException(status_code=400, detail=f"Cannot delete quotation with status '{current_status}'")
+
+    client.table("sale_quotation_items").delete().eq("quotation_id", quotation_id).execute()
+    result = client.table("sale_quotations").delete().eq("id", quotation_id).execute()
+    return JSONResponse(content=result.data)
+
+@app.post("/sale-quotations/{quotation_id}/convert-to-order")
+def convert_quotation_to_order(quotation_id: str, payload=Depends(require_permission("sale_quotations_edit"))):
+    """
+    Convert an accepted/sent quotation into a Sale Order.
+    - Marks quotation status = 'accepted' (read-only)
+    - Stores the resulting sales_order_id on the quotation
+    - Returns the created sales order
+    """
+    client = get_supabase_client()
+
+    # Fetch quotation + items
+    q_data = client.table("sale_quotations").select("*").eq("id", quotation_id).execute()
+    if not q_data.data:
+        raise HTTPException(status_code=404, detail="Quotation not found")
+    q = q_data.data[0]
+
+    if q.get("status") not in ["sent", "accepted"]:
+        raise HTTPException(status_code=400, detail=f"Cannot convert quotation with status '{q.get('status')}'. Only 'sent' quotations can be converted.")
+
+    if q.get("sales_order_id"):
+        raise HTTPException(status_code=400, detail="This quotation has already been converted to a Sale Order.")
+
+    items_data = client.table("sale_quotation_items").select("*").eq("quotation_id", quotation_id).execute()
+    items = items_data.data or []
+
+    # Build SO number based on QTN number
+    import datetime as _dt
+    so_number = q["quotation_number"].replace("QTN-", "SO-")
+
+    so_row = {
+        "order_number": so_number,
+        "customer_id": q["customer_id"],
+        "order_date": str(_dt.date.today()),
+        "status": "approved",
+        "subtotal": q["subtotal"],
+        "tax_amount": q["tax_amount"],
+        "discount_amount": q["discount_amount"],
+        "total_amount": q["total_amount"],
+        "rounding_adjustment": q.get("rounding_adjustment", 0),
+        "notes": f"Generated from Quotation {q['quotation_number']}",
+        "created_by": payload["sub"],
+    }
+
+    so_result = client.table("sales_orders").insert(so_row).execute()
+    if not so_result.data:
+        raise HTTPException(status_code=500, detail="Failed to create Sales Order")
+    created_so = so_result.data[0]
+
+    # Copy items to SO
+    if items:
+        so_items = []
+        for item in items:
+            so_items.append({
+                "sales_order_id": created_so["id"],
+                "product_id": item.get("product_id"),
+                "product_name": item.get("product_name", ""),
+                "sku_code": item.get("sku_code", ""),
+                "hsn_code": item.get("hsn_code", ""),
+                "quantity": item.get("quantity", 0),
+                "unit_price": item.get("unit_price", 0),
+                "discount": item.get("discount", 0),
+                "tax": item.get("tax", 0),
+                "sale_tax_type": item.get("sale_tax_type", "exclusive"),
+                "unit_abbreviation": item.get("unit_abbreviation", ""),
+                "created_by": payload["sub"],
+            })
+        client.table("sales_order_items").insert(so_items).execute()
+
+    # Lock quotation as accepted
+    client.table("sale_quotations").update({
+        "status": "accepted",
+        "sales_order_id": created_so["id"],
+    }).eq("id", quotation_id).execute()
+
+    return JSONResponse(content=to_camel_case_sales_order(created_so))
+
+# ============================================================
+# Sales Orders API endpoints
+# ============================================================
+
 @app.get("/sales-orders")
 def get_sales_orders(payload=Depends(require_permission("sale_orders_view"))):
     # Join with customers to get customer names
@@ -4317,6 +4821,10 @@ def create_sales_order(sales_order: dict = Body(...), payload=Depends(require_pe
         "total_amount": sales_order["totalAmount"],
         "rounding_adjustment": sales_order.get("roundingAdjustment", 0), # Added
         "notes": sales_order.get("notes"),
+        "gst_type": sales_order.get("gstType", "IGST"),
+        "cgst_amount": sales_order.get("cgstAmount", 0),
+        "sgst_amount": sales_order.get("sgstAmount", 0),
+        "igst_amount": sales_order.get("igstAmount", 0),
         "created_by": payload["sub"]
     }
     
@@ -4380,7 +4888,11 @@ def update_sales_order(sales_order_id: str, sales_order: dict = Body(...), paylo
         "discount_amount": sales_order["discountAmount"],
         "total_amount": sales_order["totalAmount"],
         "rounding_adjustment": sales_order.get("roundingAdjustment", 0), # Added
-        "notes": sales_order.get("notes")
+        "notes": sales_order.get("notes"),
+        "gst_type": sales_order.get("gstType", "IGST"),
+        "cgst_amount": sales_order.get("cgstAmount", 0),
+        "sgst_amount": sales_order.get("sgstAmount", 0),
+        "igst_amount": sales_order.get("igstAmount", 0),
     }
     
     # Update the sales order
@@ -4476,6 +4988,10 @@ def to_camel_case_sale_invoice(sale_invoice):
         "amountPaid": sale_invoice.get("amount_paid", 0),  # Added for payment tracking
         "amountDue": sale_invoice.get("amount_due", 0),    # Added for payment tracking
         "roundingAdjustment": sale_invoice.get("rounding_adjustment", 0), # Added
+        "gstType": sale_invoice.get("gst_type", "CGST_SGST"),
+        "cgstAmount": float(sale_invoice.get("cgst_amount") or 0),
+        "sgstAmount": float(sale_invoice.get("sgst_amount") or 0),
+        "igstAmount": float(sale_invoice.get("igst_amount") or 0),
         "isDirect": sale_invoice.get("is_direct", False), # Added
         "notes": sale_invoice.get("notes"),
         "createdBy": sale_invoice.get("created_by"),
@@ -4655,6 +5171,10 @@ def create_sale_invoice(sale_invoice: dict = Body(...), payload=Depends(require_
         "discount_amount": sale_invoice["discountAmount"],
         "total_amount": sale_invoice["totalAmount"],
         "rounding_adjustment": sale_invoice.get("roundingAdjustment", 0),
+        "gst_type": sale_invoice.get("gstType", "IGST"),
+        "cgst_amount": sale_invoice.get("cgstAmount", 0),
+        "sgst_amount": sale_invoice.get("sgstAmount", 0),
+        "igst_amount": sale_invoice.get("igstAmount", 0),
         "is_direct": is_direct,  # Set is_direct flag
         "notes": sale_invoice.get("notes"),
         "created_by": payload["sub"] if payload["sub"] else None,
@@ -4785,6 +5305,10 @@ def update_sale_invoice(sale_invoice_id: str, sale_invoice: dict = Body(...), pa
         "discount_amount": sale_invoice["discountAmount"],
         "total_amount": sale_invoice["totalAmount"],
         "rounding_adjustment": sale_invoice.get("roundingAdjustment", 0), # Added
+        "gst_type": sale_invoice.get("gstType", "IGST"),
+        "cgst_amount": sale_invoice.get("cgstAmount", 0),
+        "sgst_amount": sale_invoice.get("sgstAmount", 0),
+        "igst_amount": sale_invoice.get("igstAmount", 0),
         "is_direct": sale_invoice.get("isDirect", False), # Added
         "notes": sale_invoice.get("notes")
     }
@@ -5294,6 +5818,10 @@ def create_good_receive_note(good_receive_note: dict = Body(...), payload=Depend
             "discount_amount": round(_discount_amount, 2),
             "total_amount": round((_subtotal - _discount_amount + _tax_amount), 2),
             "rounding_adjustment": good_receive_note.get("roundingAdjustment", 0),
+            "gst_type": good_receive_note.get("gstType", "IGST"),
+            "cgst_amount": good_receive_note.get("cgstAmount", 0),
+            "sgst_amount": good_receive_note.get("sgstAmount", 0),
+            "igst_amount": good_receive_note.get("igstAmount", 0),
             "is_direct": is_direct,
             "vendor_invoice_number": good_receive_note.get("vendorInvoiceNumber")
         }
@@ -7481,36 +8009,6 @@ def get_available_sales_orders_for_invoice(payload=Depends(require_permission("s
     
     # Transform to camelCase
     transformed_data = [to_camel_case_sales_order(order) for order in available_orders]
-    return JSONResponse(content=transformed_data)
-
-@app.get("/purchase-orders/available")
-def get_available_purchase_orders_for_grn(payload=Depends(require_permission("purchase_orders_view"))):
-    """Get purchase orders that are available for GRN creation (no existing GRNs)"""
-    try:
-        client = get_supabase_client()
-        data = client.table("purchase_orders").select("*, suppliers(*)").execute()
-    except (httpx.RemoteProtocolError, httpx.ConnectError):
-        client = get_supabase_client()
-        data = client.table("purchase_orders").select("*, suppliers(*)").execute()
-    
-    # Filter out orders that already have GRNs (draft or completed)
-    available_orders = []
-    for order in data.data:
-        # Only include approved orders (not sent, not cancelled)
-        if order["status"] not in ["approved"]:
-            continue
-            
-        # Check if there are any GRNs for this purchase order
-        grn_check = client.table("good_receive_notes").select("id, status").eq("purchase_order_id", order["id"]).execute()
-        
-        # Only include orders that have no GRNs or only cancelled GRNs
-        has_active_grns = any(grn["status"] in ["draft", "completed", "partial"] for grn in grn_check.data)
-        
-        if not has_active_grns:
-            available_orders.append(order)
-    
-    # Transform to camelCase
-    transformed_data = [to_camel_case_purchase_order(order) for order in available_orders]
     return JSONResponse(content=transformed_data)
 
 

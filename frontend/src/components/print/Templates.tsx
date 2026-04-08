@@ -5,6 +5,8 @@ import type { PurchaseOrder } from '@/types/purchase-order';
 import type { GoodsReceiveNote } from '@/types/grn';
 import type { CreditNote } from '@/types/credit-note';
 import { cn } from '@/lib/utils';
+import { computeGstBreakup } from '@/lib/gst';
+import type { GstType } from '@/lib/gst';
 
 export type DocumentType = 'saleInvoice' | 'salesOrder' | 'purchaseOrder' | 'grn' | 'creditNote' | 'product';
 
@@ -59,7 +61,9 @@ export function Header({ settings, title, decorated = false }: { settings: Recor
               {companyEmail && <span>E-mail: {companyEmail}</span>}
             </div>
           )}
-          {/* Accents removed from header as per spec */}
+          {settings?.company_gstin && (
+            <div className="text-xs font-semibold">GSTIN: {settings.company_gstin}</div>
+          )}
         </div>
       </div>
       <div className="text-right">
@@ -294,11 +298,21 @@ export function StandardTemplate({
     const row = (label: string, value: number | undefined, bold?: boolean) => (
       <div className={`flex justify-between text-sm ${bold ? 'font-semibold' : ''}`}>
         <div>{label}</div>
-        <div>
-          <Money value={value} currency={currency} />
-        </div>
+        <div><Money value={value} currency={currency} /></div>
       </div>
     );
+
+    const gstRows = (gstType: GstType | undefined, taxAmount: number | undefined, cgstAmount?: number, sgstAmount?: number, igstAmount?: number) => {
+      const resolvedType: GstType = gstType || 'IGST';
+      const { cgstAmount: cg, sgstAmount: sg, igstAmount: ig } = computeGstBreakup(taxAmount ?? 0, resolvedType);
+      const cgst = cgstAmount ?? cg;
+      const sgst = sgstAmount ?? sg;
+      const igst = igstAmount ?? ig;
+      if (resolvedType === 'CGST_SGST') {
+        return (<>{row('CGST', cgst)}{row('SGST', sgst)}</>);
+      }
+      return row('IGST', igst);
+    };
 
     switch (documentType) {
       case 'saleInvoice': {
@@ -307,7 +321,7 @@ export function StandardTemplate({
           <div className="space-y-1 w-72 ml-auto">
             {row('Subtotal', inv.subtotal)}
             {row('Discount', inv.discountAmount)}
-            {row('Tax', inv.taxAmount)}
+            {gstRows(inv.gstType as GstType, inv.taxAmount, inv.cgstAmount, inv.sgstAmount, inv.igstAmount)}
             {row('Rounding', inv.roundingAdjustment)}
             {row('Total', inv.totalAmount, true)}
             {row('Amount Due', inv.amountDue, true)}
@@ -320,7 +334,7 @@ export function StandardTemplate({
           <div className="space-y-1 w-72 ml-auto">
             {row('Subtotal', order.subtotal)}
             {row('Discount', order.discountAmount)}
-            {row('Tax', order.taxAmount)}
+            {gstRows(order.gstType as GstType, order.taxAmount, order.cgstAmount, order.sgstAmount, order.igstAmount)}
             {row('Rounding', order.roundingAdjustment)}
             {row('Total', order.totalAmount, true)}
           </div>
@@ -332,7 +346,7 @@ export function StandardTemplate({
           <div className="space-y-1 w-72 ml-auto">
             {row('Subtotal', po.subtotal)}
             {row('Discount', po.discountAmount)}
-            {row('Tax', po.taxAmount)}
+            {gstRows(po.gstType as GstType, po.taxAmount, po.cgstAmount, po.sgstAmount, po.igstAmount)}
             {row('Rounding', po.roundingAdjustment)}
             {row('Total', po.totalAmount, true)}
           </div>
@@ -344,7 +358,7 @@ export function StandardTemplate({
           <div className="space-y-1 w-72 ml-auto">
             {row('Subtotal', grn.subtotal)}
             {row('Discount', grn.discountAmount)}
-            {row('Tax', grn.taxAmount)}
+            {gstRows(grn.gstType as GstType, grn.taxAmount, grn.cgstAmount, grn.sgstAmount, grn.igstAmount)}
             {row('Rounding', grn.roundingAdjustment)}
             {row('Total', grn.totalAmount, true)}
           </div>
@@ -470,7 +484,14 @@ export function SaleInvoiceStandardTemplate({ data, settings }: { data: Partial<
         <div className="w-72 space-y-2 text-sm">
           <div className="flex justify-between"><span>Subtotal:</span><span>{fmt(inv.subtotal)}</span></div>
           <div className="flex justify-between"><span>Discount:</span><span>{fmt(inv.discountAmount)}</span></div>
-          <div className="flex justify-between"><span>Tax:</span><span>{fmt(inv.taxAmount)}</span></div>
+          {(inv.gstType === 'CGST_SGST') ? (
+            <>
+              <div className="flex justify-between"><span>CGST:</span><span>{fmt(inv.cgstAmount)}</span></div>
+              <div className="flex justify-between"><span>SGST:</span><span>{fmt(inv.sgstAmount)}</span></div>
+            </>
+          ) : (
+            <div className="flex justify-between"><span>IGST:</span><span>{fmt(inv.igstAmount ?? inv.taxAmount)}</span></div>
+          )}
           <div className="flex justify-between font-semibold"><span>Total:</span><span>{fmt(inv.totalAmount)}</span></div>
           <div className="flex justify-between font-semibold"><span>Amount Due:</span><span>{fmt(inv.amountDue)}</span></div>
         </div>
@@ -543,12 +564,15 @@ export function CustomTemplate({
   const getTotal = (it: any) => it.total ?? (getQty(it) * getPrice(it));
 
   const SubtotalTotal = () => {
-    const subtotal = items.reduce((s: number, it: any) => s + (getQty(it) * getPrice(it)), 0);
     const taxAmount = Number(data?.taxAmount || 0);
     const discountAmount = Number(data?.discountAmount || 0);
-    const total = Number(data?.totalAmount ?? subtotal - discountAmount + taxAmount);
-    const sgst = settings?.sgst_rate ? subtotal * Number(settings.sgst_rate) : undefined;
-    const cgst = settings?.cgst_rate ? subtotal * Number(settings.cgst_rate) : undefined;
+    const total = Number(data?.totalAmount ?? 0);
+    const gstType: GstType = data?.gstType || 'IGST';
+    const { cgstAmount, sgstAmount, igstAmount } = computeGstBreakup(taxAmount, gstType);
+    const cgst = data?.cgstAmount ?? cgstAmount;
+    const sgst = data?.sgstAmount ?? sgstAmount;
+    const igst = data?.igstAmount ?? igstAmount;
+    const subtotal = items.reduce((s: number, it: any) => s + (getQty(it) * getPrice(it)), 0);
     const rowSum = (label: string, val?: number) => (
       <div className="grid grid-cols-2 text-[11px]">
         <div className="text-right pr-2 font-semibold">{label}</div>
@@ -560,10 +584,15 @@ export function CustomTemplate({
         <div className="bg-[#7FEFF3] p-1">
           {rowSum('Subtotal', subtotal)}
         </div>
-        {sgst !== undefined && <div className="p-1">{rowSum('SGST', sgst)}</div>}
-        {cgst !== undefined && <div className="p-1">{rowSum('CGST', cgst)}</div>}
-        <div className="p-1">{rowSum('Tax', taxAmount)}</div>
         <div className="p-1">{rowSum('Discount', discountAmount)}</div>
+        {gstType === 'CGST_SGST' ? (
+          <>
+            <div className="p-1">{rowSum('CGST', cgst)}</div>
+            <div className="p-1">{rowSum('SGST', sgst)}</div>
+          </>
+        ) : (
+          <div className="p-1">{rowSum('IGST', igst)}</div>
+        )}
         <div className="bg-[#7FEFF3] p-1 font-bold">
           {rowSum('Total', total)}
         </div>

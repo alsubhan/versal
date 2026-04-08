@@ -25,6 +25,8 @@ import { useCurrencyStore } from "@/stores/currencyStore";
 import { getSaleInvoice, getProducts, getTaxes, getSalesOrders, getAvailableSalesOrdersForInvoice, getSalesOrder, getCustomers, listSerials, getFrequentItems } from "@/lib/api";
 import { ProductSearchDialog } from "@/components/shared/ProductSearchDialog";
 import { useSystemSettings } from "@/hooks/useSystemSettings";
+import { customerGstType, computeGstBreakup } from "@/lib/gst";
+import { GstBreakupRows } from "@/components/GstBreakupRows";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -720,13 +722,22 @@ export const SaleInvoiceDialog = ({ open, onOpenChange, saleInvoice, onSave, foc
     // Calculate rounding adjustment
     const roundingAdjustment = totalAmount - unroundedTotal;
     
+    // Compute GST breakup based on selected customer vs company state
+    const selectedCustomer = customers.find(c => c.id === formData.customerId);
+    const gstType = customerGstType(systemSettings.company_state, selectedCustomer);
+    const { cgstAmount, sgstAmount, igstAmount } = computeGstBreakup(taxAmount, gstType);
+
     setFormData(prev => ({
       ...prev,
       subtotal: subtotal,
       taxAmount: taxAmount,
       discountAmount: discountAmount,
       totalAmount,
-      roundingAdjustment
+      roundingAdjustment,
+      gstType,
+      cgstAmount,
+      sgstAmount,
+      igstAmount,
     }));
   };
   
@@ -1434,10 +1445,11 @@ export const SaleInvoiceDialog = ({ open, onOpenChange, saleInvoice, onSave, foc
                       <span className="text-gray-600">Discount:</span>
                       <span className="font-mono font-medium text-red-600">{formatCurrency(formData.discountAmount || 0, currency)}</span>
                         </div>
-                    <div className="flex justify-between items-center">
-                      <span className="text-gray-600">Tax:</span>
-                      <span className="font-mono font-medium">{formatCurrency(formData.taxAmount || 0, currency)}</span>
-                        </div>
+                    <GstBreakupRows
+                      taxAmount={formData.taxAmount || 0}
+                      gstType={(formData.gstType as any) || "IGST"}
+                      formatCurrency={(v) => formatCurrency(v, currency)}
+                    />
                     {(formData.roundingAdjustment !== null && formData.roundingAdjustment !== undefined) && (
                       <div className="flex justify-between items-center">
                         <span className="text-gray-600">Rounding:</span>

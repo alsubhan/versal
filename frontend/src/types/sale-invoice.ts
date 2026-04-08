@@ -48,6 +48,10 @@ export interface SaleInvoice {
   amountPaid?: number;
   amountDue?: number;
   roundingAdjustment?: number;
+  gstType?: "CGST_SGST" | "IGST";
+  cgstAmount?: number;
+  sgstAmount?: number;
+  igstAmount?: number;
   isDirect?: boolean; // Indicates if created directly or linked to sales order
   notes?: string;
   items: SaleInvoiceItem[];

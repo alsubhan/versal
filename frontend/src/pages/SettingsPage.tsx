@@ -45,6 +45,7 @@ const SettingsPage = () => {
     companyCountry: '',
     companyPhone: '',
     companyEmail: '',
+    companyGstin: '',
     
     // Application Settings
     defaultCurrency: 'USD',
@@ -171,6 +172,7 @@ const SettingsPage = () => {
           companyCountry: getStringValue('company_country', addressParts.country),
           companyPhone: getStringValue('company_phone', ''),
           companyEmail: getStringValue('company_email', ''),
+          companyGstin: getStringValue('company_gstin', ''),
           
           // Application Settings
           defaultCurrency: getStringValue('default_currency', 'USD'),
@@ -341,6 +343,7 @@ const SettingsPage = () => {
         companyCountry: 'company_country',
         companyPhone: 'company_phone',
         companyEmail: 'company_email',
+        companyGstin: 'company_gstin',
         
         // Application Settings
         defaultCurrency: 'default_currency',
@@ -640,6 +643,22 @@ const SettingsPage = () => {
                     disabled={!canEditSettings} 
                     className={getFieldClassName('companyCountry')}
                   />
+                </div>
+              </div>
+
+              {/* GSTIN */}
+              <div className="grid gap-4 md:grid-cols-2 mt-2">
+                <div className="space-y-2">
+                  <Label htmlFor="companyGstin">Company GSTIN</Label>
+                  <Input
+                    id="companyGstin"
+                    value={formData.companyGstin || ''}
+                    onChange={(e) => handleInputChange('companyGstin', e.target.value)}
+                    placeholder="e.g. 22AAAAA0000A1Z5"
+                    disabled={!canEditSettings}
+                    className={getFieldClassName('companyGstin')}
+                  />
+                  <p className="text-xs text-muted-foreground">GST Identification Number — printed on all tax invoices.</p>
                 </div>
               </div>
               

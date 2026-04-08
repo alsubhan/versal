@@ -55,6 +55,10 @@ export interface GoodsReceiveNote {
   taxAmount?: number;
   totalAmount?: number;
   roundingAdjustment?: number;
+  gstType?: "CGST_SGST" | "IGST";
+  cgstAmount?: number;
+  sgstAmount?: number;
+  igstAmount?: number;
   items: GoodsReceiveNoteItem[];
   createdAt: Date;
   updatedAt: Date;

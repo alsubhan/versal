@@ -109,6 +109,11 @@ const sidebarLinks = [{
   icon: PackageOpen,
   permission: 'put_aways_view'
 }, {
+  name: "Sale Quotations",
+  href: "/sale-quotations",
+  icon: FileText,
+  permission: 'sale_quotations_view'
+}, {
   name: "Sales Orders",
   href: "/sale-orders",
   icon: FileText,

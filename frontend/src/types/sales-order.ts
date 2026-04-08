@@ -39,6 +39,10 @@ export interface SalesOrder {
   discountAmount: number;
   totalAmount: number;
   roundingAdjustment?: number;
+  gstType?: "CGST_SGST" | "IGST";
+  cgstAmount?: number;
+  sgstAmount?: number;
+  igstAmount?: number;
   notes?: string;
   items: SalesOrderItem[];
   createdAt: Date;

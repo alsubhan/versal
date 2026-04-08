@@ -541,6 +541,10 @@ export async function getPurchaseOrder(id: string) {
   return apiFetch(`/purchase-orders/${id}`);
 }
 
+export async function getPurchaseOrderRemainingItems(id: string) {
+  return apiFetch(`/purchase-orders/${id}/remaining-items`);
+}
+
 export async function createPurchaseOrder(purchaseOrder: any) {
   const result = await apiFetch('/purchase-orders', { method: 'POST', body: JSON.stringify(purchaseOrder) });
 
@@ -620,6 +624,50 @@ export async function consolidateIndentsToPO(data: { indentIds: string[], suppli
   const result = await apiFetch('/purchase-orders/from-indents', { method: 'POST', body: JSON.stringify(data) });
   if (result && result.error) {
     throw new Error(result.detail);
+  }
+  return result;
+}
+
+// ==================== Sale Quotations API functions ====================
+
+export async function getSaleQuotations() {
+  return apiFetch('/sale-quotations');
+}
+
+export async function getSaleQuotation(id: string) {
+  return apiFetch(`/sale-quotations/${id}`);
+}
+
+export async function createSaleQuotation(quotation: any) {
+  const result = await apiFetch('/sale-quotations', { method: 'POST', body: JSON.stringify(quotation) });
+  if (result && result.error) {
+    const error = new Error(result.detail);
+    (error as any).status = result.status;
+    throw error;
+  }
+  return result;
+}
+
+export async function updateSaleQuotation(id: string, quotation: any) {
+  const result = await apiFetch(`/sale-quotations/${id}`, { method: 'PUT', body: JSON.stringify(quotation) });
+  if (result && result.error) {
+    const error = new Error(result.detail);
+    (error as any).status = result.status;
+    throw error;
+  }
+  return result;
+}
+
+export async function deleteSaleQuotation(id: string) {
+  return apiFetch(`/sale-quotations/${id}`, { method: 'DELETE' });
+}
+
+export async function convertQuotationToOrder(id: string) {
+  const result = await apiFetch(`/sale-quotations/${id}/convert-to-order`, { method: 'POST' });
+  if (result && result.error) {
+    const error = new Error(result.detail);
+    (error as any).status = result.status;
+    throw error;
   }
   return result;
 }

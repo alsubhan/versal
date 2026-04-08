@@ -13,6 +13,7 @@ import { useCurrencyStore } from "@/stores/currencyStore";
 import { getSaleInvoice, getCustomers, getProducts } from "@/lib/api";
 import { CustomerPaymentsDialog } from "./CustomerPaymentsDialog";
 import { DollarSign } from "lucide-react";
+import { GstBreakupRows } from "@/components/GstBreakupRows";
 
 interface SaleInvoiceViewProps {
   open: boolean;
@@ -409,10 +410,11 @@ export const SaleInvoiceView = ({ open, onOpenChange, saleInvoice, onInvoiceUpda
                   <span className="text-gray-600">Discount:</span>
                   <span className="font-mono font-medium text-red-600">{formatCurrency(completeData.discountAmount || 0, currency)}</span>
                 </div>
-                <div className="flex justify-between items-center">
-                  <span className="text-gray-600">Tax:</span>
-                  <span className="font-mono font-medium">{formatCurrency(completeData.taxAmount || 0, currency)}</span>
-                </div>
+                <GstBreakupRows
+                  taxAmount={completeData.taxAmount || 0}
+                  gstType={(completeData.gstType as any) || "IGST"}
+                  formatCurrency={(v) => formatCurrency(v, currency)}
+                />
                 {(completeData.roundingAdjustment && completeData.roundingAdjustment !== 0) && (
                   <div className="flex justify-between items-center">
                     <span className="text-gray-600">Rounding:</span>
