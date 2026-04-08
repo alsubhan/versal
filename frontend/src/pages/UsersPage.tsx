@@ -153,10 +153,16 @@ const allPermissions: Permission[] = [
   { id: "put_aways_edit", name: "Edit Put Aways", description: "Can edit put aways", module: "Put Aways" },
   { id: "put_aways_delete", name: "Delete Put Aways", description: "Can delete put aways", module: "Put Aways" },
   
+  // Sale Quotations permissions
+  { id: "sale_quotations_view",   name: "View Sale Quotations",   description: "Can view sale quotations",   module: "Sale Quotations" },
+  { id: "sale_quotations_create", name: "Create Sale Quotations", description: "Can create sale quotations", module: "Sale Quotations" },
+  { id: "sale_quotations_edit",   name: "Edit Sale Quotations",   description: "Can edit sale quotations",   module: "Sale Quotations" },
+  { id: "sale_quotations_delete", name: "Delete Sale Quotations", description: "Can delete sale quotations", module: "Sale Quotations" },
+
   // Sale Orders permissions
-  { id: "sale_orders_view", name: "View Sale Orders", description: "Can view sale orders", module: "Sale Orders" },
+  { id: "sale_orders_view",   name: "View Sale Orders",   description: "Can view sale orders",   module: "Sale Orders" },
   { id: "sale_orders_create", name: "Create Sale Orders", description: "Can create sale orders", module: "Sale Orders" },
-  { id: "sale_orders_edit", name: "Edit Sale Orders", description: "Can edit sale orders", module: "Sale Orders" },
+  { id: "sale_orders_edit",   name: "Edit Sale Orders",   description: "Can edit sale orders",   module: "Sale Orders" },
   { id: "sale_orders_delete", name: "Delete Sale Orders", description: "Can delete sale orders", module: "Sale Orders" },
   
   // Sale Invoices permissions

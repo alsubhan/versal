@@ -37,3 +37,16 @@ SET permissions = (
   ) AS p
 )
 WHERE permissions ? 'sale_invoices_view';
+
+-- Sale Quotations from Sale Orders (Quotation is the first step in the sale flow)
+UPDATE public.roles
+SET permissions = (
+  SELECT jsonb_agg(DISTINCT p)
+  FROM jsonb_array_elements_text(permissions ||
+    CASE WHEN permissions @> '["sale_orders_view"]'::jsonb   THEN '["sale_quotations_view"]'::jsonb   ELSE '[]'::jsonb END ||
+    CASE WHEN permissions @> '["sale_orders_create"]'::jsonb THEN '["sale_quotations_create"]'::jsonb ELSE '[]'::jsonb END ||
+    CASE WHEN permissions @> '["sale_orders_edit"]'::jsonb   THEN '["sale_quotations_edit"]'::jsonb   ELSE '[]'::jsonb END ||
+    CASE WHEN permissions @> '["sale_orders_delete"]'::jsonb THEN '["sale_quotations_delete"]'::jsonb ELSE '[]'::jsonb END
+  ) AS p
+)
+WHERE permissions ? 'sale_orders_view';
