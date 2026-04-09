@@ -77,6 +77,21 @@ export const SaleQuotationDialog = ({
   const [showFrequentItemsDialog, setShowFrequentItemsDialog] = useState(false);
   const [frequentItems, setFrequentItems] = useState<any[]>([]);
 
+  const [formData, setFormData] = useState<Partial<SaleQuotation>>({
+    quotationNumber: "",
+    customerId: "",
+    quotationDate: new Date(),
+    validUntil: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000),
+    status: "draft",
+    subtotal: 0,
+    taxAmount: 0,
+    discountAmount: 0,
+    totalAmount: 0,
+    notes: "",
+    termsConditions: "",
+    items: [],
+  });
+
   const activeCustomer = useMemo(() => customers.find((c) => c.id === formData?.customerId), [customers, formData?.customerId]);
   
   const billingOptions = useMemo(() => {
@@ -100,21 +115,6 @@ export const SaleQuotationDialog = ({
     additionals.forEach((a, i) => opts.push({ ...a, _label: a.label || `Additional ${i+1}`, _id: `add-s-${i}` }));
     return opts;
   }, [activeCustomer]);
-
-  const [formData, setFormData] = useState<Partial<SaleQuotation>>({
-    quotationNumber: "",
-    customerId: "",
-    quotationDate: new Date(),
-    validUntil: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000),
-    status: "draft",
-    subtotal: 0,
-    taxAmount: 0,
-    discountAmount: 0,
-    totalAmount: 0,
-    notes: "",
-    termsConditions: "",
-    items: [],
-  });
 
   const [items, setItems] = useState<Partial<SaleQuotationItem>[]>([]);
 

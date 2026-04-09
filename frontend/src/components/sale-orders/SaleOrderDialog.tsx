@@ -58,7 +58,25 @@ export const SaleOrderDialog = ({ open, onOpenChange, salesOrder, onSave }: Sale
   const [showFrequentItemsDialog, setShowFrequentItemsDialog] = useState(false);
   const [frequentItems, setFrequentItems] = useState<any[]>([]);
 
-  // Derived state for addresses
+  const [formData, setFormData] = useState<Partial<SalesOrder>>({
+    orderNumber: "",
+    customerId: "",
+    orderDate: new Date(),
+    dueDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+    status: "draft",
+    subtotal: 0,
+    taxAmount: 0,
+    discountAmount: 0,
+    totalAmount: 0,
+    gstType: "IGST",
+    cgstAmount: 0,
+    sgstAmount: 0,
+    igstAmount: 0,
+    notes: "",
+    items: [],
+  });
+
+  // Derived state for addresses - MUST be after formData
   const activeCustomer = useMemo(() => customers.find((c) => c.id === formData?.customerId), [customers, formData?.customerId]);
   
   const billingOptions = useMemo(() => {
@@ -82,24 +100,6 @@ export const SaleOrderDialog = ({ open, onOpenChange, salesOrder, onSave }: Sale
     additionals.forEach((a, i) => opts.push({ ...a, _label: a.label || `Additional ${i+1}`, _id: `add-s-${i}` }));
     return opts;
   }, [activeCustomer]);
-  
-  const [formData, setFormData] = useState<Partial<SalesOrder>>({
-    orderNumber: "",
-    customerId: "",
-    orderDate: new Date(),
-    dueDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
-    status: "draft",
-    subtotal: 0,
-    taxAmount: 0,
-    discountAmount: 0,
-    totalAmount: 0,
-    gstType: "IGST",
-    cgstAmount: 0,
-    sgstAmount: 0,
-    igstAmount: 0,
-    notes: "",
-    items: [],
-  });
   
   const [items, setItems] = useState<Partial<SalesOrderItem>[]>([]);
   

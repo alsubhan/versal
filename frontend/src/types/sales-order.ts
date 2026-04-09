@@ -24,6 +24,13 @@ export interface SalesOrder {
   customerPoNumber?: string;
   customerId: string;
   customer?: Customer;
+  billingAddress?: {
+    street: string;
+    city: string;
+    state: string;
+    zipCode: string;
+    country: string;
+  };
   shippingAddress?: {
     street: string;
     city: string;

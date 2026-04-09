@@ -64,6 +64,23 @@ export const SaleInvoiceDialog = ({ open, onOpenChange, saleInvoice, onSave, foc
   // Mode state: 'linked' = against existing SO, 'direct' = create internal SO
   const [creationMode, setCreationMode] = useState<'linked' | 'direct'>('linked');
 
+  const [formData, setFormData] = useState<Partial<SaleInvoice>>({
+    invoiceNumber: "",
+    salesOrderId: "", // For linked creation
+    customerId: "", // For direct creation
+    invoiceDate: new Date(),
+    dueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+    status: "draft",
+    paymentMethod: undefined, // Payment method field
+    subtotal: 0,
+    taxAmount: 0,
+    discountAmount: 0,
+    totalAmount: 0,
+    notes: "",
+    items: [],
+  });
+
+  // Derived state for addresses - MUST be after formData
   const activeCustomer = useMemo(() => customers.find((c) => c.id === formData?.customerId), [customers, formData?.customerId]);
   
   const billingOptions = useMemo(() => {
@@ -87,22 +104,6 @@ export const SaleInvoiceDialog = ({ open, onOpenChange, saleInvoice, onSave, foc
     additionals.forEach((a, i) => opts.push({ ...a, _label: a.label || `Additional ${i+1}`, _id: `add-s-${i}` }));
     return opts;
   }, [activeCustomer]);
-  
-  const [formData, setFormData] = useState<Partial<SaleInvoice>>({
-    invoiceNumber: "",
-    salesOrderId: "", // For linked creation
-    customerId: "", // For direct creation
-    invoiceDate: new Date(),
-    dueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
-    status: "draft",
-    paymentMethod: undefined, // Payment method field
-    subtotal: 0,
-    taxAmount: 0,
-    discountAmount: 0,
-    totalAmount: 0,
-    notes: "",
-    items: [],
-  });
   
   const [items, setItems] = useState<Partial<SaleInvoiceItem>[]>([]);
   const paymentMethodTriggerRef = useRef<HTMLButtonElement | null>(null);
