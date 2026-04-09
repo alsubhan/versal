@@ -4724,7 +4724,12 @@ def convert_quotation_to_order(quotation_id: str, payload=Depends(require_permis
             raise HTTPException(status_code=400, detail=f"Cannot convert quotation with status '{q.get('status')}'. Only 'sent' quotations can be converted.")
 
         if q.get("sales_order_id"):
-            raise HTTPException(status_code=400, detail="This quotation has already been converted to a Sale Order.")
+            # If already converted, just return the existing SO
+            so_data = supabase.table("sales_orders").select("*").eq("id", q.get("sales_order_id")).execute()
+            if so_data.data:
+                return JSONResponse(content=to_camel_case_sales_order(so_data.data[0]))
+            # If pointer exists but SO is gone, we allow re-conversion attempt
+            pass
 
         items_data = supabase.table("sale_quotation_items").select("*").eq("quotation_id", quotation_id).execute()
         items = items_data.data or []
@@ -4770,13 +4775,13 @@ def convert_quotation_to_order(quotation_id: str, payload=Depends(require_permis
                     "product_name": item.get("product_name", ""),
                     "sku_code": item.get("sku_code", ""),
                     "hsn_code": item.get("hsn_code", ""),
-                    "quantity": item.get("quantity", 0),
-                    "unit_price": item.get("unit_price", 0),
-                    "discount": item.get("discount", 0),
-                    "tax": item.get("tax", 0),
+                    "quantity": int(float(item.get("quantity", 0))), # Must be int for sales_order_items
+                    "unit_price": float(item.get("unit_price", 0)),
+                    "discount": float(item.get("discount", 0)),
+                    "tax": float(item.get("tax", 0)),
                     "sale_tax_type": item.get("sale_tax_type", "exclusive"),
                     "unit_abbreviation": item.get("unit_abbreviation", ""),
-                    "total": item.get("total", 0),
+                    # 'total' is a GENERATED column in sales_order_items, OMIT it from insert
                     "created_by": payload["sub"],
                 })
             supabase.table("sales_order_items").insert(so_items).execute()
