@@ -1,5 +1,9 @@
 
 export interface Address {
+  id?: string;
+  type?: 'billing' | 'shipping' | 'both';
+  label?: string;
+  isDefault?: boolean;
   street: string;
   city: string;
   state: string;
@@ -12,8 +16,9 @@ export interface Customer {
   name: string;
   email: string;
   phone: string;
-  billingAddress: Address;
+  billingAddress?: Address;
   shippingAddress?: Address;
+  additionalAddresses?: Address[];
   taxId?: string;
   notes?: string;
   creditLimit?: number;

@@ -247,11 +247,11 @@ export default function SaleQuotationsPage() {
           onPrint={handlePrint}
         />
 
-        {/* Print Dialog – reuse SO template */}
+        {/* Print Dialog */}
         <PrintPreviewDialog
           open={printDialogOpen}
           onOpenChange={setPrintDialogOpen}
-          documentType="salesOrder"
+          documentType="saleQuotation"
           data={printingQuotation}
         />
 

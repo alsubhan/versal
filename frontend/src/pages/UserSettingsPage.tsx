@@ -14,7 +14,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Lock, User, Bell, Globe, Palette, Shield, Camera } from "lucide-react";
 import { ChangePasswordDialog } from "@/components/dialogs/ChangePasswordDialog";
-import { getUserSettings, createUserSetting, updateUserSetting } from "@/lib/api";
+import { getUserSettings, createUserSetting, updateUserSetting, updateProfile } from "@/lib/api";
 
 const UserSettingsPage = () => {
   const { user, hasPermission, loading: authLoading, permissions } = useAuth();
@@ -120,6 +120,13 @@ const UserSettingsPage = () => {
       } else {
         await createUserSetting(settingsData);
       }
+      
+      // Update core profile data
+      await updateProfile({
+        full_name: userProfile.fullName,
+        phone: userProfile.phone
+      });
+
       
       toast.success("Profile updated successfully");
     } catch (error) {

@@ -10,7 +10,7 @@ import type { GoodsReceiveNote } from '@/types/grn';
 import type { CreditNote } from '@/types/credit-note';
 import { CustomTemplate, StandardTemplate, SaleInvoiceStandardTemplate, getTitleByType } from './Templates';
 
-type DocumentType = 'saleInvoice' | 'salesOrder' | 'purchaseOrder' | 'grn' | 'creditNote' | 'product';
+type DocumentType = 'saleInvoice' | 'salesOrder' | 'purchaseOrder' | 'grn' | 'creditNote' | 'product' | 'saleQuotation';
 
 type PrintPreviewDialogProps = {
   open: boolean;
@@ -31,6 +31,8 @@ export function PrintPreviewDialog({ open, onOpenChange, documentType, data }: P
             return (data as SaleInvoice)?.invoiceNumber || '';
           case 'salesOrder':
             return (data as SalesOrder)?.orderNumber || '';
+          case 'saleQuotation':
+            return data?.quotationNumber || '';
           case 'purchaseOrder':
             return (data as PurchaseOrder)?.orderNumber || '';
           case 'grn':
@@ -54,11 +56,14 @@ export function PrintPreviewDialog({ open, onOpenChange, documentType, data }: P
     documentTitle,
   });
 
-  // Only Sale Invoice honors the system Default Invoice Format; other modules always use StandardTemplate (generic)
+  // All sales documents honor the system template format
   const templateKey = String(settings?.invoice_format_template || 'standard');
   const TemplateComponent = (() => {
-    if (documentType === 'saleInvoice') {
-      if (templateKey === 'standard') return (props: any) => <SaleInvoiceStandardTemplate data={props.data} settings={settings as any} />;
+    if (['saleInvoice', 'salesOrder', 'saleQuotation'].includes(documentType)) {
+      if (templateKey === 'standard') {
+        if (documentType === 'saleInvoice') return (props: any) => <SaleInvoiceStandardTemplate data={props.data} settings={settings as any} />;
+        return StandardTemplate;
+      }
       return CustomTemplate;
     }
     return StandardTemplate;

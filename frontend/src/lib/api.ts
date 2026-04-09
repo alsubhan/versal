@@ -327,6 +327,10 @@ export async function updateUserSetting(userSetting: any) {
   return apiFetch('/user-settings', { method: 'PUT', body: JSON.stringify(userSetting) });
 }
 
+export async function updateProfile(profile: any) {
+  return apiFetch('/profile/me', { method: 'PUT', body: JSON.stringify(profile) });
+}
+
 // System Settings API functions
 export async function getSystemSettings() {
   return apiFetch('/system-settings');
@@ -417,6 +421,28 @@ export async function createInventoryTransaction(transaction: any) {
 // Inventory Movements (Manual movements)
 export async function getInventoryMovements() {
   return apiFetch('/inventory/movements');
+}
+
+export async function fetchStockMovements(filters?: any) {
+  // Mock endpoint, this will likely be added to main.py
+  return apiFetch('/stock-movements', { method: 'POST', body: JSON.stringify(filters || {}) });
+}
+
+// Backup & Restore API functions
+export async function getBackups() {
+  return apiFetch('/backups');
+}
+
+export async function createBackup() {
+  return apiFetch('/backups/create', { method: 'POST' });
+}
+
+export async function restoreBackup(filename: string) {
+  return apiFetch(`/backups/restore/${filename}`, { method: 'POST' });
+}
+
+export async function deleteBackup(filename: string) {
+  return apiFetch(`/backups/${filename}`, { method: 'DELETE' });
 }
 
 export async function createInventoryMovement(movement: any) {

@@ -7,11 +7,12 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# System dependencies (build tools and headers for native wheels like cryptography, httptools)
+# System dependencies (build tools, headers, and postgres client for backups)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     libffi-dev \
     libssl-dev \
+    postgresql-client \
   && rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies

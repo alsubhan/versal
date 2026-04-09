@@ -1,7 +1,7 @@
 
 import * as React from "react";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useForm } from "react-hook-form";
+import { useForm, useFieldArray } from "react-hook-form";
 import * as z from "zod";
 import { toast } from "sonner";
 
@@ -29,6 +29,10 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { CustomerCredit } from "./CustomerCredit";
 
 const addressSchema = z.object({
+  id: z.string().optional(),
+  type: z.enum(["billing", "shipping", "both"]).optional(),
+  label: z.string().optional(),
+  isDefault: z.boolean().optional(),
   street: z.string().min(1, "Street is required"),
   city: z.string().min(1, "City is required"),
   state: z.string().min(1, "State is required"),
@@ -46,7 +50,7 @@ const defaultAddress: Address = {
 
 const formSchema = z.object({
   name: z.string().min(1, "Name is required"),
-  email: z.string().email("Invalid email address"),
+  email: z.string().email("Invalid email address").or(z.literal("")),
   phone: z.string().min(1, "Phone number is required"),
   billingAddress: addressSchema,
   useShippingAsBilling: z.boolean().default(false),
@@ -57,6 +61,7 @@ const formSchema = z.object({
     zipCode: z.string().optional(),
     country: z.string().optional(),
   }).optional(),
+  additionalAddresses: z.array(addressSchema).default([]),
   taxId: z.string().optional(),
   notes: z.string().optional(),
   creditLimit: z.preprocess(
@@ -111,6 +116,11 @@ export function CustomerDialog({
 
   const useShippingAsBilling = form.watch("useShippingAsBilling");
 
+  const { fields, append, remove } = useFieldArray({
+    control: form.control,
+    name: "additionalAddresses",
+  });
+
   React.useEffect(() => {
     if (open) {
       if (customer) {
@@ -136,6 +146,7 @@ export function CustomerDialog({
           creditLimit: customer.creditLimit || 0,
           customerType: customer.customerType || "retail",
           isActive: customer.isActive ?? true,
+          additionalAddresses: customer.additionalAddresses || [],
         });
       } else {
         form.reset({
@@ -150,6 +161,7 @@ export function CustomerDialog({
           creditLimit: 0,
           customerType: "retail",
           isActive: true,
+          additionalAddresses: [],
         });
       }
     }
@@ -187,6 +199,7 @@ export function CustomerDialog({
       currentCredit: customer?.currentCredit || 0,
       customerType: finalData.customerType,
       isActive: finalData.isActive,
+      additionalAddresses: finalData.additionalAddresses as Address[],
       createdAt: customer?.createdAt || new Date(),
       updatedAt: new Date(),
     };
@@ -207,10 +220,11 @@ export function CustomerDialog({
 
 
             <Tabs defaultValue="basic" className="w-full">
-              <TabsList className="grid w-full grid-cols-4">
-                <TabsTrigger value="basic">Basic Details</TabsTrigger>
-                <TabsTrigger value="billing">Billing Address</TabsTrigger>
-                <TabsTrigger value="shipping">Shipping Address</TabsTrigger>
+              <TabsList className="grid w-full grid-cols-5">
+                <TabsTrigger value="basic">Basic</TabsTrigger>
+                <TabsTrigger value="billing">Billing</TabsTrigger>
+                <TabsTrigger value="shipping">Shipping</TabsTrigger>
+                <TabsTrigger value="additional">More Addresses</TabsTrigger>
                 <TabsTrigger value="credit">Credit</TabsTrigger>
               </TabsList>
               
@@ -507,6 +521,85 @@ export function CustomerDialog({
                         </FormItem>
                       )}
                     />
+                  </div>
+                )}
+              </TabsContent>
+
+              <TabsContent value="additional" className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="text-sm font-medium leading-none">Additional Locations</h3>
+                    <p className="text-sm border-b pb-2 pt-1 text-muted-foreground">Add multiple tracking addresses for this customer.</p>
+                  </div>
+                  <Button type="button" variant="outline" size="sm" onClick={() => append({ type: "both", label: "", street: "", city: "", state: "", zipCode: "", country: "", isDefault: false })}>
+                    Add Location
+                  </Button>
+                </div>
+                {fields.map((field, index) => (
+                  <div key={field.id} className="grid grid-cols-1 gap-4 sm:grid-cols-2 rounded-md border p-4 bg-muted/20 relative">
+                    <Button type="button" variant="ghost" size="icon" className="absolute top-2 right-2 h-6 w-6 text-red-500 hover:text-red-700" onClick={() => remove(index)}>
+                      &times;
+                    </Button>
+                    <FormField control={form.control} name={`additionalAddresses.${index}.label`} render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Location Label</FormLabel>
+                        <FormControl><Input placeholder="Warehouse B, Main HQ" {...field} /></FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )} />
+                    <FormField control={form.control} name={`additionalAddresses.${index}.type`} render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Type</FormLabel>
+                        <FormControl>
+                          <select {...field} className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm">
+                            <option value="both">Both Billing & Shipping</option>
+                            <option value="billing">Billing Only</option>
+                            <option value="shipping">Shipping Only</option>
+                          </select>
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )} />
+                    <FormField control={form.control} name={`additionalAddresses.${index}.street`} render={({ field }) => (
+                      <FormItem className="sm:col-span-2">
+                        <FormLabel>Street</FormLabel>
+                        <FormControl><Input placeholder="123 Storage St" {...field} /></FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )} />
+                    <FormField control={form.control} name={`additionalAddresses.${index}.city`} render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>City</FormLabel>
+                        <FormControl><Input placeholder="City" {...field} /></FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )} />
+                    <FormField control={form.control} name={`additionalAddresses.${index}.state`} render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>State</FormLabel>
+                        <FormControl><Input placeholder="State" {...field} /></FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )} />
+                    <FormField control={form.control} name={`additionalAddresses.${index}.zipCode`} render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>ZIP Code</FormLabel>
+                        <FormControl><Input placeholder="12345" {...field} /></FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )} />
+                    <FormField control={form.control} name={`additionalAddresses.${index}.country`} render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Country</FormLabel>
+                        <FormControl><Input placeholder="Country" {...field} /></FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )} />
+                  </div>
+                ))}
+                {fields.length === 0 && (
+                  <div className="text-sm text-center py-6 text-muted-foreground italic border border-dashed rounded-md">
+                    No additional addresses saved.
                   </div>
                 )}
               </TabsContent>

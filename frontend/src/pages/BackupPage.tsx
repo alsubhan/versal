@@ -16,44 +16,65 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { useToast } from "@/hooks/use-toast";
 import { PermissionGuard } from "@/components/ui/permission-guard";
 
-// Mock backup data
-const mockBackups = [
-  {
-    id: "1",
-    name: "Full System Backup",
-    type: "Full",
-    size: "2.5 GB",
-    createdAt: "2024-01-15T10:30:00Z",
-    status: "Completed"
-  },
-  {
-    id: "2",
-    name: "Database Backup",
-    type: "Database",
-    size: "1.2 GB",
-    createdAt: "2024-01-14T15:45:00Z",
-    status: "Completed"
-  },
-  {
-    id: "3",
-    name: "Files Backup",
-    type: "Files",
-    size: "800 MB",
-    createdAt: "2024-01-13T09:20:00Z",
-    status: "Completed"
-  }
-];
+import { 
+  getBackups, 
+  createBackup, 
+  restoreBackup, 
+  deleteBackup 
+} from "@/lib/api";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 
 const BackupPage = () => {
+  const [backups, setBackups] = useState<any[]>([]);
   const [isBackingUp, setIsBackingUp] = useState(false);
-  const [progress, setProgress] = useState(0);
+  const [isLoading, setIsLoading] = useState(true);
+  
+  // Restore state
+  const [restoreDialogOpen, setRestoreDialogOpen] = useState(false);
+  const [selectedBackup, setSelectedBackup] = useState('');
+  const [restoreConfirmText, setRestoreConfirmText] = useState('');
+  const [isRestoring, setIsRestoring] = useState(false);
+
+  // Delete state
+  const [isDeleting, setIsDeleting] = useState<string | null>(null);
+
   const { hasPermission } = useAuth();
-  const canCreateBackup = hasPermission('backup_create');
-  const canRestoreBackup = hasPermission('backup_restore');
+  const canManageBackups = hasPermission('admin'); // Only admins per requirements
   const { toast } = useToast();
   
-  const handleBackup = () => {
-    if (!canCreateBackup) {
+  const fetchBackups = async () => {
+    setIsLoading(true);
+    try {
+      const data = await getBackups();
+      setBackups(data);
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: "Failed to fetch backups",
+        variant: "destructive"
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useState(() => {
+    if (canManageBackups) {
+      fetchBackups();
+    }
+  });
+
+  const handleBackup = async () => {
+    if (!canManageBackups) {
       toast({
         title: "Permission Denied",
         description: "You do not have permission to create backups",
@@ -63,25 +84,70 @@ const BackupPage = () => {
     }
     
     setIsBackingUp(true);
-    setProgress(0);
     
-    // Simulate backup process
-    const interval = setInterval(() => {
-      setProgress((prevProgress) => {
-        if (prevProgress >= 100) {
-          clearInterval(interval);
-          setIsBackingUp(false);
-          toast({
-            title: "Success",
-            description: "Backup completed successfully!"
-          });
-          return 100;
-        }
-        return prevProgress + 10;
+    try {
+      const result = await createBackup();
+      toast({
+        title: "Success",
+        description: "Backup completed successfully!"
       });
-    }, 500);
+      fetchBackups();
+      
+      // Auto-download
+      if (result.filename) {
+          window.location.href = `/api/backups/download/${result.filename}`;
+      }
+    } catch (error) {
+       toast({
+        title: "Error",
+        description: "Failed to create backup",
+        variant: "destructive"
+      });
+    } finally {
+      setIsBackingUp(false);
+    }
+  };
+
+  const handleDelete = async (filename: string) => {
+    if (!confirm("Are you sure you want to delete this backup?")) return;
+
+    setIsDeleting(filename);
+    try {
+      await deleteBackup(filename);
+      toast({ title: "Success", description: "Backup deleted" });
+      fetchBackups();
+    } catch {
+      toast({ title: "Error", description: "Failed to delete backup", variant: "destructive" });
+    } finally {
+      setIsDeleting(null);
+    }
+  };
+
+  const confirmRestore = (filename: string) => {
+    setSelectedBackup(filename);
+    setRestoreConfirmText('');
+    setRestoreDialogOpen(true);
+  };
+
+  const handleRestore = async () => {
+    if (restoreConfirmText !== 'RESTORE') {
+        toast({ title: "Error", description: "Type RESTORE to confirm", variant: "destructive"});
+        return;
+    }
+
+    setIsRestoring(true);
+    try {
+        await restoreBackup(selectedBackup);
+        toast({ title: "Success", description: "System restored successfully!" });
+        setRestoreDialogOpen(false);
+    } catch {
+        toast({ title: "Error", description: "Restore failed", variant: "destructive" });
+    } finally {
+        setIsRestoring(false);
+    }
   };
   
+
   const formatDate = (dateString: string) => {
     const options: Intl.DateTimeFormatOptions = {
       year: 'numeric',
@@ -109,21 +175,19 @@ const BackupPage = () => {
                 Backup Data
               </CardTitle>
               <CardDescription>
-                Create a backup of your system data
+                Create a physical PostgreSQL backup of your system data.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               {isBackingUp && (
                 <div className="space-y-2">
                   <div className="flex justify-between text-sm">
-                    <span>Creating backup...</span>
-                    <span>{progress}%</span>
+                    <span>Running pg_dump...</span>
                   </div>
-                  <Progress value={progress} />
                 </div>
               )}
               
-              {canCreateBackup ? (
+              {canManageBackups ? (
                 <Button 
                   onClick={handleBackup} 
                   disabled={isBackingUp}
@@ -147,7 +211,7 @@ const BackupPage = () => {
                       </span>
                     </TooltipTrigger>
                     <TooltipContent>
-                      You do not have permission to create backups
+                      You must be an admin to manage backups
                     </TooltipContent>
                   </Tooltip>
                 </TooltipProvider>
@@ -162,32 +226,13 @@ const BackupPage = () => {
                 Restore Data
               </CardTitle>
               <CardDescription>
-                Restore system data from a backup file
+                Restore system data from a recent backup.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              {canRestoreBackup ? (
-                <Button variant="outline" className="w-full">
-                  <Download className="mr-2 h-4 w-4" />
-                  Restore from Backup
-                </Button>
-              ) : (
-                <TooltipProvider>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <span>
-                        <Button variant="outline" disabled className="w-full">
-                          <Download className="mr-2 h-4 w-4" />
-                          Restore from Backup
-                        </Button>
-                      </span>
-                    </TooltipTrigger>
-                    <TooltipContent>
-                      You do not have permission to restore backups
-                    </TooltipContent>
-                  </Tooltip>
-                </TooltipProvider>
-              )}
+              <p className="text-sm text-muted-foreground mb-4">
+                You can select a backup from the history below to restore your system. Ensure you have the 'RESTORE' confirmation ready.
+              </p>
             </CardContent>
           </Card>
         </div>
@@ -212,34 +257,31 @@ const BackupPage = () => {
                   </tr>
                 </thead>
                 <tbody>
-                  {mockBackups.map((backup) => (
+                  {isLoading ? (
+                    <tr><td colSpan={5} className="py-4 text-center">Loading backups...</td></tr>
+                  ) : backups.length === 0 ? (
+                    <tr><td colSpan={5} className="py-4 text-center">No backups found</td></tr>
+                  ) : backups.map((backup) => (
                     <tr key={backup.id} className="border-b">
                       <td className="py-3 px-4">{formatDate(backup.createdAt)}</td>
                       <td className="py-3 px-4">{backup.type}</td>
                       <td className="py-3 px-4">{backup.size}</td>
                       <td className="py-3 px-4">
                         <span 
-                          className={`inline-flex items-center gap-1 ${
-                            backup.status === "Completed" 
-                              ? "text-green-600" 
-                              : backup.status === "Failed" 
-                                ? "text-red-600" 
-                                : "text-amber-600"
-                          }`}
+                          className="inline-flex items-center gap-1 text-green-600"
                         >
-                          {backup.status === "Completed" ? (
-                            <CheckCircle2 size={14} />
-                          ) : backup.status === "Failed" ? (
-                            <AlertCircle size={14} />
-                          ) : (
-                            <Clock size={14} />
-                          )}
-                          {backup.status}
+                           <CheckCircle2 size={14} /> Completed
                         </span>
                       </td>
-                      <td className="py-3 px-4 text-right">
-                        <Button variant="ghost" size="sm">
+                      <td className="py-3 px-4 text-right space-x-2">
+                        <Button variant="ghost" size="sm" onClick={() => window.location.href = `/api/backups/download/${backup.filename || backup.name}`}>
                           <Download size={14} className="mr-1" /> Download
+                        </Button>
+                        <Button variant="outline" size="sm" onClick={() => confirmRestore(backup.name)}>
+                          <RotateCcw size={14} className="mr-1" /> Restore
+                        </Button>
+                        <Button variant="destructive" size="sm" onClick={() => handleDelete(backup.name)} disabled={isDeleting === backup.name} >
+                           Delete
                         </Button>
                       </td>
                     </tr>
@@ -249,6 +291,38 @@ const BackupPage = () => {
             </div>
           </CardContent>
         </Card>
+
+        {/* Restore Confirmation Dialog */}
+        <Dialog open={restoreDialogOpen} onOpenChange={setRestoreDialogOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Confirm System Restore</DialogTitle>
+              <DialogDescription>
+                 This action is <span className="font-bold text-destructive">DESTRUCTIVE</span> and will overwrite all current system data with the backup <b>{selectedBackup}</b>.
+                 <br/><br/>
+                 To confirm, type <b>RESTORE</b> below.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="grid gap-4 py-4">
+              <div className="grid grid-cols-4 items-center gap-4">
+                <Label htmlFor="confirm" className="text-right">Confirm</Label>
+                <Input
+                  id="confirm"
+                  value={restoreConfirmText}
+                  onChange={(e) => setRestoreConfirmText(e.target.value)}
+                  className="col-span-3"
+                  placeholder="Type RESTORE"
+                />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setRestoreDialogOpen(false)}>Cancel</Button>
+              <Button variant="destructive" onClick={handleRestore} disabled={restoreConfirmText !== 'RESTORE' || isRestoring}>
+                {isRestoring ? "Restoring..." : "Execute Restore"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
     </PermissionGuard>
   );

@@ -8,7 +8,7 @@ import { cn } from '@/lib/utils';
 import { computeGstBreakup } from '@/lib/gst';
 import type { GstType } from '@/lib/gst';
 
-export type DocumentType = 'saleInvoice' | 'salesOrder' | 'purchaseOrder' | 'grn' | 'creditNote' | 'product';
+export type DocumentType = 'saleInvoice' | 'salesOrder' | 'purchaseOrder' | 'grn' | 'creditNote' | 'product' | 'saleQuotation';
 
 export function getTitleByType(type: DocumentType) {
   switch (type) {
@@ -16,6 +16,8 @@ export function getTitleByType(type: DocumentType) {
       return 'Invoice';
     case 'salesOrder':
       return 'Sales Order';
+    case 'saleQuotation':
+      return 'Quotation';
     case 'purchaseOrder':
       return 'Purchase Order';
     case 'grn':
@@ -138,6 +140,21 @@ export function StandardTemplate({
           </div>
         );
       }
+      case 'saleQuotation': {
+        const q = data || {};
+        return (
+          <div className="grid grid-cols-2 gap-6">
+            <div className="space-y-1">
+              <Row label="Quotation #" value={q?.quotationNumber || ''} />
+              <Row label="Date" value={fmtDate(q?.quotationDate)} />
+            </div>
+            <div className="space-y-1">
+              <Row label="Customer" value={q?.customer?.name || (q?.customerId as any) || ''} />
+              <Row label="Status" value={q?.status || ''} />
+            </div>
+          </div>
+        );
+      }
       case 'purchaseOrder': {
         const po = (data ?? {}) as Partial<PurchaseOrder>;
         return (
@@ -255,6 +272,17 @@ export function StandardTemplate({
           </div>
         );
       }
+      case 'saleQuotation': {
+        const q = data || {};
+        return (
+          <div className="space-y-2">
+            {header}
+            {(q.items || []).map((it: any, idx: number) => (
+              <Line key={it?.id || idx} name={it?.productName || ''} qty={it?.quantity ?? 0} price={it?.unitPrice ?? 0} total={it?.total ?? 0} />
+            ))}
+          </div>
+        );
+      }
       case 'purchaseOrder': {
         const po = (data ?? {}) as Partial<PurchaseOrder>;
         return (
@@ -337,6 +365,18 @@ export function StandardTemplate({
             {gstRows(order.gstType as GstType, order.taxAmount, order.cgstAmount, order.sgstAmount, order.igstAmount)}
             {row('Rounding', order.roundingAdjustment)}
             {row('Total', order.totalAmount, true)}
+          </div>
+        );
+      }
+      case 'saleQuotation': {
+        const q = data || {};
+        return (
+          <div className="space-y-1 w-72 ml-auto">
+            {row('Subtotal', q.subtotal)}
+            {row('Discount', q.discountAmount)}
+            {gstRows(q.gstType as GstType, q.taxAmount, q.cgstAmount, q.sgstAmount, q.igstAmount)}
+            {row('Rounding', q.roundingAdjustment)}
+            {row('Total', q.totalAmount, true)}
           </div>
         );
       }
@@ -446,16 +486,20 @@ export function SaleInvoiceStandardTemplate({ data, settings }: { data: Partial<
           <div>Phone: {(inv as any)?.customer?.phone || '-'}</div>
           <div className="mt-2 font-medium">Billing Address:</div>
           <div className="whitespace-pre-wrap">
-            {(inv as any)?.customer?.billingAddress?.street || ''}
-            {((inv as any)?.customer?.billingAddress?.city || (inv as any)?.customer?.billingAddress?.state || (inv as any)?.customer?.billingAddress?.zipCode) && (
+            {(inv as any)?.billingAddress?.street || (inv as any)?.customer?.billingAddress?.street || ''}
+            {((inv as any)?.billingAddress?.city || (inv as any)?.billingAddress?.state || (inv as any)?.billingAddress?.zipCode) && (
               <>
                 <br />
-                {[(inv as any)?.customer?.billingAddress?.city, (inv as any)?.customer?.billingAddress?.state, (inv as any)?.customer?.billingAddress?.zipCode]
+                {[
+                  (inv as any)?.billingAddress?.city || (inv as any)?.customer?.billingAddress?.city,
+                  (inv as any)?.billingAddress?.state || (inv as any)?.customer?.billingAddress?.state,
+                  (inv as any)?.billingAddress?.zipCode || (inv as any)?.customer?.billingAddress?.zipCode
+                ]
                   .filter(Boolean)
                   .join(', ')}
               </>
             )}
-            {(inv as any)?.customer?.billingAddress?.country && <><br />{(inv as any)?.customer?.billingAddress?.country}</>}
+            {((inv as any)?.billingAddress?.country || (inv as any)?.customer?.billingAddress?.country) && <><br />{(inv as any)?.billingAddress?.country || (inv as any)?.customer?.billingAddress?.country}</>}
           </div>
         </div>
       </div>
@@ -545,6 +589,16 @@ export function CustomTemplate({
     settings?.company_country,
   ].filter(Boolean).join(', ');
 
+  // Format address payload to string
+  const formatAddress = (addr: any) => {
+    if (!addr || !addr.street) return '';
+    return [addr.street, addr.city, addr.state, addr.zipCode, addr.country].filter(Boolean).join(', ');
+  };
+
+  const documentBillingAddress = formatAddress(data?.billingAddress) || formatAddress(data?.customer?.billingAddress) || '';
+  const documentShippingAddress = formatAddress(data?.shippingAddress) || formatAddress(data?.customer?.shippingAddress) || documentBillingAddress;
+  const customerGstin = data?.customer?.taxId || data?.supplier?.taxId || '';
+
   // Bill to/Ship to blocks (merge where not available)
   const billToName = (data?.customer?.name || data?.supplier?.name || data?.customerId || data?.supplierId || '') as string;
   const shipToName = billToName;
@@ -553,6 +607,7 @@ export function CustomTemplate({
   const items = (() => {
     if (documentType === 'saleInvoice') return (data as SaleInvoice)?.items || [];
     if (documentType === 'salesOrder') return (data as SalesOrder)?.items || [];
+    if (documentType === 'saleQuotation') return data?.items || [];
     if (documentType === 'purchaseOrder') return (data as PurchaseOrder)?.items || [];
     if (documentType === 'grn') return (data as GoodsReceiveNote)?.items || [];
     if (documentType === 'creditNote') return (data as CreditNote)?.items || [];
@@ -615,7 +670,7 @@ export function CustomTemplate({
           <div className="h-[3px] bg-[#2A42FF]" />
           <div className="h-[2px] bg-[#112A8F] mt-[3px]" />
         </div>
-        <div className="px-3 text-3xl italic font-extrabold text-gray-700 whitespace-nowrap select-none">TAX INVOICE</div>
+        <div className="px-3 text-3xl italic font-extrabold text-gray-700 whitespace-nowrap select-none">{getTitleByType(documentType).toUpperCase()}</div>
         <div className="flex-1">
           <div className="h-[3px] bg-[#2A42FF]" />
           <div className="h-[2px] bg-[#112A8F] mt-[3px]" />
@@ -627,17 +682,16 @@ export function CustomTemplate({
         <BlueBox>
           <div className="text-[12px] font-bold mb-1">Bill To</div>
           {row('Name', billToName)}
-          {row('Address', companyAddress)}
-          {row('City', settings?.company_city)}
-          {row('GSTIN', gstin)}
+          {row('Address', documentBillingAddress)}
+          {row('GSTIN', customerGstin)}
           <div className="mt-2 text-[12px] font-bold">Ship To</div>
           {row('Name', shipToName)}
-          {row('Address', settings?.company_address)}
+          {row('Address', documentShippingAddress)}
         </BlueBox>
         <BlueBox>
-          {row('Date', (data?.invoiceDate || data?.orderDate || data?.receivedDate) ? new Date(data.invoiceDate || data.orderDate || data.receivedDate).toLocaleDateString() : '')}
+          {row('Date', (data?.quotationDate || data?.invoiceDate || data?.orderDate || data?.receivedDate) ? new Date(data.quotationDate || data.invoiceDate || data.orderDate || data.receivedDate).toLocaleDateString() : '')}
           {row('PO No.', data?.purchaseOrder?.orderNumber || data?.purchaseOrderId || '')}
-          {row('Invoice No.', data?.invoiceNumber || data?.orderNumber || data?.grnNumber || data?.creditNoteNumber || '')}
+          {row('Document No.', data?.quotationNumber || data?.invoiceNumber || data?.orderNumber || data?.grnNumber || data?.creditNoteNumber || '')}
           {row('Terms of Payment', '')}
         </BlueBox>
       </div>
@@ -693,6 +747,7 @@ function amountInWordsLine(settings: any, data: any, documentType: DocumentType)
   const amount = (() => {
     if (documentType === 'saleInvoice') return data?.totalAmount;
     if (documentType === 'salesOrder') return data?.totalAmount;
+    if (documentType === 'saleQuotation') return data?.totalAmount;
     if (documentType === 'purchaseOrder') return data?.totalAmount;
     if (documentType === 'grn') return data?.totalAmount;
     if (documentType === 'creditNote') return data?.totalAmount;

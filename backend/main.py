@@ -6,7 +6,10 @@ import random
 from datetime import datetime, timedelta, date
 from collections import Counter
 from supabase import create_client, Client
-from fastapi.responses import JSONResponse
+import os
+import subprocess
+from datetime import datetime
+from fastapi.responses import JSONResponse, FileResponse
 from dotenv import load_dotenv
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import requests
@@ -619,6 +622,7 @@ def to_camel_case_customer(customer):
     # Parse JSONB addresses if they exist
     billing_address = customer.get("billing_address")
     shipping_address = customer.get("shipping_address")
+    additional_addresses = customer.get("additional_addresses", [])
     
     # If addresses are strings (JSON), try to parse them
     if isinstance(billing_address, str):
@@ -635,6 +639,13 @@ def to_camel_case_customer(customer):
         except:
             shipping_address = None
     
+    if isinstance(additional_addresses, str):
+        try:
+            import json
+            additional_addresses = json.loads(additional_addresses)
+        except:
+            additional_addresses = []
+    
     return {
         "id": customer["id"],
         "name": customer["name"],
@@ -642,6 +653,7 @@ def to_camel_case_customer(customer):
         "phone": customer.get("phone"),
         "billingAddress": billing_address or {},
         "shippingAddress": shipping_address or {},
+        "additionalAddresses": additional_addresses or [],
         "taxId": customer.get("tax_id"),
         "notes": customer.get("notes"),
         "creditLimit": float(customer["credit_limit"]) if customer.get("credit_limit") else 0,
@@ -1469,6 +1481,7 @@ def create_customer(customer: dict = Body(...), payload=Depends(require_permissi
             "phone": customer.get("phone"),
             "billing_address": customer.get("billingAddress"),
             "shipping_address": customer.get("shippingAddress"),
+            "additional_addresses": customer.get("additionalAddresses", []),
             "tax_id": customer.get("taxId"),
             "notes": customer.get("notes"),
             "credit_limit": customer.get("creditLimit", 0),
@@ -1502,6 +1515,7 @@ def update_customer(customer_id: str, customer: dict = Body(...), payload=Depend
             "phone": customer.get("phone"),
             "billing_address": customer.get("billingAddress"),
             "shipping_address": customer.get("shippingAddress"),
+            "additional_addresses": customer.get("additionalAddresses", []),
             "tax_id": customer.get("taxId"),
             "notes": customer.get("notes"),
             "credit_limit": customer.get("creditLimit", 0),
@@ -2850,6 +2864,22 @@ def update_user(user_id: str, user: dict = Body(...), payload=Depends(require_ro
     
     data = supabase.table("profiles").update(user_data).eq("id", user_id).execute()
     return JSONResponse(content=data.data)
+
+@app.put("/profile/me")
+def update_my_profile(profile: dict = Body(...), payload=Depends(verify_jwt)):
+    user_id = payload.get("sub")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    # Only allow updating specific fields
+    allowed_fields = ["full_name", "phone"]
+    update_data = {k: v for k, v in profile.items() if k in allowed_fields}
+    
+    if update_data:
+        data = supabase.table("profiles").update(update_data).eq("id", user_id).execute()
+        return JSONResponse(content=data.data)
+    
+    return JSONResponse(content=[])
 
 @app.delete("/users/{user_id}")
 def delete_user(user_id: str, payload=Depends(require_role(["admin"]))):
@@ -4539,6 +4569,8 @@ def create_sale_quotation(quotation: dict = Body(...), payload=Depends(require_p
     q_data = {
         "quotation_number": quotation["quotationNumber"],
         "customer_id": quotation["customerId"],
+        "billing_address": quotation.get("billingAddress"),
+        "shipping_address": quotation.get("shippingAddress"),
         "quotation_date": quotation.get("quotationDate", str(__import__("datetime").date.today())),
         "valid_until": quotation.get("validUntil"),
         "status": status,
@@ -4602,9 +4634,11 @@ def update_sale_quotation(quotation_id: str, quotation: dict = Body(...), payloa
         raise HTTPException(status_code=400, detail=f"Invalid status '{new_status}'. Valid: {valid_statuses}")
 
     q_data = {
-        "quotation_number": quotation["quotationNumber"],
+        "quotation_number": quotation.get("quotationNumber", current_q["quotation_number"]),
         "customer_id": quotation["customerId"],
-        "quotation_date": quotation.get("quotationDate"),
+        "billing_address": quotation.get("billingAddress"),
+        "shipping_address": quotation.get("shippingAddress"),
+        "quotation_date": quotation.get("quotationDate", current_q["quotation_date"]),
         "valid_until": quotation.get("validUntil"),
         "status": new_status,
         "subtotal": quotation.get("subtotal", 0),
@@ -4698,6 +4732,8 @@ def convert_quotation_to_order(quotation_id: str, payload=Depends(require_permis
     so_row = {
         "order_number": so_number,
         "customer_id": q["customer_id"],
+        "billing_address": q.get("billing_address"),
+        "shipping_address": q.get("shipping_address"),
         "order_date": str(_dt.date.today()),
         "status": "approved",
         "subtotal": q["subtotal"],
@@ -4811,6 +4847,7 @@ def create_sales_order(sales_order: dict = Body(...), payload=Depends(require_pe
         "order_number": sales_order["orderNumber"],
         "customer_po_number": sales_order.get("customerPoNumber"),
         "customer_id": sales_order["customerId"],
+        "billing_address": sales_order.get("billingAddress"),
         "shipping_address": sales_order.get("shippingAddress"),
         "order_date": sales_order["orderDate"],
         "due_date": sales_order.get("dueDate"),
@@ -4879,6 +4916,7 @@ def update_sales_order(sales_order_id: str, sales_order: dict = Body(...), paylo
         "order_number": sales_order["orderNumber"],
         "customer_po_number": sales_order.get("customerPoNumber"),
         "customer_id": sales_order["customerId"],
+        "billing_address": sales_order.get("billingAddress"),
         "shipping_address": sales_order.get("shippingAddress"),
         "order_date": sales_order["orderDate"],
         "due_date": sales_order.get("dueDate"),
@@ -4977,6 +5015,7 @@ def to_camel_case_sale_invoice(sale_invoice):
         "salesOrder": to_camel_case_sales_order(sale_invoice.get("sales_orders", {})) if sale_invoice.get("sales_orders") else None,
         "customerId": sale_invoice.get("customer_id"),
         "customer": sale_invoice.get("customers", {}),
+        "billingAddress": sale_invoice.get("billing_address"),
         "shippingAddress": sale_invoice.get("shipping_address"),
         "invoiceDate": sale_invoice.get("invoice_date"),
         "dueDate": sale_invoice.get("due_date"),
@@ -5099,6 +5138,7 @@ def create_sale_invoice(sale_invoice: dict = Body(...), payload=Depends(require_
             "order_number": f"SO-{sale_invoice['invoiceNumber']}",  # Generate order number from invoice number
             "customer_po_number": sale_invoice.get("customerPoNumber"),
             "customer_id": sale_invoice["customerId"],
+            "billing_address": sale_invoice.get("billingAddress"),
             "shipping_address": sale_invoice.get("shippingAddress"),
             "order_date": sale_invoice["invoiceDate"],  # Use invoice date as order date
             "due_date": sale_invoice.get("dueDate"),
@@ -5161,6 +5201,7 @@ def create_sale_invoice(sale_invoice: dict = Body(...), payload=Depends(require_
         "customer_po_number": sale_invoice.get("customerPoNumber"),
         "sales_order_id": sales_order_id,
         "customer_id": sale_invoice["customerId"] if sale_invoice["customerId"] else None,
+        "billing_address": sale_invoice.get("billingAddress"),
         "shipping_address": sale_invoice.get("shippingAddress"),
         "invoice_date": sale_invoice["invoiceDate"],
         "due_date": sale_invoice.get("dueDate"),
@@ -5296,6 +5337,7 @@ def update_sale_invoice(sale_invoice_id: str, sale_invoice: dict = Body(...), pa
         "customer_po_number": sale_invoice.get("customerPoNumber"),
         "sales_order_id": sale_invoice.get("salesOrderId") if sale_invoice.get("salesOrderId") else None,
         "customer_id": sale_invoice["customerId"] if sale_invoice["customerId"] else None,
+        "billing_address": sale_invoice.get("billingAddress"),
         "shipping_address": sale_invoice.get("shippingAddress"),
         "invoice_date": sale_invoice["invoiceDate"],
         "due_date": sale_invoice.get("dueDate"),
@@ -8195,3 +8237,109 @@ def consolidate_indents(request: dict = Body(...), payload=Depends(require_permi
         return JSONResponse(content={"status": "success", "purchaseOrderId": new_po["id"]})
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error consolidating indents: {str(e)}")
+
+# ============================================================
+# Backup & Restore Endpoints
+# ============================================================
+
+BACKUP_DIR = "/app/backups"
+
+@app.get("/backups")
+def get_backups(payload=Depends(require_role(["admin"]))):
+    if not os.path.exists(BACKUP_DIR):
+        os.makedirs(BACKUP_DIR)
+        
+    backups = []
+    for filename in os.listdir(BACKUP_DIR):
+        if filename.endswith(".sql"):
+            filepath = os.path.join(BACKUP_DIR, filename)
+            stat = os.stat(filepath)
+            
+            # Format size nicely
+            size_bytes = stat.st_size
+            if size_bytes < 1024 * 1024:
+                size_str = f"{size_bytes / 1024:.2f} KB"
+            else:
+                size_str = f"{size_bytes / (1024 * 1024):.2f} MB"
+                
+            backups.append({
+                "id": filename,
+                "name": filename,
+                "type": "Database",
+                "size": size_str,
+                "createdAt": datetime.fromtimestamp(stat.st_mtime).isoformat() + "Z",
+                "status": "Completed"
+            })
+            
+    # Sort backwards by date
+    backups.sort(key=lambda x: x["createdAt"], reverse=True)
+    return JSONResponse(content=backups)
+
+@app.post("/backups/create")
+def create_backup(payload=Depends(require_role(["admin"]))):
+    if not os.path.exists(BACKUP_DIR):
+        os.makedirs(BACKUP_DIR)
+        
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"backup_{timestamp}.sql"
+    filepath = os.path.join(BACKUP_DIR, filename)
+    
+    # We need to construct the DB URI from the env variables
+    # The container api uses POSTGRES_USER=postgres and POSTGRES_PASSWORD=postgres usually
+    # It also might be using supabase-db:5432
+    # Let's try to infer it from the env vars supplied to the API container
+    
+    # Or rely on standard supabase-db connection from internal docker network
+    db_password = os.environ.get("SUPABASE_DB_PASSWORD", "postgres")
+    db_uri = f"postgresql://postgres:{db_password}@supabase-db:5432/postgres"
+    
+    try:
+        # Run pg_dump
+        process = subprocess.run(
+            ["pg_dump", db_uri, "-f", filepath, "--clean", "--if-exists", "--no-owner"],
+            check=True,
+            capture_output=True,
+            text=True
+        )
+        return JSONResponse(content={"success": True, "filename": filename})
+    except subprocess.CalledProcessError as e:
+        print(f"pg_dump failed: {e.stderr}")
+        raise HTTPException(status_code=500, detail="Failed to create backup")
+        
+@app.get("/backups/download/{filename}")
+def download_backup(filename: str, payload=Depends(require_role(["admin"]))):
+    filepath = os.path.join(BACKUP_DIR, filename)
+    if not os.path.exists(filepath) or not filename.endswith(".sql"):
+        raise HTTPException(status_code=404, detail="Backup not found")
+        
+    return FileResponse(filepath, media_type="application/sql", filename=filename)
+    
+@app.post("/backups/restore/{filename}")
+def restore_backup(filename: str, payload=Depends(require_role(["admin"]))):
+    filepath = os.path.join(BACKUP_DIR, filename)
+    if not os.path.exists(filepath) or not filename.endswith(".sql"):
+        raise HTTPException(status_code=404, detail="Backup not found")
+        
+    db_password = os.environ.get("SUPABASE_DB_PASSWORD", "postgres")
+    db_uri = f"postgresql://postgres:{db_password}@supabase-db:5432/postgres"
+    
+    try:
+        process = subprocess.run(
+            ["psql", db_uri, "-f", filepath],
+            check=True,
+            capture_output=True,
+            text=True
+        )
+        return JSONResponse(content={"success": True, "message": "Database restored successfully"})
+    except subprocess.CalledProcessError as e:
+        print(f"psql restore failed: {e.stderr}")
+        raise HTTPException(status_code=500, detail="Failed to restore backup")
+
+@app.delete("/backups/{filename}")
+def delete_backup(filename: str, payload=Depends(require_role(["admin"]))):
+    filepath = os.path.join(BACKUP_DIR, filename)
+    if not os.path.exists(filepath) or not filename.endswith(".sql"):
+        raise HTTPException(status_code=404, detail="Backup not found")
+        
+    os.remove(filepath)
+    return JSONResponse(content={"success": True})

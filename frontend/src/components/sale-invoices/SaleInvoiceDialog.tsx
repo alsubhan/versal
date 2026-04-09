@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { format } from "date-fns";
 import { CalendarIcon, Plus, Trash, Search, Link, Unlink } from "lucide-react";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -59,10 +59,35 @@ export const SaleInvoiceDialog = ({ open, onOpenChange, saleInvoice, onSave, foc
   const [showProductSearch, setShowProductSearch] = useState(false);
   const [recentProducts, setRecentProducts] = useState<any[]>([]);
   const [showFrequentItemsDialog, setShowFrequentItemsDialog] = useState(false);
+  const [showFrequentItemsDialog, setShowFrequentItemsDialog] = useState(false);
   const [frequentItems, setFrequentItems] = useState<any[]>([]);
-  
+
   // Mode state: 'linked' = against existing SO, 'direct' = create internal SO
   const [creationMode, setCreationMode] = useState<'linked' | 'direct'>('linked');
+
+  const activeCustomer = useMemo(() => customers.find((c) => c.id === formData?.customerId), [customers, formData?.customerId]);
+  
+  const billingOptions = useMemo(() => {
+    if (!activeCustomer) return [];
+    const opts = [];
+    if (activeCustomer.billingAddress?.street) {
+      opts.push({ ...activeCustomer.billingAddress, _label: 'Default Billing', _id: 'default-billing' });
+    }
+    const additionals = (activeCustomer.additionalAddresses || []).filter(a => a.type === 'billing' || a.type === 'both');
+    additionals.forEach((a, i) => opts.push({ ...a, _label: a.label || `Additional ${i+1}`, _id: `add-b-${i}` }));
+    return opts;
+  }, [activeCustomer]);
+
+  const shippingOptions = useMemo(() => {
+    if (!activeCustomer) return [];
+    const opts = [];
+    if (activeCustomer.shippingAddress?.street) {
+      opts.push({ ...activeCustomer.shippingAddress, _label: 'Default Shipping', _id: 'default-shipping' });
+    }
+    const additionals = (activeCustomer.additionalAddresses || []).filter(a => a.type === 'shipping' || a.type === 'both');
+    additionals.forEach((a, i) => opts.push({ ...a, _label: a.label || `Additional ${i+1}`, _id: `add-s-${i}` }));
+    return opts;
+  }, [activeCustomer]);
   
   const [formData, setFormData] = useState<Partial<SaleInvoice>>({
     invoiceNumber: "",
@@ -284,10 +309,11 @@ export const SaleInvoiceDialog = ({ open, onOpenChange, saleInvoice, onSave, foc
       // Fetch complete sales order data including items
       const completeSO = await getSalesOrder(salesOrderId);
       if (completeSO && completeSO.items) {
-        // Set the customer ID from the sales order
         setFormData(prev => ({
           ...prev,
-          customerId: completeSO.customerId || completeSO.customer?.id || ''
+          customerId: completeSO.customerId || completeSO.customer?.id || '',
+          billingAddress: completeSO.billingAddress ? { ...completeSO.billingAddress } : undefined,
+          shippingAddress: completeSO.shippingAddress ? { ...completeSO.shippingAddress } : undefined
         }));
         
         // Check if we need to set default payment method for wholesale customers
@@ -487,15 +513,14 @@ export const SaleInvoiceDialog = ({ open, onOpenChange, saleInvoice, onSave, foc
           }
           // If customer has a shipping address, use it. Otherwise, reset to empty address structure
           if (selectedCustomer.shippingAddress && Object.keys(selectedCustomer.shippingAddress).length > 0) {
-            updates.shippingAddress = { 
-              street: selectedCustomer.shippingAddress.street || "",
-              city: selectedCustomer.shippingAddress.city || "",
-              state: selectedCustomer.shippingAddress.state || "",
-              zipCode: selectedCustomer.shippingAddress.zipCode || "",
-              country: selectedCustomer.shippingAddress.country || ""
-            };
+            updates.shippingAddress = { ...selectedCustomer.shippingAddress };
           } else {
             updates.shippingAddress = { street: "", city: "", state: "", zipCode: "", country: "" };
+          }
+          if (selectedCustomer.billingAddress && Object.keys(selectedCustomer.billingAddress).length > 0) {
+            updates.billingAddress = { ...selectedCustomer.billingAddress };
+          } else {
+            updates.billingAddress = { street: "", city: "", state: "", zipCode: "", country: "" };
           }
           return { ...prev, ...updates };
         });
@@ -978,6 +1003,49 @@ export const SaleInvoiceDialog = ({ open, onOpenChange, saleInvoice, onSave, foc
                       </SelectContent>
                     </Select>
                 </div>
+              )}
+
+              {formData.customerId && (
+                <>
+                  <div>
+                    <Label className="text-sm font-medium text-gray-700">Billing Location</Label>
+                    <Select
+                      value={formData.billingAddress?.street ? JSON.stringify(formData.billingAddress) : ""}
+                      onValueChange={(val) => setFormData(prev => ({ ...prev, billingAddress: JSON.parse(val) }))}
+                      disabled={saleInvoice?.id !== undefined}
+                    >
+                      <SelectTrigger className="mt-1">
+                        <SelectValue placeholder="Select billing location" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {billingOptions.map((opt: any) => (
+                          <SelectItem key={opt._id} value={JSON.stringify(opt)}>
+                            {opt._label} - {opt.street}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div>
+                    <Label className="text-sm font-medium text-gray-700">Shipping Location</Label>
+                    <Select
+                      value={formData.shippingAddress?.street ? JSON.stringify(formData.shippingAddress) : ""}
+                      onValueChange={(val) => setFormData(prev => ({ ...prev, shippingAddress: JSON.parse(val) }))}
+                      disabled={saleInvoice?.id !== undefined}
+                    >
+                      <SelectTrigger className="mt-1">
+                        <SelectValue placeholder="Select shipping location" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {shippingOptions.map((opt: any) => (
+                          <SelectItem key={opt._id} value={JSON.stringify(opt)}>
+                            {opt._label} - {opt.street}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </>
               )}
 
               {creationMode === 'direct' && (

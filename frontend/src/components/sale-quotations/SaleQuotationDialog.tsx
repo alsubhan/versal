@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { format } from "date-fns";
 import { CalendarIcon, Plus, Trash } from "lucide-react";
 import {
@@ -8,6 +8,16 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -34,7 +44,7 @@ import { toast } from "sonner";
 import { type SaleQuotation, type SaleQuotationItem } from "@/types/sale-quotation";
 import { type Customer } from "@/types/customer";
 import { useCurrencyStore } from "@/stores/currencyStore";
-import { getSaleQuotation, getProducts, getTaxes, getCustomers } from "@/lib/api";
+import { getSaleQuotation, getProducts, getTaxes, getCustomers, getFrequentItems } from "@/lib/api";
 import { ProductSearchDialog } from "@/components/shared/ProductSearchDialog";
 import { useSystemSettings } from "@/hooks/useSystemSettings";
 import { customerGstType, computeGstBreakup } from "@/lib/gst";
@@ -64,6 +74,32 @@ export const SaleQuotationDialog = ({
   const [loading, setLoading] = useState(false);
   const [dataLoading, setDataLoading] = useState(false);
   const [showProductSearch, setShowProductSearch] = useState(false);
+  const [showFrequentItemsDialog, setShowFrequentItemsDialog] = useState(false);
+  const [frequentItems, setFrequentItems] = useState<any[]>([]);
+
+  const activeCustomer = useMemo(() => customers.find((c) => c.id === formData?.customerId), [customers, formData?.customerId]);
+  
+  const billingOptions = useMemo(() => {
+    if (!activeCustomer) return [];
+    const opts = [];
+    if (activeCustomer.billingAddress?.street) {
+      opts.push({ ...activeCustomer.billingAddress, _label: 'Default Billing', _id: 'default-billing' });
+    }
+    const additionals = (activeCustomer.additionalAddresses || []).filter(a => a.type === 'billing' || a.type === 'both');
+    additionals.forEach((a, i) => opts.push({ ...a, _label: a.label || `Additional ${i+1}`, _id: `add-b-${i}` }));
+    return opts;
+  }, [activeCustomer]);
+
+  const shippingOptions = useMemo(() => {
+    if (!activeCustomer) return [];
+    const opts = [];
+    if (activeCustomer.shippingAddress?.street) {
+      opts.push({ ...activeCustomer.shippingAddress, _label: 'Default Shipping', _id: 'default-shipping' });
+    }
+    const additionals = (activeCustomer.additionalAddresses || []).filter(a => a.type === 'shipping' || a.type === 'both');
+    additionals.forEach((a, i) => opts.push({ ...a, _label: a.label || `Additional ${i+1}`, _id: `add-s-${i}` }));
+    return opts;
+  }, [activeCustomer]);
 
   const [formData, setFormData] = useState<Partial<SaleQuotation>>({
     quotationNumber: "",
@@ -200,9 +236,48 @@ export const SaleQuotationDialog = ({
     setFormData((prev) => ({ ...prev, [name]: value }));
   };
 
-  const handleSelectChange = (name: string, value: string) => {
-    setFormData((prev) => ({ ...prev, [name]: value }));
+  const handleSelectChange = async (name: string, value: string) => {
+    let updates: any = { [name]: value };
+    if (name === "customerId" && value) {
+      try {
+        const data = await getFrequentItems(value);
+        if (data && data.length > 0) {
+          setFrequentItems(data);
+          setShowFrequentItemsDialog(true);
+        }
+      } catch (error) {
+        console.error('Error fetching frequent items:', error);
+      }
+      
+      const selectedCustomer = customers.find(c => c.id === value);
+      if (selectedCustomer && selectedCustomer.shippingAddress && Object.keys(selectedCustomer.shippingAddress).length > 0) {
+        updates.shippingAddress = { ...selectedCustomer.shippingAddress };
+      } else {
+        updates.shippingAddress = { street: "", city: "", state: "", zipCode: "", country: "" };
+      }
+      if (selectedCustomer && selectedCustomer.billingAddress && Object.keys(selectedCustomer.billingAddress).length > 0) {
+        updates.billingAddress = { ...selectedCustomer.billingAddress };
+      } else {
+        updates.billingAddress = { street: "", city: "", state: "", zipCode: "", country: "" };
+      }
+    }
+    setFormData((prev) => ({ ...prev, ...updates }));
   };
+
+  const applyFrequentItems = () => {
+    if (frequentItems.length > 0) {
+      const newItems = frequentItems.map(item => ({
+        ...item,
+        id: undefined,
+        quantity: 1
+      }));
+      setItems(newItems as any);
+      calculateTotals(newItems as any);
+      toast.success(`Added ${newItems.length} frequently purchased items`);
+    }
+    setShowFrequentItemsDialog(false);
+  };
+
 
   const handleDateChange = (name: string, date: Date | undefined) => {
     if (date) setFormData((prev) => ({ ...prev, [name]: date }));
@@ -391,6 +466,49 @@ export const SaleQuotationDialog = ({
                   </SelectContent>
                 </Select>
               </div>
+
+              {formData.customerId && (
+                <>
+                  <div>
+                    <Label className="text-sm font-medium text-gray-700">Billing Location</Label>
+                    <Select
+                      value={formData.billingAddress?.street ? JSON.stringify(formData.billingAddress) : ""}
+                      onValueChange={(val) => setFormData(prev => ({ ...prev, billingAddress: JSON.parse(val) }))}
+                      disabled={isReadOnly}
+                    >
+                      <SelectTrigger className="mt-1">
+                        <SelectValue placeholder="Select billing location" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {billingOptions.map((opt: any) => (
+                          <SelectItem key={opt._id} value={JSON.stringify(opt)}>
+                            {opt._label} - {opt.street}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div>
+                    <Label className="text-sm font-medium text-gray-700">Shipping Location</Label>
+                    <Select
+                      value={formData.shippingAddress?.street ? JSON.stringify(formData.shippingAddress) : ""}
+                      onValueChange={(val) => setFormData(prev => ({ ...prev, shippingAddress: JSON.parse(val) }))}
+                      disabled={isReadOnly}
+                    >
+                      <SelectTrigger className="mt-1">
+                        <SelectValue placeholder="Select shipping location" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {shippingOptions.map((opt: any) => (
+                          <SelectItem key={opt._id} value={JSON.stringify(opt)}>
+                            {opt._label} - {opt.street}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </>
+              )}
 
               <div>
                 <Label className="text-sm font-medium text-gray-700">
@@ -646,6 +764,29 @@ export const SaleQuotationDialog = ({
           onProductSelect={handleProductSelect}
           products={products}
         />
+
+        <AlertDialog open={showFrequentItemsDialog} onOpenChange={setShowFrequentItemsDialog}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Auto-populate Frequent Items?</AlertDialogTitle>
+              <AlertDialogDescription>
+                We've found {frequentItems.length} products this customer frequently purchases. 
+                Would you like to add them to this quotation automatically?
+                <br /><br />
+                <span className="text-amber-600 font-medium font-sm italic uppercase">
+                  Note: This will replace any items currently in the list.
+                </span>
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Skip</AlertDialogCancel>
+              <AlertDialogAction onClick={applyFrequentItems}>
+                Add Items
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+
       </DialogContent>
     </Dialog>
   );

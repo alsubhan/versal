@@ -36,6 +36,8 @@ services:
       - SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}
     ports:
       - "${BACKEND_PORT:-8000}:8000"
+    volumes:
+      - ./backups:/app/backups
     restart: unless-stopped
 
   web:
