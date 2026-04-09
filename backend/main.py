@@ -4745,6 +4745,10 @@ def convert_quotation_to_order(quotation_id: str, payload=Depends(require_permis
         "discount_amount": q["discount_amount"],
         "total_amount": q["total_amount"],
         "rounding_adjustment": q.get("rounding_adjustment", 0),
+        "gst_type": q.get("gst_type", "IGST"),
+        "cgst_amount": q.get("cgst_amount", 0),
+        "sgst_amount": q.get("sgst_amount", 0),
+        "igst_amount": q.get("igst_amount", 0),
         "notes": f"Generated from Quotation {q['quotation_number']}",
         "created_by": payload["sub"],
     }
@@ -4770,6 +4774,7 @@ def convert_quotation_to_order(quotation_id: str, payload=Depends(require_permis
                 "tax": item.get("tax", 0),
                 "sale_tax_type": item.get("sale_tax_type", "exclusive"),
                 "unit_abbreviation": item.get("unit_abbreviation", ""),
+                "total": item.get("total", 0),
                 "created_by": payload["sub"],
             })
         client.table("sales_order_items").insert(so_items).execute()

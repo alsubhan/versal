@@ -31,17 +31,37 @@ export function getTitleByType(type: DocumentType) {
   }
 }
 
+const parseAddress = (addr: any) => {
+  if (!addr) return "";
+  if (typeof addr === 'string') {
+    if (addr.trim().startsWith('{')) {
+      try {
+        const parsed = JSON.parse(addr);
+        return parseAddress(parsed);
+      } catch {
+        return addr;
+      }
+    }
+    return addr;
+  }
+  if (typeof addr === 'object') {
+    return [addr.street, addr.city, addr.state, addr.zip || addr.zipCode, addr.country].filter(Boolean).join(', ');
+  }
+  return "";
+};
+
 export function Header({ settings, title, decorated = false }: { settings: Record<string, any>; title: string; decorated?: boolean }) {
   const includeLogo = settings?.include_company_logo !== false;
   const companyName = settings?.company_name || 'Your Company Name';
   const logoUrl = settings?.company_logo_url || settings?.companyLogoUrl || settings?.logo_url || settings?.logoUrl || '/placeholder.svg';
 
+  const companyStreet = parseAddress(settings?.company_address);
   const addressParts = [
-    settings?.company_address,
-    settings?.company_city,
-    settings?.company_state,
-    settings?.company_zip,
-    settings?.company_country,
+    companyStreet,
+    companyStreet.includes(settings?.company_city || '___') ? null : settings?.company_city,
+    companyStreet.includes(settings?.company_state || '___') ? null : settings?.company_state,
+    companyStreet.includes(settings?.company_zip || '___') ? null : settings?.company_zip,
+    companyStreet.includes(settings?.company_country || '___') ? null : settings?.company_country,
   ].filter(Boolean);
   const companyAddress = addressParts.join(', ');
   const companyPhone = settings?.company_phone || '';
@@ -486,20 +506,7 @@ export function SaleInvoiceStandardTemplate({ data, settings }: { data: Partial<
           <div>Phone: {(inv as any)?.customer?.phone || '-'}</div>
           <div className="mt-2 font-medium">Billing Address:</div>
           <div className="whitespace-pre-wrap">
-            {(inv as any)?.billingAddress?.street || (inv as any)?.customer?.billingAddress?.street || ''}
-            {((inv as any)?.billingAddress?.city || (inv as any)?.billingAddress?.state || (inv as any)?.billingAddress?.zipCode) && (
-              <>
-                <br />
-                {[
-                  (inv as any)?.billingAddress?.city || (inv as any)?.customer?.billingAddress?.city,
-                  (inv as any)?.billingAddress?.state || (inv as any)?.customer?.billingAddress?.state,
-                  (inv as any)?.billingAddress?.zipCode || (inv as any)?.customer?.billingAddress?.zipCode
-                ]
-                  .filter(Boolean)
-                  .join(', ')}
-              </>
-            )}
-            {((inv as any)?.billingAddress?.country || (inv as any)?.customer?.billingAddress?.country) && <><br />{(inv as any)?.billingAddress?.country || (inv as any)?.customer?.billingAddress?.country}</>}
+            {parseAddress(inv.billingAddress || (inv as any).customer?.billingAddress)}
           </div>
         </div>
       </div>
@@ -591,8 +598,7 @@ export function CustomTemplate({
 
   // Format address payload to string
   const formatAddress = (addr: any) => {
-    if (!addr || !addr.street) return '';
-    return [addr.street, addr.city, addr.state, addr.zipCode, addr.country].filter(Boolean).join(', ');
+    return parseAddress(addr);
   };
 
   const documentBillingAddress = formatAddress(data?.billingAddress) || formatAddress(data?.customer?.billingAddress) || '';
