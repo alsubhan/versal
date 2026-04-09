@@ -4921,74 +4921,76 @@ def create_sales_order(sales_order: dict = Body(...), payload=Depends(require_pe
 
 @app.put("/sales-orders/{sales_order_id}")
 def update_sales_order(sales_order_id: str, sales_order: dict = Body(...), payload=Depends(require_permission("sale_orders_edit"))):
-    # Get current sales order status for validation
-    current_order_data = supabase.table("sales_orders").select("status").eq("id", sales_order_id).execute()
-    if not current_order_data.data:
-        raise HTTPException(status_code=404, detail="Sales order not found")
-    
-    current_status = current_order_data.data[0]["status"]
-    
-    # Validate status transition
-    validate_sales_order_status_transition(current_status, operation="edit")
-    
-    # Map camelCase to snake_case
-    sales_order_data = {
-        "order_number": sales_order["orderNumber"],
-        "customer_po_number": sales_order.get("customerPoNumber"),
-        "customer_id": sales_order["customerId"],
-        "billing_address": sales_order.get("billingAddress"),
-        "shipping_address": sales_order.get("shippingAddress"),
-        "order_date": sales_order["orderDate"],
-        "due_date": sales_order.get("dueDate"),
-        "status": sales_order["status"],
-        "subtotal": sales_order["subtotal"],
-        "tax_amount": sales_order["taxAmount"],
-        "discount_amount": sales_order["discountAmount"],
-        "total_amount": sales_order["totalAmount"],
-        "rounding_adjustment": sales_order.get("roundingAdjustment", 0), # Added
-        "notes": sales_order.get("notes"),
-        "gst_type": sales_order.get("gstType", "IGST"),
-        "cgst_amount": sales_order.get("cgstAmount", 0),
-        "sgst_amount": sales_order.get("sgstAmount", 0),
-        "igst_amount": sales_order.get("igstAmount", 0),
-    }
-    
-    # Update the sales order
-    data = supabase.table("sales_orders").update(sales_order_data).eq("id", sales_order_id).execute()
-    updated_sales_order = data.data[0] if data.data else None
-    
-    if not updated_sales_order:
-        raise HTTPException(status_code=404, detail="Sales order not found")
-    
-    # Handle items update
-    items = sales_order.get("items", [])
-    if items:
-        # Delete existing items
-        supabase.table("sales_order_items").delete().eq("sales_order_id", sales_order_id).execute()
+    try:
+        # Get current sales order status for validation
+        current_order_data = supabase.table("sales_orders").select("status").eq("id", sales_order_id).execute()
+        if not current_order_data.data:
+            raise HTTPException(status_code=404, detail="Sales order not found")
         
-        # Insert new items
-        items_data = []
-        for item in items:
-            item_data = {
-                "sales_order_id": sales_order_id,
-                "product_id": item["productId"],
-                "product_name": item["productName"],
-                "sku_code": item["skuCode"],
-                "hsn_code": item["hsnCode"],
-                "quantity": item["quantity"],
-                "unit_price": item["unitPrice"],
-                "discount": item["discount"],
-                "tax": item["tax"],
-                "sale_tax_type": item.get("saleTaxType", "exclusive"), # Added
-                "unit_abbreviation": item.get("unitAbbreviation", ""), # Added
-                "created_by": payload["sub"]
-            }
-            items_data.append(item_data)
+        current_status = current_order_data.data[0]["status"]
         
-        if items_data:
-            supabase.table("sales_order_items").insert(items_data).execute()
-    
-    return JSONResponse(content=updated_sales_order)
+        # Validate status transition
+        validate_sales_order_status_transition(current_status, operation="edit")
+        
+        # Map camelCase to snake_case
+        sales_order_data = {
+            "order_number": sales_order["orderNumber"],
+            "customer_po_number": sales_order.get("customerPoNumber"),
+            "customer_id": sales_order["customerId"],
+            "billing_address": sales_order.get("billingAddress"),
+            "shipping_address": sales_order.get("shippingAddress"),
+            "order_date": sales_order["orderDate"],
+            "due_date": sales_order.get("dueDate"),
+            "status": sales_order["status"],
+            "subtotal": sales_order["subtotal"],
+            "tax_amount": sales_order["taxAmount"],
+            "discount_amount": sales_order["discountAmount"],
+            "total_amount": sales_order["totalAmount"],
+            "rounding_adjustment": sales_order.get("roundingAdjustment", 0), # Added
+            "notes": sales_order.get("notes"),
+            "gst_type": sales_order.get("gstType", "IGST"),
+            "cgst_amount": sales_order.get("cgstAmount", 0),
+            "sgst_amount": sales_order.get("sgstAmount", 0),
+            "igst_amount": sales_order.get("igstAmount", 0),
+            "created_by": payload["sub"]
+        }
+        
+        # Update the sales order
+        data = supabase.table("sales_orders").update(sales_order_data).eq("id", sales_order_id).execute()
+        
+        # Update items if provided
+        items = sales_order.get("items", [])
+        if items and len(items) > 0:
+            # First, delete existing items
+            supabase.table("sales_order_items").delete().eq("sales_order_id", sales_order_id).execute()
+            
+            # Then insert the updated items
+            items_data = []
+            for item in items:
+                item_data = {
+                    "sales_order_id": sales_order_id,
+                    "product_id": item["productId"],
+                    "product_name": item["productName"],
+                    "sku_code": item["skuCode"],
+                    "hsn_code": item["hsnCode"],
+                    "quantity": int(float(item["quantity"])), # Ensure integer
+                    "unit_price": float(item["unitPrice"]),
+                    "discount": float(item["discount"]),
+                    "tax": float(item["tax"]),
+                    "sale_tax_type": item.get("saleTaxType", "exclusive"),
+                    "unit_abbreviation": item.get("unitAbbreviation", ""),
+                    "created_by": payload["sub"]
+                }
+                items_data.append(item_data)
+            
+            # Insert all items
+            if items_data:
+                supabase.table("sales_order_items").insert(items_data).execute()
+        
+        return JSONResponse(content=data.data[0])
+    except Exception as e:
+        print(f"UPDATE SALES ORDER ERROR: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.delete("/sales-orders/{sales_order_id}")
 def delete_sales_order(sales_order_id: str, payload=Depends(require_permission("sale_orders_delete"))):
@@ -5112,225 +5114,229 @@ def get_sale_invoice_items(sale_invoice_id: str, payload=Depends(require_permiss
 
 @app.post("/sale-invoices")
 def create_sale_invoice(sale_invoice: dict = Body(...), payload=Depends(require_permission("sale_invoices_create"))):
-    # Check if this is a direct sale invoice (not linked to existing sales order)
-    is_direct = sale_invoice.get("isDirect", False)
-    sales_order_id = sale_invoice.get("salesOrderId")
-    
-    # Get customer information for credit validation and payment method defaults
-    customer_id = sale_invoice.get("customerId")
-    if not customer_id:
-        raise HTTPException(status_code=400, detail="Customer ID is required")
-    
-    # Get customer details including type and credit limit
-    customer_data = supabase.table("customers").select("customer_type, credit_limit").eq("id", customer_id).execute()
-    if not customer_data.data:
-        raise HTTPException(status_code=400, detail="Customer not found")
-    
-    customer = customer_data.data[0]
-    customer_type = customer.get("customer_type", "retail")
-    credit_limit = customer.get("credit_limit", 0)
-    
-    # Set default payment method for wholesale customers
-    payment_method = sale_invoice.get("paymentMethod")
-    if not payment_method and customer_type in ["wholesale", "distributor"]:
-        payment_method = "credit"
-        sale_invoice["paymentMethod"] = "credit"
-    
-    # Validate credit limit for wholesale customers
-    if customer_type in ["wholesale", "distributor"] and payment_method == "credit":
-        # Call the credit validation function
-        credit_check_result = supabase.rpc("check_customer_credit_limit", {
-            "p_customer_id": customer_id,
-            "p_invoice_amount": sale_invoice.get("totalAmount", 0)
-        }).execute()
+    try:
+        # Check if this is a direct sale invoice (not linked to existing sales order)
+        is_direct = sale_invoice.get("isDirect", False)
+        sales_order_id = sale_invoice.get("salesOrderId")
         
-        # The function returns True if credit is sufficient, False otherwise
-        if not credit_check_result.data:
-            raise HTTPException(
-                status_code=400, 
-                detail="Insufficient credit limit: Credit limit exceeded"
-            )
-    
-    # If it's a direct sale invoice, create a sales order first
-    if is_direct and not sales_order_id:
-        # Create sales order data from sale invoice data
-        sales_order_data = {
-            "order_number": f"SO-{sale_invoice['invoiceNumber']}",  # Generate order number from invoice number
+        # Get customer information for credit validation and payment method defaults
+        customer_id = sale_invoice.get("customerId")
+        if not customer_id:
+            raise HTTPException(status_code=400, detail="Customer ID is required")
+        
+        # Get customer details including type and credit limit
+        customer_data = supabase.table("customers").select("customer_type, credit_limit").eq("id", customer_id).execute()
+        if not customer_data.data:
+            raise HTTPException(status_code=400, detail="Customer not found")
+        
+        customer = customer_data.data[0]
+        customer_type = customer.get("customer_type", "retail")
+        credit_limit = customer.get("credit_limit", 0)
+        
+        # Set default payment method for wholesale customers
+        payment_method = sale_invoice.get("paymentMethod")
+        if not payment_method and customer_type in ["wholesale", "distributor"]:
+            payment_method = "credit"
+            sale_invoice["paymentMethod"] = "credit"
+        
+        # Validate credit limit for wholesale customers
+        if customer_type in ["wholesale", "distributor"] and payment_method == "credit":
+            # Call the credit validation function
+            credit_check_result = supabase.rpc("check_customer_credit_limit", {
+                "p_customer_id": customer_id,
+                "p_invoice_amount": sale_invoice.get("totalAmount", 0)
+            }).execute()
+            
+            # The function returns True if credit is sufficient, False otherwise
+            if not credit_check_result.data:
+                raise HTTPException(
+                    status_code=400, 
+                    detail="Insufficient credit limit: Credit limit exceeded"
+                )
+        
+        # If it's a direct sale invoice, create a sales order first
+        if is_direct and not sales_order_id:
+            # Create sales order data from sale invoice data
+            sales_order_data = {
+                "order_number": f"SO-{sale_invoice['invoiceNumber']}",  # Generate order number from invoice number
+                "customer_po_number": sale_invoice.get("customerPoNumber"),
+                "customer_id": sale_invoice["customerId"],
+                "billing_address": sale_invoice.get("billingAddress"),
+                "shipping_address": sale_invoice.get("shippingAddress"),
+                "order_date": sale_invoice["invoiceDate"],  # Use invoice date as order date
+                "due_date": sale_invoice.get("dueDate"),
+                "status": "approved",  # Set status to approved since it's being invoiced
+                "subtotal": float(sale_invoice["subtotal"]),
+                "tax_amount": float(sale_invoice["taxAmount"]),
+                "discount_amount": float(sale_invoice["discountAmount"]),
+                "total_amount": float(sale_invoice["totalAmount"]),
+                "rounding_adjustment": float(sale_invoice.get("roundingAdjustment", 0)),
+                "notes": f"Auto-generated from direct sale invoice {sale_invoice['invoiceNumber']}",
+                "created_by": payload["sub"]
+            }
+            
+            # Create the sales order
+            so_data = supabase.table("sales_orders").insert(sales_order_data).execute()
+            created_sales_order = so_data.data[0] if so_data.data else None
+            
+            if not created_sales_order:
+                raise HTTPException(status_code=500, detail="Failed to create auto-generated sales order")
+            
+            # Set the sales order ID for the sale invoice
+            sales_order_id = created_sales_order["id"]
+            
+            # Create sales order items from sale invoice items
+            items = sale_invoice.get("items", [])
+            if items and len(items) > 0:
+                so_items_data = []
+                for item in items:
+                    so_item_data = {
+                        "sales_order_id": created_sales_order["id"],
+                        "product_id": item["productId"] if item["productId"] else None,
+                        "product_name": item["productName"],
+                        "sku_code": item["skuCode"],
+                        "hsn_code": item["hsnCode"],
+                        "quantity": int(float(item["quantity"])),
+                        "unit_price": float(item["unitPrice"]),
+                        "discount": float(item["discount"]),
+                        "tax": float(item["tax"]),
+                        "sale_tax_type": item.get("saleTaxType", "exclusive"),
+                        "unit_abbreviation": item.get("unitAbbreviation", ""),
+                        "created_by": payload["sub"]
+                    }
+                    
+                    # Validate required UUID fields for items
+                    if not so_item_data["product_id"]:
+                        raise HTTPException(status_code=400, detail="Product ID is required for all items")
+                    
+                    if not so_item_data["created_by"]:
+                        raise HTTPException(status_code=400, detail="Created by user ID is required")
+                    
+                    so_items_data.append(so_item_data)
+                
+                # Insert all sales order items
+                if so_items_data:
+                    supabase.table("sales_order_items").insert(so_items_data).execute()
+        
+        # Map camelCase to snake_case for sale invoice
+        sale_invoice_data = {
+            "invoice_number": sale_invoice["invoiceNumber"],
             "customer_po_number": sale_invoice.get("customerPoNumber"),
-            "customer_id": sale_invoice["customerId"],
+            "sales_order_id": sales_order_id,
+            "customer_id": sale_invoice["customerId"] if sale_invoice["customerId"] else None,
             "billing_address": sale_invoice.get("billingAddress"),
             "shipping_address": sale_invoice.get("shippingAddress"),
-            "order_date": sale_invoice["invoiceDate"],  # Use invoice date as order date
+            "invoice_date": sale_invoice["invoiceDate"],
             "due_date": sale_invoice.get("dueDate"),
-            "status": "approved",  # Set status to approved since it's being invoiced
-            "subtotal": sale_invoice["subtotal"],
-            "tax_amount": sale_invoice["taxAmount"],
-            "discount_amount": sale_invoice["discountAmount"],
-            "total_amount": sale_invoice["totalAmount"],
-            "rounding_adjustment": sale_invoice.get("roundingAdjustment", 0),
-            "notes": f"Auto-generated from direct sale invoice {sale_invoice['invoiceNumber']}",
-            "created_by": payload["sub"]
+            "status": sale_invoice["status"],
+            "payment_method": payment_method,  # Add payment method
+            "subtotal": float(sale_invoice["subtotal"]),
+            "tax_amount": float(sale_invoice["taxAmount"]),
+            "discount_amount": float(sale_invoice["discountAmount"]),
+            "total_amount": float(sale_invoice["totalAmount"]),
+            "rounding_adjustment": float(sale_invoice.get("roundingAdjustment", 0)),
+            "gst_type": sale_invoice.get("gstType", "IGST"),
+            "cgst_amount": float(sale_invoice.get("cgstAmount", 0)),
+            "sgst_amount": float(sale_invoice.get("sgstAmount", 0)),
+            "igst_amount": float(sale_invoice.get("igstAmount", 0)),
+            "is_direct": is_direct,  # Set is_direct flag
+            "notes": sale_invoice.get("notes"),
+            "created_by": payload["sub"] if payload["sub"] else None,
+            # Initialize amount_paid and amount_due for proper payment tracking
+            "amount_paid": 0,
+            "amount_due": float(sale_invoice["totalAmount"]),
         }
         
-        # Create the sales order
-        so_data = supabase.table("sales_orders").insert(sales_order_data).execute()
-        created_sales_order = so_data.data[0] if so_data.data else None
+        # Validate required UUID fields
+        if not sale_invoice_data["customer_id"]:
+            raise HTTPException(status_code=400, detail="Customer ID is required")
         
-        if not created_sales_order:
-            raise HTTPException(status_code=500, detail="Failed to create auto-generated sales order")
+        if not sale_invoice_data["created_by"]:
+            raise HTTPException(status_code=400, detail="Created by user ID is required")
         
-        # Set the sales order ID for the sale invoice
-        sales_order_id = created_sales_order["id"]
+        # Validate payment method is required
+        if not sale_invoice_data["payment_method"]:
+            raise HTTPException(status_code=400, detail="Payment method is required")
         
-        # Create sales order items from sale invoice items
+        # Create the sale invoice
+        data = supabase.table("sale_invoices").insert(sale_invoice_data).execute()
+        created_sale_invoice = data.data[0] if data.data else None
+        
+        if not created_sale_invoice:
+            raise HTTPException(status_code=500, detail="Failed to create sale invoice")
+        
+        # Insert items if they exist
         items = sale_invoice.get("items", [])
         if items and len(items) > 0:
-            so_items_data = []
+            # Validate serial numbers BEFORE creating items_data
             for item in items:
-                so_item_data = {
-                    "sales_order_id": created_sales_order["id"],
+                serials = item.get("serialNumbers") or []
+                if serials and item.get("productId"):
+                    try:
+                        operation = "sell" if sale_invoice.get("status") == "sent" else "reserve"
+                        validated_serials = _validate_serials_for_product(
+                            item["productId"], 
+                            serials, 
+                            operation=operation
+                        )
+                        # Also validate that quantity matches serial count
+                        if len(validated_serials) != item.get("quantity", 0):
+                            raise HTTPException(
+                                status_code=400, 
+                                detail=f"Quantity ({item.get('quantity', 0)}) must match serial count ({len(validated_serials)}) for serialized product"
+                            )
+                    except Exception as e:
+                        raise HTTPException(status_code=400, detail=f"Serial validation failed: {str(e)}")
+            
+            items_data = []
+            for item in items:
+                item_data = {
+                    "invoice_id": created_sale_invoice["id"],
                     "product_id": item["productId"] if item["productId"] else None,
                     "product_name": item["productName"],
                     "sku_code": item["skuCode"],
                     "hsn_code": item["hsnCode"],
-                    "quantity": item["quantity"],
-                    "unit_price": item["unitPrice"],
-                    "discount": item["discount"],
-                    "tax": item["tax"],
+                    "quantity": int(float(item["quantity"])),
+                    "unit_price": float(item["unitPrice"]),
+                    "discount": float(item["discount"]),
+                    "tax": float(item["tax"]),
                     "sale_tax_type": item.get("saleTaxType", "exclusive"),
                     "unit_abbreviation": item.get("unitAbbreviation", ""),
-                    "created_by": payload["sub"]
+                    "created_by": payload["sub"] if payload["sub"] else None
                 }
                 
                 # Validate required UUID fields for items
-                if not so_item_data["product_id"]:
+                if not item_data["product_id"]:
                     raise HTTPException(status_code=400, detail="Product ID is required for all items")
                 
-                if not so_item_data["created_by"]:
+                if not item_data["created_by"]:
                     raise HTTPException(status_code=400, detail="Created by user ID is required")
                 
-                so_items_data.append(so_item_data)
+                items_data.append(item_data)
             
-            # Insert all sales order items
-            if so_items_data:
-                supabase.table("sales_order_items").insert(so_items_data).execute()
-    
-    # Map camelCase to snake_case for sale invoice
-    sale_invoice_data = {
-        "invoice_number": sale_invoice["invoiceNumber"],
-        "customer_po_number": sale_invoice.get("customerPoNumber"),
-        "sales_order_id": sales_order_id,
-        "customer_id": sale_invoice["customerId"] if sale_invoice["customerId"] else None,
-        "billing_address": sale_invoice.get("billingAddress"),
-        "shipping_address": sale_invoice.get("shippingAddress"),
-        "invoice_date": sale_invoice["invoiceDate"],
-        "due_date": sale_invoice.get("dueDate"),
-        "status": sale_invoice["status"],
-        "payment_method": payment_method,  # Add payment method
-        "subtotal": sale_invoice["subtotal"],
-        "tax_amount": sale_invoice["taxAmount"],
-        "discount_amount": sale_invoice["discountAmount"],
-        "total_amount": sale_invoice["totalAmount"],
-        "rounding_adjustment": sale_invoice.get("roundingAdjustment", 0),
-        "gst_type": sale_invoice.get("gstType", "IGST"),
-        "cgst_amount": sale_invoice.get("cgstAmount", 0),
-        "sgst_amount": sale_invoice.get("sgstAmount", 0),
-        "igst_amount": sale_invoice.get("igstAmount", 0),
-        "is_direct": is_direct,  # Set is_direct flag
-        "notes": sale_invoice.get("notes"),
-        "created_by": payload["sub"] if payload["sub"] else None,
-        # Initialize amount_paid and amount_due for proper payment tracking
-        "amount_paid": 0,
-        "amount_due": sale_invoice["totalAmount"],
-    }
-    
-    # Validate required UUID fields
-    if not sale_invoice_data["customer_id"]:
-        raise HTTPException(status_code=400, detail="Customer ID is required")
-    
-    if not sale_invoice_data["created_by"]:
-        raise HTTPException(status_code=400, detail="Created by user ID is required")
-    
-    # Validate payment method is required
-    if not sale_invoice_data["payment_method"]:
-        raise HTTPException(status_code=400, detail="Payment method is required")
-    
-    # Create the sale invoice
-    data = supabase.table("sale_invoices").insert(sale_invoice_data).execute()
-    created_sale_invoice = data.data[0] if data.data else None
-    
-    if not created_sale_invoice:
-        raise HTTPException(status_code=500, detail="Failed to create sale invoice")
-    
-    # Insert items if they exist
-    items = sale_invoice.get("items", [])
-    if items and len(items) > 0:
-        # Validate serial numbers BEFORE creating items_data
-        for item in items:
-            serials = item.get("serialNumbers") or []
-            if serials and item.get("productId"):
-                try:
-                    operation = "sell" if sale_invoice.get("status") == "sent" else "reserve"
-                    validated_serials = _validate_serials_for_product(
-                        item["productId"], 
-                        serials, 
-                        operation=operation
-                    )
-                    # Also validate that quantity matches serial count
-                    if len(validated_serials) != item.get("quantity", 0):
-                        raise HTTPException(
-                            status_code=400, 
-                            detail=f"Quantity ({item.get('quantity', 0)}) must match serial count ({len(validated_serials)}) for serialized product"
-                        )
-                except Exception as e:
-                    raise HTTPException(status_code=400, detail=f"Serial validation failed: {str(e)}")
+            # Insert all items
+            if items_data:
+                result = supabase.table("sale_invoice_items").insert(items_data).execute()
+                # Reserve serials on draft, or mark sold on sent (finalized)
+                if result and result.data:
+                    finalize_now = (created_sale_invoice.get("status") == "sent")
+                    for idx, inserted in enumerate(result.data):
+                        try:
+                            raw_item = items[idx]
+                            serials = raw_item.get("serialNumbers") or []
+                            if serials and raw_item.get("productId"):
+                                _reserve_or_sell_serials_for_invoice_item(raw_item["productId"], serials, inserted["id"], finalize=finalize_now, created_by=payload["sub"])
+                        except Exception as _:
+                            pass
         
-        items_data = []
-        for item in items:
-            item_data = {
-                "invoice_id": created_sale_invoice["id"],
-                "product_id": item["productId"] if item["productId"] else None,
-                "product_name": item["productName"],
-                "sku_code": item["skuCode"],
-                "hsn_code": item["hsnCode"],
-                "quantity": item["quantity"],
-                "unit_price": item["unitPrice"],
-                "discount": item["discount"],
-                "tax": item["tax"],
-                "sale_tax_type": item.get("saleTaxType", "exclusive"),
-                "unit_abbreviation": item.get("unitAbbreviation", ""),
-                "created_by": payload["sub"] if payload["sub"] else None
-            }
-            
-            # Validate required UUID fields for items
-            if not item_data["product_id"]:
-                raise HTTPException(status_code=400, detail="Product ID is required for all items")
-            
-            if not item_data["created_by"]:
-                raise HTTPException(status_code=400, detail="Created by user ID is required")
-            
-            items_data.append(item_data)
+        # Update linked sales order status if invoice is created with "sent" status
+        if created_sale_invoice["status"] == "sent" and created_sale_invoice["sales_order_id"]:
+            supabase.table("sales_orders").update({"status": "sent"}).eq("id", created_sale_invoice["sales_order_id"]).execute()
         
-        # Insert all items
-        if items_data:
-            result = supabase.table("sale_invoice_items").insert(items_data).execute()
-            # Reserve serials on draft, or mark sold on sent (finalized)
-            if result and result.data:
-                finalize_now = (created_sale_invoice.get("status") == "sent")
-                for idx, inserted in enumerate(result.data):
-                    try:
-                        raw_item = items[idx]
-                        serials = raw_item.get("serialNumbers") or []
-                        if serials and raw_item.get("productId"):
-                            _reserve_or_sell_serials_for_invoice_item(raw_item["productId"], serials, inserted["id"], finalize=finalize_now, created_by=payload["sub"])
-                    except Exception as _:
-                        pass
-    
-    # Update linked sales order status if invoice is created with "sent" status
-    if created_sale_invoice["status"] == "sent" and created_sale_invoice["sales_order_id"]:
-        supabase.table("sales_orders").update({"status": "sent"}).eq("id", created_sale_invoice["sales_order_id"]).execute()
-    
-    return JSONResponse(content=created_sale_invoice)
+        return JSONResponse(content=created_sale_invoice)
+    except Exception as e:
+        print(f"CREATE SALE INVOICE ERROR: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/sale-invoices/overdue")
 def get_overdue_invoices(payload=Depends(require_permission("sale_invoices_view"))):
