@@ -124,6 +124,21 @@ const SettingsPage = () => {
           if (typeof address !== 'string') {
             return { street: '', city: '', stateZip: '', country: '' };
           }
+          
+          try {
+            const parsed = JSON.parse(address);
+            if (typeof parsed === 'object' && parsed !== null) {
+              return {
+                street: parsed.street || '',
+                city: parsed.city || '',
+                stateZip: `${parsed.state || ''} ${parsed.zip || ''}`.trim(),
+                country: parsed.country || ''
+              };
+            }
+          } catch (e) {
+            // Ignore JSON parse error, fallback to string splitting
+          }
+
           // Example: "123 Business Street, Tech City, TC 12345, USA"
           const parts = address.split(',').map((part: string) => part.trim());
           if (parts.length >= 4) {
@@ -143,7 +158,7 @@ const SettingsPage = () => {
         const stateZipParts = addressParts.stateZip.split(' ');
         const state = stateZipParts[0] || '';
         const zip = stateZipParts.slice(1).join(' ') || '';
-        const displayAddress = typeof addressData === 'object' && addressData !== null ? (addressData as any).street || '' : String(addressData);
+        const displayAddress = addressParts.street;
         
         // Helper function to get setting value with proper type conversion
         const getSettingValue = (key: string, defaultValue: string | number | boolean = '') => {
