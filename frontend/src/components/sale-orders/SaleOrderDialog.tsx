@@ -83,8 +83,6 @@ export const SaleOrderDialog = ({ open, onOpenChange, salesOrder, onSave }: Sale
     return opts;
   }, [activeCustomer]);
   
-  const [items, setItems] = useState<SalesOrderItem[]>([]);
-  
   const [formData, setFormData] = useState<Partial<SalesOrder>>({
     orderNumber: "",
     customerId: "",
