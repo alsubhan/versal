@@ -775,6 +775,8 @@ export const SaleInvoiceDialog = ({ open, onOpenChange, saleInvoice, onSave, foc
       formData.status?.trim() &&
       formData.customerId?.trim() && // Always require customer ID
       formData.paymentMethod && // Payment method is mandatory
+      formData.billingAddress?.street && // Mandatory
+      formData.shippingAddress?.street && // Mandatory
       items && items.length > 0
     );
 
@@ -800,7 +802,9 @@ export const SaleInvoiceDialog = ({ open, onOpenChange, saleInvoice, onSave, foc
       
       const errors: string[] = [];
       
-      // Basic required checks (existing code)...
+      // Basic required checks
+      if (!formData.billingAddress?.street) errors.push("Billing location is required");
+      if (!formData.shippingAddress?.street) errors.push("Shipping location is required");
       // Validate items
       if (!items || items.length === 0) {
         errors.push("At least one item must be added to the invoice");
@@ -1008,7 +1012,9 @@ export const SaleInvoiceDialog = ({ open, onOpenChange, saleInvoice, onSave, foc
               {formData.customerId && (
                 <>
                   <div>
-                    <Label className="text-sm font-medium text-gray-700">Billing Location</Label>
+                    <Label className="text-sm font-medium text-gray-700">
+                      Billing Location <span className="text-red-500">*</span>
+                    </Label>
                     <Select
                       value={formData.billingAddress?.street ? JSON.stringify(formData.billingAddress) : ""}
                       onValueChange={(val) => setFormData(prev => ({ ...prev, billingAddress: JSON.parse(val) }))}
@@ -1027,7 +1033,9 @@ export const SaleInvoiceDialog = ({ open, onOpenChange, saleInvoice, onSave, foc
                     </Select>
                   </div>
                   <div>
-                    <Label className="text-sm font-medium text-gray-700">Shipping Location</Label>
+                    <Label className="text-sm font-medium text-gray-700">
+                      Shipping Location <span className="text-red-500">*</span>
+                    </Label>
                     <Select
                       value={formData.shippingAddress?.street ? JSON.stringify(formData.shippingAddress) : ""}
                       onValueChange={(val) => setFormData(prev => ({ ...prev, shippingAddress: JSON.parse(val) }))}

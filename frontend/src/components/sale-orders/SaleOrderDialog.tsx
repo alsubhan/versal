@@ -644,6 +644,14 @@ export const SaleOrderDialog = ({ open, onOpenChange, salesOrder, onSave }: Sale
       if (!formData.dueDate) {
         errors.push("Due Date is required");
       }
+
+      if (!formData.billingAddress?.street) {
+        errors.push("Billing location is required");
+      }
+
+      if (!formData.shippingAddress?.street) {
+        errors.push("Shipping location is required");
+      }
       
       const finalStatus = statusOverride || formData.status;
       if (!finalStatus?.trim()) {
@@ -771,7 +779,9 @@ export const SaleOrderDialog = ({ open, onOpenChange, salesOrder, onSave }: Sale
               {formData.customerId && (
                 <>
                   <div>
-                    <Label className="text-sm font-medium text-gray-700">Billing Location</Label>
+                    <Label className="text-sm font-medium text-gray-700">
+                      Billing Location <span className="text-red-500">*</span>
+                    </Label>
                     <Select
                       value={formData.billingAddress?.street ? JSON.stringify(formData.billingAddress) : ""}
                       onValueChange={(val) => setFormData(prev => ({ ...prev, billingAddress: JSON.parse(val) }))}
@@ -789,7 +799,9 @@ export const SaleOrderDialog = ({ open, onOpenChange, salesOrder, onSave }: Sale
                     </Select>
                   </div>
                   <div>
-                    <Label className="text-sm font-medium text-gray-700">Shipping Location</Label>
+                    <Label className="text-sm font-medium text-gray-700">
+                      Shipping Location <span className="text-red-500">*</span>
+                    </Label>
                     <Select
                       value={formData.shippingAddress?.street ? JSON.stringify(formData.shippingAddress) : ""}
                       onValueChange={(val) => setFormData(prev => ({ ...prev, shippingAddress: JSON.parse(val) }))}

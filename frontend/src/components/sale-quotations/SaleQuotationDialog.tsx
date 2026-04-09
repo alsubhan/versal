@@ -392,6 +392,15 @@ export const SaleQuotationDialog = ({
       if (!formData.quotationNumber?.trim()) errors.push("Quotation # is required");
       if (!formData.customerId?.trim()) errors.push("Customer is required");
       if (!formData.quotationDate) errors.push("Quotation Date is required");
+      
+      if (!formData.billingAddress?.street) {
+        errors.push("Billing location is required");
+      }
+      
+      if (!formData.shippingAddress?.street) {
+        errors.push("Shipping location is required");
+      }
+
       if (!items || items.length === 0) errors.push("At least one item is required");
 
       if (errors.length > 0) {
@@ -470,7 +479,9 @@ export const SaleQuotationDialog = ({
               {formData.customerId && (
                 <>
                   <div>
-                    <Label className="text-sm font-medium text-gray-700">Billing Location</Label>
+                    <Label className="text-sm font-medium text-gray-700">
+                      Billing Location <span className="text-red-500">*</span>
+                    </Label>
                     <Select
                       value={formData.billingAddress?.street ? JSON.stringify(formData.billingAddress) : ""}
                       onValueChange={(val) => setFormData(prev => ({ ...prev, billingAddress: JSON.parse(val) }))}
@@ -489,7 +500,9 @@ export const SaleQuotationDialog = ({
                     </Select>
                   </div>
                   <div>
-                    <Label className="text-sm font-medium text-gray-700">Shipping Location</Label>
+                    <Label className="text-sm font-medium text-gray-700">
+                      Shipping Location <span className="text-red-500">*</span>
+                    </Label>
                     <Select
                       value={formData.shippingAddress?.street ? JSON.stringify(formData.shippingAddress) : ""}
                       onValueChange={(val) => setFormData(prev => ({ ...prev, shippingAddress: JSON.parse(val) }))}

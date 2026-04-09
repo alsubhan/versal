@@ -4623,11 +4623,12 @@ def create_sale_quotation(quotation: dict = Body(...), payload=Depends(require_p
 def update_sale_quotation(quotation_id: str, quotation: dict = Body(...), payload=Depends(require_permission("sale_quotations_edit"))):
     """Update a sale quotation. Blocked for accepted/expired/rejected/cancelled."""
     client = get_supabase_client()
-    current = client.table("sale_quotations").select("status").eq("id", quotation_id).execute()
+    current = client.table("sale_quotations").select("*").eq("id", quotation_id).execute()
     if not current.data:
         raise HTTPException(status_code=404, detail="Quotation not found")
 
-    current_status = current.data[0]["status"]
+    current_q = current.data[0]
+    current_status = current_q["status"]
     if current_status in TERMINAL_QUOTATION_STATUSES:
         raise HTTPException(status_code=400, detail=f"Cannot edit quotation with status '{current_status}'")
 
