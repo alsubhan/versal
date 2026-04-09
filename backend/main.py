@@ -4736,10 +4736,12 @@ def convert_quotation_to_order(quotation_id: str, payload=Depends(require_permis
     so_row = {
         "order_number": so_number,
         "customer_id": q["customer_id"],
+        "quotation_id": quotation_id,
         "billing_address": q.get("billing_address"),
         "shipping_address": q.get("shipping_address"),
         "order_date": str(_dt.date.today()),
-        "status": "approved",
+        "due_date": str(_dt.date.today() + _dt.timedelta(days=7)),
+        "status": "draft",
         "subtotal": q["subtotal"],
         "tax_amount": q["tax_amount"],
         "discount_amount": q["discount_amount"],

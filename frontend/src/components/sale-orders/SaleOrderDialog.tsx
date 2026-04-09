@@ -783,7 +783,10 @@ export const SaleOrderDialog = ({ open, onOpenChange, salesOrder, onSave }: Sale
                       Billing Location <span className="text-red-500">*</span>
                     </Label>
                     <Select
-                      value={formData.billingAddress?.street ? JSON.stringify(formData.billingAddress) : ""}
+                      value={(() => {
+                        const match = billingOptions.find((opt: any) => opt.street === formData.billingAddress?.street);
+                        return match ? JSON.stringify(match) : "";
+                      })()}
                       onValueChange={(val) => setFormData(prev => ({ ...prev, billingAddress: JSON.parse(val) }))}
                     >
                       <SelectTrigger className="mt-1">
@@ -803,7 +806,10 @@ export const SaleOrderDialog = ({ open, onOpenChange, salesOrder, onSave }: Sale
                       Shipping Location <span className="text-red-500">*</span>
                     </Label>
                     <Select
-                      value={formData.shippingAddress?.street ? JSON.stringify(formData.shippingAddress) : ""}
+                      value={(() => {
+                        const match = shippingOptions.find((opt: any) => opt.street === formData.shippingAddress?.street);
+                        return match ? JSON.stringify(match) : "";
+                      })()}
                       onValueChange={(val) => setFormData(prev => ({ ...prev, shippingAddress: JSON.parse(val) }))}
                     >
                       <SelectTrigger className="mt-1">

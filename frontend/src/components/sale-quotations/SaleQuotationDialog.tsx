@@ -483,7 +483,10 @@ export const SaleQuotationDialog = ({
                       Billing Location <span className="text-red-500">*</span>
                     </Label>
                     <Select
-                      value={formData.billingAddress?.street ? JSON.stringify(formData.billingAddress) : ""}
+                      value={(() => {
+                        const match = billingOptions.find((opt: any) => opt.street === formData.billingAddress?.street);
+                        return match ? JSON.stringify(match) : "";
+                      })()}
                       onValueChange={(val) => setFormData(prev => ({ ...prev, billingAddress: JSON.parse(val) }))}
                       disabled={isReadOnly}
                     >
@@ -504,7 +507,10 @@ export const SaleQuotationDialog = ({
                       Shipping Location <span className="text-red-500">*</span>
                     </Label>
                     <Select
-                      value={formData.shippingAddress?.street ? JSON.stringify(formData.shippingAddress) : ""}
+                      value={(() => {
+                        const match = shippingOptions.find((opt: any) => opt.street === formData.shippingAddress?.street);
+                        return match ? JSON.stringify(match) : "";
+                      })()}
                       onValueChange={(val) => setFormData(prev => ({ ...prev, shippingAddress: JSON.parse(val) }))}
                       disabled={isReadOnly}
                     >
