@@ -59,7 +59,6 @@ export const SaleInvoiceDialog = ({ open, onOpenChange, saleInvoice, onSave, foc
   const [showProductSearch, setShowProductSearch] = useState(false);
   const [recentProducts, setRecentProducts] = useState<any[]>([]);
   const [showFrequentItemsDialog, setShowFrequentItemsDialog] = useState(false);
-  const [showFrequentItemsDialog, setShowFrequentItemsDialog] = useState(false);
   const [frequentItems, setFrequentItems] = useState<any[]>([]);
 
   // Mode state: 'linked' = against existing SO, 'direct' = create internal SO
