@@ -4712,81 +4712,86 @@ def convert_quotation_to_order(quotation_id: str, payload=Depends(require_permis
     - Stores the resulting sales_order_id on the quotation
     - Returns the created sales order
     """
-    client = get_supabase_client()
+    try:
+        import datetime as _dt
+        # Fetch quotation + items
+        q_data = supabase.table("sale_quotations").select("*").eq("id", quotation_id).execute()
+        if not q_data.data:
+            raise HTTPException(status_code=404, detail="Quotation not found")
+        q = q_data.data[0]
 
-    # Fetch quotation + items
-    q_data = client.table("sale_quotations").select("*").eq("id", quotation_id).execute()
-    if not q_data.data:
-        raise HTTPException(status_code=404, detail="Quotation not found")
-    q = q_data.data[0]
+        if q.get("status") not in ["sent", "accepted"]:
+            raise HTTPException(status_code=400, detail=f"Cannot convert quotation with status '{q.get('status')}'. Only 'sent' quotations can be converted.")
 
-    if q.get("status") not in ["sent", "accepted"]:
-        raise HTTPException(status_code=400, detail=f"Cannot convert quotation with status '{q.get('status')}'. Only 'sent' quotations can be converted.")
+        if q.get("sales_order_id"):
+            raise HTTPException(status_code=400, detail="This quotation has already been converted to a Sale Order.")
 
-    if q.get("sales_order_id"):
-        raise HTTPException(status_code=400, detail="This quotation has already been converted to a Sale Order.")
+        items_data = supabase.table("sale_quotation_items").select("*").eq("quotation_id", quotation_id).execute()
+        items = items_data.data or []
 
-    items_data = client.table("sale_quotation_items").select("*").eq("quotation_id", quotation_id).execute()
-    items = items_data.data or []
+        # Build SO number based on QTN number
+        q_number = q.get("quotation_number") or f"QTN-{quotation_id[:8]}"
+        so_number = q_number.replace("QTN-", "SO-")
 
-    # Build SO number based on QTN number
-    import datetime as _dt
-    so_number = q["quotation_number"].replace("QTN-", "SO-")
+        so_row = {
+            "order_number": so_number,
+            "customer_id": q.get("customer_id"),
+            "billing_address": q.get("billing_address"),
+            "shipping_address": q.get("shipping_address"),
+            "order_date": str(_dt.date.today()),
+            "due_date": str(_dt.date.today() + _dt.timedelta(days=7)),
+            "status": "draft",
+            "subtotal": float(q.get("subtotal") or 0),
+            "tax_amount": float(q.get("tax_amount") or 0),
+            "discount_amount": float(q.get("discount_amount") or 0),
+            "total_amount": float(q.get("total_amount") or 0),
+            "rounding_adjustment": float(q.get("rounding_adjustment") or 0),
+            "gst_type": q.get("gst_type", "IGST"),
+            "cgst_amount": float(q.get("cgst_amount") or 0),
+            "sgst_amount": float(q.get("sgst_amount") or 0),
+            "igst_amount": float(q.get("igst_amount") or 0),
+            "notes": f"Generated from Quotation {q_number}",
+            "created_by": payload["sub"],
+        }
 
-    so_row = {
-        "order_number": so_number,
-        "customer_id": q["customer_id"],
-        "billing_address": q.get("billing_address"),
-        "shipping_address": q.get("shipping_address"),
-        "order_date": str(_dt.date.today()),
-        "due_date": str(_dt.date.today() + _dt.timedelta(days=7)),
-        "status": "draft",
-        "subtotal": float(q.get("subtotal") or 0),
-        "tax_amount": float(q.get("tax_amount") or 0),
-        "discount_amount": float(q.get("discount_amount") or 0),
-        "total_amount": float(q.get("total_amount") or 0),
-        "rounding_adjustment": float(q.get("rounding_adjustment") or 0),
-        "gst_type": q.get("gst_type", "IGST"),
-        "cgst_amount": float(q.get("cgst_amount") or 0),
-        "sgst_amount": float(q.get("sgst_amount") or 0),
-        "igst_amount": float(q.get("igst_amount") or 0),
-        "notes": f"Generated from Quotation {q['quotation_number']}",
-        "created_by": payload["sub"],
-    }
+        so_result = supabase.table("sales_orders").insert(so_row).execute()
+        if not so_result.data:
+            raise Exception("Sales Order insertion failed - no data returned")
+        
+        created_so = so_result.data[0]
 
-    so_result = client.table("sales_orders").insert(so_row).execute()
-    if not so_result.data:
-        raise HTTPException(status_code=500, detail="Failed to create Sales Order")
-    created_so = so_result.data[0]
+        # Copy items to SO
+        if items:
+            so_items = []
+            for item in items:
+                so_items.append({
+                    "sales_order_id": created_so["id"],
+                    "product_id": item.get("product_id"),
+                    "product_name": item.get("product_name", ""),
+                    "sku_code": item.get("sku_code", ""),
+                    "hsn_code": item.get("hsn_code", ""),
+                    "quantity": item.get("quantity", 0),
+                    "unit_price": item.get("unit_price", 0),
+                    "discount": item.get("discount", 0),
+                    "tax": item.get("tax", 0),
+                    "sale_tax_type": item.get("sale_tax_type", "exclusive"),
+                    "unit_abbreviation": item.get("unit_abbreviation", ""),
+                    "total": item.get("total", 0),
+                    "created_by": payload["sub"],
+                })
+            supabase.table("sales_order_items").insert(so_items).execute()
 
-    # Copy items to SO
-    if items:
-        so_items = []
-        for item in items:
-            so_items.append({
-                "sales_order_id": created_so["id"],
-                "product_id": item.get("product_id"),
-                "product_name": item.get("product_name", ""),
-                "sku_code": item.get("sku_code", ""),
-                "hsn_code": item.get("hsn_code", ""),
-                "quantity": item.get("quantity", 0),
-                "unit_price": item.get("unit_price", 0),
-                "discount": item.get("discount", 0),
-                "tax": item.get("tax", 0),
-                "sale_tax_type": item.get("sale_tax_type", "exclusive"),
-                "unit_abbreviation": item.get("unit_abbreviation", ""),
-                "total": item.get("total", 0),
-                "created_by": payload["sub"],
-            })
-        client.table("sales_order_items").insert(so_items).execute()
+        # Lock quotation as accepted
+        supabase.table("sale_quotations").update({
+            "status": "accepted",
+            "sales_order_id": created_so["id"],
+        }).eq("id", quotation_id).execute()
 
-    # Lock quotation as accepted
-    client.table("sale_quotations").update({
-        "status": "accepted",
-        "sales_order_id": created_so["id"],
-    }).eq("id", quotation_id).execute()
+        return JSONResponse(content=to_camel_case_sales_order(created_so))
 
-    return JSONResponse(content=to_camel_case_sales_order(created_so))
+    except Exception as e:
+        print(f"CONVERSION ERROR: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Conversion failed: {str(e)}")
 
 # ============================================================
 # Sales Orders API endpoints
