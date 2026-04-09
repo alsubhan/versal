@@ -178,7 +178,7 @@ export const Sidebar = ({ onPerformanceToggle }: SidebarProps) => {
   const userInitials = useMemo(() => {
     try {
       if (!user) return '??';
-      const name = user.user_metadata?.full_name || user.email || 'User';
+      const name = user.user_metadata?.full_name || (user.email === 'admin@versal.com' ? 'Administrator' : user.email) || 'User';
       const parts = name.split(/[\s.@]+/).filter(Boolean);
       if (parts.length === 0) return 'U';
       if (parts.length === 1) return parts[0].substring(0, 2).toUpperCase();
@@ -303,7 +303,7 @@ export const Sidebar = ({ onPerformanceToggle }: SidebarProps) => {
               </Avatar>
               {!collapsed && (
                 <div className="flex flex-col items-start text-sm">
-                  <span className="font-medium">{user?.user_metadata?.full_name || user?.email || 'User'}</span>
+                  <span className="font-medium">{user?.user_metadata?.full_name || (user?.email === 'admin@versal.com' ? 'Administrator' : user?.email) || 'User'}</span>
                 </div>
               )}
             </Button>
