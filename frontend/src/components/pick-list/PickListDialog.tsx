@@ -62,7 +62,7 @@ export function PickListDialog({ open, onOpenChange, onSave, editingPL, delivery
                 productName: it.productName,
                 skuCode: it.skuCode,
                 quantity: it.quantity || 0,
-                pickedQuantity: 0,
+                pickedQuantity: it.quantity || 0,  // Default to required qty; picker adjusts if partial
             })));
         }
     };
