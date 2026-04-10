@@ -5,7 +5,7 @@ import { PutAwayTable } from "@/components/put-away/PutAwayTable";
 import { PutAwayDialog } from "@/components/put-away/PutAwayDialog";
 import { PutAwayView } from "@/components/put-away/PutAwayView";
 import { type PutAway } from "@/types/put-away";
-import { getPutAways, deletePutAway } from "@/lib/api";
+import { getPutAways, deletePutAway, updatePutAway, createPutAway } from "@/lib/api";
 import { useAuth } from "@/hooks/useAuth";
 import { PermissionGuard } from "@/components/ui/permission-guard";
 import { useToast } from "@/hooks/use-toast";
@@ -77,10 +77,25 @@ const PutAwaysPage = () => {
         }
     };
 
-    const handleDialogSuccess = () => {
-        setDialogOpen(false);
-        setEditingPutAway(null);
-        fetchPutAways();
+    const handleDialogSuccess = async (data: any) => {
+        try {
+            if (editingPutAway) {
+                await updatePutAway(editingPutAway.id, data);
+                toast({ title: "Success", description: "Put away updated successfully" });
+            } else {
+                await createPutAway(data);
+                toast({ title: "Success", description: "Put away created successfully" });
+            }
+            setDialogOpen(false);
+            setEditingPutAway(null);
+            fetchPutAways();
+        } catch (error: any) {
+            toast({
+                title: "Error",
+                description: error?.message || "Failed to save put away",
+                variant: "destructive",
+            });
+        }
     };
 
     if (viewingPutAway) {

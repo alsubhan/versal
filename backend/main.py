@@ -6438,7 +6438,7 @@ def to_camel_case_put_away(pa):
         "putAwayDate": pa.get("put_away_date"),
         "completedDate": pa.get("completed_date"),
         "notes": pa.get("notes"),
-        "items": [to_camel_case_put_away_item(item) for item in pa.get("items", [])],
+        "items": [to_camel_case_put_away_item(item) for item in pa.get("put_away_items", pa.get("items", []))],
         "createdBy": pa.get("created_by"),
         "createdAt": pa.get("created_at"),
         "updatedAt": pa.get("updated_at"),

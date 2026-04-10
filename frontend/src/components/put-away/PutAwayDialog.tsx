@@ -33,7 +33,7 @@ interface PutAwayDialogProps {
     open: boolean;
     onOpenChange: (open: boolean) => void;
     putAway?: PutAway | null;
-    onSave: (data: any) => void;
+    onSave: (data: any) => Promise<void> | void;
 }
 
 export function PutAwayDialog({ open, onOpenChange, putAway, onSave }: PutAwayDialogProps) {
@@ -147,7 +147,7 @@ export function PutAwayDialog({ open, onOpenChange, putAway, onSave }: PutAwayDi
         setItems(updated);
     };
 
-    const handleSave = () => {
+    const handleSave = async () => {
         setLoading(true);
         try {
             const data: any = {
@@ -172,7 +172,7 @@ export function PutAwayDialog({ open, onOpenChange, putAway, onSave }: PutAwayDi
                     notes: item.notes || undefined,
                 })),
             };
-            onSave(data);
+            await onSave(data);
         } finally {
             setLoading(false);
         }
