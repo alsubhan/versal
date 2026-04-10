@@ -282,11 +282,13 @@ export function GRNTable({ grns, loading, onView, onEdit, onDelete, onPrint, onP
                         variant="ghost"
                         size="icon"
                         onClick={() => onSendToQC(grn)}
-                        disabled={!['draft', 'partial'].includes(grn.status)}
-                        title={!['draft', 'partial'].includes(grn.status)
+                        disabled={!['draft', 'partial', 'received', 'completed'].includes(grn.status) || !!grn.qualityCheckStatus && grn.qualityCheckStatus !== 'pending'}
+                        title={!['draft', 'partial', 'received', 'completed'].includes(grn.status)
                           ? `Cannot send ${grn.status} GRN to QC`
-                          : "Send to Quality Check"}
-                        className={!['draft', 'partial'].includes(grn.status)
+                          : (grn.qualityCheckStatus && grn.qualityCheckStatus !== 'pending'
+                              ? 'QC already exists for this GRN'
+                              : 'Send to Quality Check')}
+                        className={(!['draft', 'partial', 'received', 'completed'].includes(grn.status) || !!grn.qualityCheckStatus && grn.qualityCheckStatus !== 'pending')
                           ? 'opacity-50 cursor-not-allowed' : ''}
                       >
                         <SearchCheck className="h-4 w-4" />

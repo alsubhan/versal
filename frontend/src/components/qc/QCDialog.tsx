@@ -73,7 +73,7 @@ export function QCDialog({ open, onOpenChange, qualityCheck, grnId, onSuccess, u
             getGoodReceiveNotes()
                 .then((data: any) => {
                     const filteredGrns = Array.isArray(data)
-                        ? data.filter((g: any) => ['draft', 'partial', 'received'].includes(g.status))
+                        ? data.filter((g: any) => ['draft', 'partial', 'received', 'completed'].includes(g.status))
                         : [];
                     setGrns(filteredGrns);
                 })
