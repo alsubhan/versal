@@ -6492,7 +6492,14 @@ def get_put_away(pa_id: str, payload=Depends(require_permission("grn_view"))):
         if not data.data:
             raise HTTPException(status_code=404, detail="Put away not found")
         
-        return JSONResponse(content=to_camel_case_put_away(data.data[0]))
+        pa_data = data.data[0]
+        
+        # Fallback: if items are missing from join, fetch them separately
+        if not pa_data.get("items") and not pa_data.get("put_away_items"):
+            items_res = fresh_supabase.table("put_away_items").select("*, locations(name)").eq("put_away_id", pa_id).execute()
+            pa_data["put_away_items"] = items_res.data or []
+            
+        return JSONResponse(content=to_camel_case_put_away(pa_data))
     except HTTPException:
         raise
     except Exception as e:

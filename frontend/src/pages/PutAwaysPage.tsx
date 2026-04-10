@@ -5,7 +5,7 @@ import { PutAwayTable } from "@/components/put-away/PutAwayTable";
 import { PutAwayDialog } from "@/components/put-away/PutAwayDialog";
 import { PutAwayView } from "@/components/put-away/PutAwayView";
 import { type PutAway } from "@/types/put-away";
-import { getPutAways, deletePutAway, updatePutAway, createPutAway } from "@/lib/api";
+import { getPutAways, deletePutAway, updatePutAway, createPutAway, getPutAway } from "@/lib/api";
 import { useAuth } from "@/hooks/useAuth";
 import { PermissionGuard } from "@/components/ui/permission-guard";
 import { useToast } from "@/hooks/use-toast";
@@ -53,9 +53,19 @@ const PutAwaysPage = () => {
 
     const handleView = (pa: PutAway) => setViewingPutAway(pa);
 
-    const handleEdit = (pa: PutAway) => {
-        setEditingPutAway(pa);
-        setDialogOpen(true);
+    const handleEdit = async (pa: PutAway) => {
+        try {
+            const fullPA = await getPutAway(pa.id);
+            setEditingPutAway(fullPA);
+            setDialogOpen(true);
+        } catch (error) {
+            console.error("Error fetching put away details:", error);
+            toast({
+                title: "Error",
+                description: "Failed to load put away details",
+                variant: "destructive",
+            });
+        }
     };
 
     const handleDelete = async (id: string) => setDeleteId(id);
