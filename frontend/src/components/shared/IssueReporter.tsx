@@ -4,9 +4,19 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Bug, Loader2 } from 'lucide-react';
+import { Bug, Loader2, CircleDot, CheckCircle2, MessageSquare } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 import { apiFetch, apiUpload } from '@/lib/api';
+import { Badge } from '@/components/ui/badge';
+import { ScrollArea } from '@/components/ui/scroll-area';
+
+type GitHubIssue = {
+  number: number;
+  title: string;
+  state: 'open' | 'closed';
+  updated_at: string;
+  last_comment?: string;
+};
 
 export function IssueReporter() {
   const [open, setOpen] = useState(false);
@@ -21,6 +31,8 @@ export function IssueReporter() {
   const [selectedLabels, setSelectedLabels] = useState<string[]>([]);
   const [file, setFile] = useState<File | null>(null);
   const [screenshotUrl, setScreenshotUrl] = useState<string | null>(null);
+  const [recentIssues, setRecentIssues] = useState<GitHubIssue[]>([]);
+  const [statsLoading, setStatsLoading] = useState(false);
 
   const pageUrl = useMemo(() => window.location.href, []);
 
@@ -35,9 +47,27 @@ export function IssueReporter() {
     }
   };
 
-  // open → load labels once
+  const fetchRecentIssues = async () => {
+    if (statsLoading) return;
+    setStatsLoading(true);
+    try {
+      const data = await apiFetch('/feedback/github-recent-issues');
+      if (Array.isArray(data)) {
+        setRecentIssues(data);
+      }
+    } catch (e) {
+      // Quietly ignore
+    } finally {
+      setStatsLoading(false);
+    }
+  };
+
+  // open → load labels and issues once
   if (open && availableLabels.length === 0) {
     fetchLabels();
+  }
+  if (open && recentIssues.length === 0 && !statsLoading) {
+    fetchRecentIssues();
   }
 
   const handleSubmit = async () => {
@@ -105,7 +135,46 @@ export function IssueReporter() {
         <DialogContent className="sm:max-w-xl">
           <DialogHeader>
             <DialogTitle>Report an issue</DialogTitle>
-            <DialogDescription>Submit a concise report. Your account will be attached automatically.</DialogDescription>
+            <DialogDescription asChild>
+              <div className="space-y-4">
+                <p>Submit a concise report. Your account will be attached automatically.</p>
+                
+                {recentIssues.length > 0 && (
+                  <div className="space-y-2">
+                    <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Recent Activity</h4>
+                    <ScrollArea className="h-[120px] pr-4">
+                      <div className="space-y-3">
+                        {recentIssues.map((issue) => (
+                          <div key={issue.number} className="space-y-1">
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="flex items-center gap-2 min-w-0">
+                                {issue.state === 'open' ? (
+                                  <CircleDot className="h-3.5 w-3.5 text-green-600 shrink-0" />
+                                ) : (
+                                  <CheckCircle2 className="h-3.5 w-3.5 text-blue-600 shrink-0" />
+                                )}
+                                <span className="text-sm font-medium truncate">{issue.title}</span>
+                              </div>
+                              <Badge variant={issue.state === 'open' ? 'secondary' : 'outline'} className="text-[10px] h-4 px-1 capitalize">
+                                {issue.state}
+                              </Badge>
+                            </div>
+                            {issue.state === 'closed' && issue.last_comment && (
+                              <div className="flex gap-2 pl-5">
+                                <MessageSquare className="h-3 w-3 text-muted-foreground mt-0.5" />
+                                <p className="text-xs text-muted-foreground italic line-clamp-2">
+                                  "{issue.last_comment}"
+                                </p>
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </ScrollArea>
+                  </div>
+                )}
+              </div>
+            </DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
             <div className="space-y-1">

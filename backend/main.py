@@ -890,6 +890,57 @@ def get_github_labels(payload=Depends(verify_jwt)):
         raise HTTPException(status_code=500, detail=f"Failed to fetch labels: {str(e)}")
 
 
+@app.get("/feedback/github-recent-issues")
+def get_github_recent_issues(payload=Depends(verify_jwt)):
+    if not (GITHUB_OWNER and GITHUB_REPO and GITHUB_TOKEN):
+        raise HTTPException(status_code=500, detail="GitHub integration not configured on server")
+
+    headers = {
+        "Authorization": f"Bearer {GITHUB_TOKEN}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "versal-app",
+    }
+    
+    try:
+        # Fetch latest updated issues/PRs (GitHub combines them in this endpoint)
+        api_url = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/issues?state=all&per_page=15&sort=updated"
+        resp = requests.get(api_url, headers=headers, timeout=10)
+        issues_data = resp.json() if resp.status_code == 200 else []
+        
+        results = []
+        for issue in issues_data:
+            # Skip Pull Requests
+            if "pull_request" in issue:
+                continue
+            
+            issue_info = {
+                "number": issue.get("number"),
+                "title": issue.get("title"),
+                "state": issue.get("state"),
+                "updated_at": issue.get("updated_at"),
+            }
+            
+            if issue.get("state") == "closed":
+                # Fetch last comment for closed issues to show "final close comment"
+                comments_url = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/issues/{issue.get('number')}/comments?per_page=1&sort=created&direction=desc"
+                c_resp = requests.get(comments_url, headers=headers, timeout=5)
+                if c_resp.status_code == 200:
+                    comments = c_resp.json()
+                    if comments:
+                        issue_info["last_comment"] = comments[0].get("body")
+            
+            results.append(issue_info)
+            if len(results) >= 5:  # Limit to 5 issues
+                break
+            
+        return results
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch recent issues: {str(e)}")
+
+
+
+
 @app.post("/feedback/upload-screenshot")
 def upload_screenshot(file: UploadFile = File(...), payload=Depends(verify_jwt)):
     """Upload a screenshot to Supabase Storage and return a public URL."""
