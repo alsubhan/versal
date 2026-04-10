@@ -56,9 +56,12 @@ export function PrintPreviewDialog({ open, onOpenChange, documentType, data }: P
     documentTitle,
   });
 
-  // All sales documents honor the system template format
+  // All sales documents honor the system template format; purchase orders always use Custom
   const templateKey = String(settings?.invoice_format_template || 'standard');
   const TemplateComponent = (() => {
+    if (documentType === 'purchaseOrder') {
+      return CustomTemplate;
+    }
     if (['saleInvoice', 'salesOrder', 'saleQuotation'].includes(documentType)) {
       if (templateKey === 'standard') {
         if (documentType === 'saleInvoice') return (props: any) => <SaleInvoiceStandardTemplate data={props.data} settings={settings as any} />;

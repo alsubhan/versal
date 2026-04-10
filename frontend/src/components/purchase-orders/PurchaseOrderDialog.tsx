@@ -621,11 +621,20 @@ export const PurchaseOrderDialog = ({ open, onOpenChange, purchaseOrder, onSave 
                 <SelectValue placeholder="Select supplier" />
               </SelectTrigger>
               <SelectContent>
-                {suppliers.map((supplier) => (
-                  <SelectItem key={supplier.id} value={supplier.id}>
-                    {supplier.name}
-                  </SelectItem>
-                ))}
+                {suppliers.map((supplier) => {
+                  const addrParts = [
+                    (supplier as any).billingAddress?.city || (supplier as any).city || '',
+                    (supplier as any).billingAddress?.state || (supplier as any).state || '',
+                  ].filter(Boolean).join(', ');
+                  return (
+                    <SelectItem key={supplier.id} value={supplier.id}>
+                      <div className="flex flex-col">
+                        <span className="font-medium">{supplier.name}</span>
+                        {addrParts && <span className="text-xs text-muted-foreground">{addrParts}</span>}
+                      </div>
+                    </SelectItem>
+                  );
+                })}
               </SelectContent>
             </Select>
           </div>
@@ -691,6 +700,38 @@ export const PurchaseOrderDialog = ({ open, onOpenChange, purchaseOrder, onSave 
             <Input value={formData.status ? (formData.status.charAt(0).toUpperCase() + formData.status.slice(1)) : 'Draft'} className="mt-1 bg-gray-50" disabled />
           </div>
         </div>
+
+        {/* Billing / Shipping Location Info */}
+        {(() => {
+          const billingAddr = [
+            systemSettings?.company_name,
+            systemSettings?.company_address ? (typeof systemSettings.company_address === 'object' ? (systemSettings.company_address as any).street : String(systemSettings.company_address)) : '',
+            systemSettings?.company_city,
+            systemSettings?.company_state,
+            systemSettings?.company_zip,
+            systemSettings?.company_country,
+          ].filter(Boolean).join(', ');
+          const shippingAddr = [
+            systemSettings?.company_name,
+            systemSettings?.company_shipping_street,
+            systemSettings?.company_shipping_city,
+            systemSettings?.company_shipping_state,
+            systemSettings?.company_shipping_zip,
+            systemSettings?.company_shipping_country,
+          ].filter(Boolean).join(', ') || billingAddr;
+          return (billingAddr || shippingAddr) ? (
+            <div className="grid grid-cols-2 gap-4 mt-3 rounded-lg border border-dashed border-blue-200 bg-blue-50/40 px-4 py-3">
+              <div>
+                <div className="text-xs font-semibold text-blue-700 mb-0.5">Billing Location (Ship To)</div>
+                <div className="text-xs text-gray-600 leading-4">{billingAddr || '—'}</div>
+              </div>
+              <div>
+                <div className="text-xs font-semibold text-blue-700 mb-0.5">Shipping Location (Deliver To)</div>
+                <div className="text-xs text-gray-600 leading-4">{shippingAddr || '—'}</div>
+              </div>
+            </div>
+          ) : null;
+        })()}
         
         {/* MIDDLE SECTION - Items Table */}
         <div className="mt-6">

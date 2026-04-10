@@ -46,6 +46,13 @@ const SettingsPage = () => {
     companyPhone: '',
     companyEmail: '',
     companyGstin: '',
+
+    // Company Shipping Address (for Purchase Order Prints)
+    companyShippingStreet: '',
+    companyShippingCity: '',
+    companyShippingState: '',
+    companyShippingZip: '',
+    companyShippingCountry: '',
     
     // Application Settings
     defaultCurrency: 'USD',
@@ -188,6 +195,13 @@ const SettingsPage = () => {
           companyPhone: getStringValue('company_phone', ''),
           companyEmail: getStringValue('company_email', ''),
           companyGstin: getStringValue('company_gstin', ''),
+
+          // Company Shipping Address
+          companyShippingStreet: getStringValue('company_shipping_street', ''),
+          companyShippingCity: getStringValue('company_shipping_city', ''),
+          companyShippingState: getStringValue('company_shipping_state', ''),
+          companyShippingZip: getStringValue('company_shipping_zip', ''),
+          companyShippingCountry: getStringValue('company_shipping_country', ''),
           
           // Application Settings
           defaultCurrency: getStringValue('default_currency', 'USD'),
@@ -359,6 +373,13 @@ const SettingsPage = () => {
         companyPhone: 'company_phone',
         companyEmail: 'company_email',
         companyGstin: 'company_gstin',
+
+        // Company Shipping Address
+        companyShippingStreet: 'company_shipping_street',
+        companyShippingCity: 'company_shipping_city',
+        companyShippingState: 'company_shipping_state',
+        companyShippingZip: 'company_shipping_zip',
+        companyShippingCountry: 'company_shipping_country',
         
         // Application Settings
         defaultCurrency: 'default_currency',
@@ -487,7 +508,23 @@ const SettingsPage = () => {
         }
       });
 
-      const results = await Promise.all(updatePromises.filter(Boolean));
+      // Also create settings that don't exist yet (new keys like shipping address)
+      const existingKeys = new Set(systemSettings.map(s => s.key));
+      const createPromises = Object.entries(formToSettingMap).map(async ([formField, settingKey]) => {
+        if (existingKeys.has(settingKey)) return null; // already exists, handled above
+        const newValue = formData[formField as keyof typeof formData];
+        if (!newValue && newValue !== false && newValue !== 0) return null; // skip empty new values
+        changedSettings.push(settingKey);
+        return createSystemSetting({
+          key: settingKey,
+          value: newValue,
+          type: typeof newValue === 'boolean' ? 'boolean' : 'string',
+          description: '',
+          isPublic: publicSettings.includes(settingKey),
+        });
+      });
+
+      const results = await Promise.all([...updatePromises, ...createPromises].filter(Boolean));
       
       if (changedSettings.length > 0) {
         toast.success(`${changedSettings.length} setting(s) saved successfully`);
@@ -674,6 +711,72 @@ const SettingsPage = () => {
                     className={getFieldClassName('companyGstin')}
                   />
                   <p className="text-xs text-muted-foreground">GST Identification Number — printed on all tax invoices.</p>
+                </div>
+              </div>
+
+              {/* Shipping Address for Purchase Orders */}
+              <div className="mt-4 pt-4 border-t">
+                <div className="mb-2">
+                  <Label className="text-sm font-semibold">Shipping Address <span className="text-xs font-normal text-muted-foreground">(used as Ship To on Purchase Orders)</span></Label>
+                </div>
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label htmlFor="companyShippingStreet">Street Address</Label>
+                    <Input
+                      id="companyShippingStreet"
+                      value={formData.companyShippingStreet}
+                      onChange={(e) => handleInputChange('companyShippingStreet', e.target.value)}
+                      placeholder="456 Warehouse Road"
+                      disabled={!canEditSettings}
+                      className={getFieldClassName('companyShippingStreet')}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="companyShippingCity">City</Label>
+                    <Input
+                      id="companyShippingCity"
+                      value={formData.companyShippingCity}
+                      onChange={(e) => handleInputChange('companyShippingCity', e.target.value)}
+                      placeholder="Bangalore"
+                      disabled={!canEditSettings}
+                      className={getFieldClassName('companyShippingCity')}
+                    />
+                  </div>
+                </div>
+                <div className="grid gap-4 md:grid-cols-3 mt-2">
+                  <div className="space-y-2">
+                    <Label htmlFor="companyShippingState">State</Label>
+                    <Input
+                      id="companyShippingState"
+                      value={formData.companyShippingState}
+                      onChange={(e) => handleInputChange('companyShippingState', e.target.value)}
+                      placeholder="Karnataka"
+                      disabled={!canEditSettings}
+                      className={getFieldClassName('companyShippingState')}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="companyShippingZip">Zip / Postal Code</Label>
+                    <Input
+                      id="companyShippingZip"
+                      value={formData.companyShippingZip}
+                      onChange={(e) => handleInputChange('companyShippingZip', e.target.value)}
+                      placeholder="560001"
+                      disabled={!canEditSettings}
+                      className={getFieldClassName('companyShippingZip')}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="companyShippingCountry">Country</Label>
+                    <Input
+                      id="companyShippingCountry"
+                      value={formData.companyShippingCountry}
+                      onChange={(e) => handleInputChange('companyShippingCountry', e.target.value)}
+                      placeholder="India"
+                      disabled={!canEditSettings}
+                      className={getFieldClassName('companyShippingCountry')}
+                    />
+                  </div>
                 </div>
               </div>
               

@@ -596,6 +596,14 @@ export function CustomTemplate({
     settings?.company_country,
   ].filter(Boolean).join(', ');
 
+  const companyShippingAddress = [
+    settings?.company_shipping_street,
+    settings?.company_shipping_city,
+    settings?.company_shipping_state,
+    settings?.company_shipping_zip,
+    settings?.company_shipping_country,
+  ].filter(Boolean).join(', ');
+
   // Format address payload to string
   const formatAddress = (addr: any) => {
     return parseAddress(addr);
@@ -686,17 +694,43 @@ export function CustomTemplate({
       {/* Bill to / Meta */}
       <div className="grid grid-cols-2 gap-3 mt-2">
         <BlueBox>
-          <div className="text-[12px] font-bold mb-1">Bill To</div>
-          {row('Name', billToName)}
-          {row('Address', documentBillingAddress)}
-          {row('GSTIN', customerGstin)}
-          <div className="mt-2 text-[12px] font-bold">Ship To</div>
-          {row('Name', shipToName)}
-          {row('Address', documentShippingAddress)}
+          {documentType === 'purchaseOrder' ? (
+            // For Purchase Orders: Bill To = our company (buyer), Ship To = our company shipping
+            <>
+              <div className="text-[12px] font-bold mb-1">Bill To</div>
+              {row('Name', companyName)}
+              {row('Address', companyAddress)}
+              {gstin && row('GSTIN', gstin)}
+              <div className="mt-2 text-[12px] font-bold">Ship To</div>
+              {row('Name', companyName)}
+              {row('Address', companyShippingAddress || companyAddress)}
+            </>
+          ) : documentType === 'saleQuotation' ? (
+            // For Quotations: just show customer name + address, no Ship To
+            <>
+              <div className="text-[12px] font-bold mb-1">Customer</div>
+              {row('Name', billToName)}
+              {row('Address', documentBillingAddress)}
+              {customerGstin && row('GSTIN', customerGstin)}
+            </>
+          ) : (
+            // For all other documents: standard Bill To / Ship To
+            <>
+              <div className="text-[12px] font-bold mb-1">Bill To</div>
+              {row('Name', billToName)}
+              {row('Address', documentBillingAddress)}
+              {row('GSTIN', customerGstin)}
+              <div className="mt-2 text-[12px] font-bold">Ship To</div>
+              {row('Name', shipToName)}
+              {row('Address', documentShippingAddress)}
+            </>
+          )}
         </BlueBox>
         <BlueBox>
           {row('Date', (data?.quotationDate || data?.invoiceDate || data?.orderDate || data?.receivedDate) ? new Date(data.quotationDate || data.invoiceDate || data.orderDate || data.receivedDate).toLocaleDateString() : '')}
-          {row('PO No.', data?.purchaseOrder?.orderNumber || data?.purchaseOrderId || '')}
+          {documentType === 'purchaseOrder'
+            ? row('Supplier', data?.supplier?.name || '')
+            : row('PO No.', data?.purchaseOrder?.orderNumber || data?.purchaseOrderId || '')}
           {row('Document No.', data?.quotationNumber || data?.invoiceNumber || data?.orderNumber || data?.grnNumber || data?.creditNoteNumber || '')}
           {row('Terms of Payment', '')}
         </BlueBox>

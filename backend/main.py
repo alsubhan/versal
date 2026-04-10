@@ -4041,28 +4041,16 @@ def to_camel_case_purchase_indent_item(item):
 # Purchase Orders API endpoints
 @app.get("/purchase-orders")
 def get_purchase_orders(payload=Depends(require_permission("purchase_orders_view"))):
-    # Join with suppliers to get supplier names
+    # Return all purchase orders with supplier info (no GRN filtering — that belongs in /available)
     try:
         client = get_supabase_client()
-        data = client.table("purchase_orders").select("*, suppliers(*)").execute()
+        data = client.table("purchase_orders").select("*, suppliers(*)").order("created_at", desc=True).execute()
     except (httpx.RemoteProtocolError, httpx.ConnectError):
         client = get_supabase_client()
-        data = client.table("purchase_orders").select("*, suppliers(*)").execute()
-    
-    # Filter out orders that already have GRNs (draft or completed)
-    available_orders = []
-    for order in data.data:
-        # Check if there are any GRNs for this purchase order
-        grn_check = client.table("good_receive_notes").select("id, status").eq("purchase_order_id", order["id"]).execute()
-        
-        # Only include orders that have no GRNs or only cancelled GRNs
-        has_active_grns = any(grn["status"] in ["draft", "completed", "partial"] for grn in grn_check.data)
-        
-        if not has_active_grns:
-            available_orders.append(order)
-    
+        data = client.table("purchase_orders").select("*, suppliers(*)").order("created_at", desc=True).execute()
+
     # Transform to camelCase
-    transformed_data = [to_camel_case_purchase_order(order) for order in available_orders]
+    transformed_data = [to_camel_case_purchase_order(order) for order in data.data]
     return JSONResponse(content=transformed_data)
 
 @app.get("/purchase-orders/available")
