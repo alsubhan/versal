@@ -588,12 +588,13 @@ export function CustomTemplate({
   );
 
   const companyName = settings?.company_name || 'Your Company Name';
+  const rawCompanyStreet = parseAddress(settings?.company_address);
   const companyAddress = [
-    settings?.company_address,
-    settings?.company_city,
-    settings?.company_state,
-    settings?.company_zip,
-    settings?.company_country,
+    rawCompanyStreet,
+    rawCompanyStreet.includes(settings?.company_city || '___') ? null : settings?.company_city,
+    rawCompanyStreet.includes(settings?.company_state || '___') ? null : settings?.company_state,
+    rawCompanyStreet.includes(settings?.company_zip || '___') ? null : settings?.company_zip,
+    rawCompanyStreet.includes(settings?.company_country || '___') ? null : settings?.company_country,
   ].filter(Boolean).join(', ');
 
   const companyShippingAddress = [

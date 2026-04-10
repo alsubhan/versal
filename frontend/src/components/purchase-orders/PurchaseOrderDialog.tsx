@@ -622,10 +622,10 @@ export const PurchaseOrderDialog = ({ open, onOpenChange, purchaseOrder, onSave 
               </SelectTrigger>
               <SelectContent>
                 {suppliers.map((supplier) => {
-                  const addrParts = [
-                    (supplier as any).billingAddress?.city || (supplier as any).city || '',
-                    (supplier as any).billingAddress?.state || (supplier as any).state || '',
-                  ].filter(Boolean).join(', ');
+                  const bAddr = supplier.billingAddress;
+                  const addrParts = bAddr
+                    ? [bAddr.street, bAddr.city, bAddr.state, bAddr.zipCode, bAddr.country].filter(Boolean).join(', ')
+                    : supplier.address || '';
                   return (
                     <SelectItem key={supplier.id} value={supplier.id}>
                       <div className="flex flex-col">
@@ -703,9 +703,15 @@ export const PurchaseOrderDialog = ({ open, onOpenChange, purchaseOrder, onSave 
 
         {/* Billing / Shipping Location Info */}
         {(() => {
+          const rawStreet = systemSettings?.company_address 
+            ? (typeof systemSettings.company_address === 'string' && systemSettings.company_address.trim().startsWith('{') 
+                ? (() => { try { return JSON.parse(systemSettings.company_address).street } catch { return systemSettings.company_address } })() 
+                : (typeof systemSettings.company_address === 'object' ? (systemSettings.company_address as any).street : String(systemSettings.company_address))) 
+            : '';
+
           const billingAddr = [
             systemSettings?.company_name,
-            systemSettings?.company_address ? (typeof systemSettings.company_address === 'object' ? (systemSettings.company_address as any).street : String(systemSettings.company_address)) : '',
+            rawStreet,
             systemSettings?.company_city,
             systemSettings?.company_state,
             systemSettings?.company_zip,
