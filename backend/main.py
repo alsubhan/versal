@@ -8259,14 +8259,16 @@ def consolidate_indents(request: dict = Body(...), payload=Depends(require_permi
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error consolidating indents: {str(e)}")
 
-# ============================================================
 # Backup & Restore Endpoints
 # ============================================================
 
-BACKUP_DIR = "/app/backups"
+BACKUP_DIR = os.getenv("BACKUP_DIR", "/app/backups")
+DB_HOST = os.getenv("DB_HOST", "supabase-db")
+DB_USER = os.getenv("DB_USER", "postgres")
+DB_NAME = os.getenv("DB_NAME", "postgres")
 
 @app.get("/backups")
-def get_backups(payload=Depends(require_role(["admin"]))):
+def get_backups(payload=Depends(require_permission("backup_view"))):
     if not os.path.exists(BACKUP_DIR):
         os.makedirs(BACKUP_DIR)
         
@@ -8297,7 +8299,7 @@ def get_backups(payload=Depends(require_role(["admin"]))):
     return JSONResponse(content=backups)
 
 @app.post("/backups/create")
-def create_backup(payload=Depends(require_role(["admin"]))):
+def create_backup(payload=Depends(require_permission("backup_create"))):
     if not os.path.exists(BACKUP_DIR):
         os.makedirs(BACKUP_DIR)
         
@@ -8312,7 +8314,7 @@ def create_backup(payload=Depends(require_role(["admin"]))):
     
     # Or rely on standard supabase-db connection from internal docker network
     db_password = os.environ.get("SUPABASE_DB_PASSWORD", "postgres")
-    db_uri = f"postgresql://postgres:{db_password}@supabase-db:5432/postgres"
+    db_uri = f"postgresql://{DB_USER}:{db_password}@{DB_HOST}:5432/{DB_NAME}"
     
     try:
         # Run pg_dump
@@ -8324,11 +8326,14 @@ def create_backup(payload=Depends(require_role(["admin"]))):
         )
         return JSONResponse(content={"success": True, "filename": filename})
     except subprocess.CalledProcessError as e:
-        print(f"pg_dump failed: {e.stderr}")
-        raise HTTPException(status_code=500, detail="Failed to create backup")
+        error_detail = f"pg_dump failed: {e.stderr}"
+        print(error_detail)
+        # Only expose internal error details in debug mode
+        detail = error_detail if DEBUG_MODE else "Failed to create backup"
+        raise HTTPException(status_code=500, detail=detail)
         
 @app.get("/backups/download/{filename}")
-def download_backup(filename: str, payload=Depends(require_role(["admin"]))):
+def download_backup(filename: str, payload=Depends(require_permission("backup_view"))):
     filepath = os.path.join(BACKUP_DIR, filename)
     if not os.path.exists(filepath) or not filename.endswith(".sql"):
         raise HTTPException(status_code=404, detail="Backup not found")
@@ -8336,13 +8341,13 @@ def download_backup(filename: str, payload=Depends(require_role(["admin"]))):
     return FileResponse(filepath, media_type="application/sql", filename=filename)
     
 @app.post("/backups/restore/{filename}")
-def restore_backup(filename: str, payload=Depends(require_role(["admin"]))):
+def restore_backup(filename: str, payload=Depends(require_permission("backup_restore"))):
     filepath = os.path.join(BACKUP_DIR, filename)
     if not os.path.exists(filepath) or not filename.endswith(".sql"):
         raise HTTPException(status_code=404, detail="Backup not found")
         
     db_password = os.environ.get("SUPABASE_DB_PASSWORD", "postgres")
-    db_uri = f"postgresql://postgres:{db_password}@supabase-db:5432/postgres"
+    db_uri = f"postgresql://{DB_USER}:{db_password}@{DB_HOST}:5432/{DB_NAME}"
     
     try:
         process = subprocess.run(
@@ -8353,11 +8358,14 @@ def restore_backup(filename: str, payload=Depends(require_role(["admin"]))):
         )
         return JSONResponse(content={"success": True, "message": "Database restored successfully"})
     except subprocess.CalledProcessError as e:
-        print(f"psql restore failed: {e.stderr}")
-        raise HTTPException(status_code=500, detail="Failed to restore backup")
+        error_detail = f"psql restore failed: {e.stderr}"
+        print(error_detail)
+        # Only expose internal error details in debug mode
+        detail = error_detail if DEBUG_MODE else "Failed to restore backup"
+        raise HTTPException(status_code=500, detail=detail)
 
 @app.delete("/backups/{filename}")
-def delete_backup(filename: str, payload=Depends(require_role(["admin"]))):
+def delete_backup(filename: str, payload=Depends(require_permission("backup_delete"))):
     filepath = os.path.join(BACKUP_DIR, filename)
     if not os.path.exists(filepath) or not filename.endswith(".sql"):
         raise HTTPException(status_code=404, detail="Backup not found")

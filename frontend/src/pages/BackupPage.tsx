@@ -1,5 +1,5 @@
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
@@ -48,7 +48,10 @@ const BackupPage = () => {
   const [isDeleting, setIsDeleting] = useState<string | null>(null);
 
   const { hasPermission } = useAuth();
-  const canManageBackups = hasPermission('admin'); // Only admins per requirements
+  const canViewBackups = hasPermission('backup_view');
+  const canCreateBackup = hasPermission('backup_create');
+  const canRestoreBackup = hasPermission('backup_restore');
+  const canDeleteBackup = hasPermission('backup_delete');
   const { toast } = useToast();
   
   const fetchBackups = async () => {
@@ -67,14 +70,14 @@ const BackupPage = () => {
     }
   };
 
-  useState(() => {
-    if (canManageBackups) {
+  useEffect(() => {
+    if (canViewBackups) {
       fetchBackups();
     }
-  });
+  }, [canViewBackups]);
 
   const handleBackup = async () => {
-    if (!canManageBackups) {
+    if (!canCreateBackup) {
       toast({
         title: "Permission Denied",
         description: "You do not have permission to create backups",
@@ -109,6 +112,10 @@ const BackupPage = () => {
   };
 
   const handleDelete = async (filename: string) => {
+    if (!canDeleteBackup) {
+      toast({ title: "Permission Denied", description: "You do not have permission to delete backups", variant: "destructive"});
+      return;
+    }
     if (!confirm("Are you sure you want to delete this backup?")) return;
 
     setIsDeleting(filename);
@@ -130,6 +137,11 @@ const BackupPage = () => {
   };
 
   const handleRestore = async () => {
+    if (!canRestoreBackup) {
+        toast({ title: "Permission Denied", description: "You do not have permission to restore backups", variant: "destructive"});
+        return;
+    }
+
     if (restoreConfirmText !== 'RESTORE') {
         toast({ title: "Error", description: "Type RESTORE to confirm", variant: "destructive"});
         return;
@@ -140,8 +152,12 @@ const BackupPage = () => {
         await restoreBackup(selectedBackup);
         toast({ title: "Success", description: "System restored successfully!" });
         setRestoreDialogOpen(false);
-    } catch {
-        toast({ title: "Error", description: "Restore failed", variant: "destructive" });
+    } catch (error: any) {
+        toast({ 
+            title: "Error", 
+            description: error.message || "Restore failed", 
+            variant: "destructive" 
+        });
     } finally {
         setIsRestoring(false);
     }
@@ -187,7 +203,7 @@ const BackupPage = () => {
                 </div>
               )}
               
-              {canManageBackups ? (
+              {canCreateBackup ? (
                 <Button 
                   onClick={handleBackup} 
                   disabled={isBackingUp}
@@ -211,7 +227,7 @@ const BackupPage = () => {
                       </span>
                     </TooltipTrigger>
                     <TooltipContent>
-                      You must be an admin to manage backups
+                      You do not have permission to manage backups
                     </TooltipContent>
                   </Tooltip>
                 </TooltipProvider>
@@ -277,10 +293,20 @@ const BackupPage = () => {
                         <Button variant="ghost" size="sm" onClick={() => window.location.href = `/api/backups/download/${backup.filename || backup.name}`}>
                           <Download size={14} className="mr-1" /> Download
                         </Button>
-                        <Button variant="outline" size="sm" onClick={() => confirmRestore(backup.name)}>
+                        <Button 
+                          variant="outline" 
+                          size="sm" 
+                          onClick={() => confirmRestore(backup.name)}
+                          disabled={!canRestoreBackup}
+                        >
                           <RotateCcw size={14} className="mr-1" /> Restore
                         </Button>
-                        <Button variant="destructive" size="sm" onClick={() => handleDelete(backup.name)} disabled={isDeleting === backup.name} >
+                        <Button 
+                          variant="destructive" 
+                          size="sm" 
+                          onClick={() => handleDelete(backup.name)} 
+                          disabled={isDeleting === backup.name || !canDeleteBackup} 
+                        >
                            Delete
                         </Button>
                       </td>
