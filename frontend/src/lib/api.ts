@@ -120,6 +120,48 @@ export async function apiUpload(path: string, file: File) {
   return res.json();
 }
 
+export async function apiDownload(path: string, options: RequestInit = {}) {
+  let supabase;
+  try {
+    supabase = await getSupabaseClient();
+  } catch (error) {
+    supabase = getFallbackSupabaseClient();
+  }
+
+  // Get session and try to refresh if needed
+  let { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+
+  // If no session or token expired, try to refresh
+  if (!sessionData?.session?.access_token || sessionError) {
+    const { data: refreshData, error: refreshError } = await supabase.auth.refreshSession();
+    if (refreshError || !refreshData?.session) {
+      throw new Error('Session expired. Please log in again.');
+    }
+    sessionData = refreshData;
+  }
+
+  const accessToken = sessionData.session?.access_token;
+
+  if (!accessToken) {
+    throw new Error('No access token available. Please log in again.');
+  }
+
+  const res = await fetch(`${API_BASE_URL}${path}`, {
+    ...options,
+    headers: {
+      ...(options.headers || {}),
+      Authorization: `Bearer ${accessToken}`,
+    },
+  });
+
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(errorText || `HTTP ${res.status}`);
+  }
+
+  return res.blob();
+}
+
 // User management API functions
 export async function getUsers() {
   return apiFetch('/users');
@@ -443,6 +485,10 @@ export async function restoreBackup(filename: string) {
 
 export async function deleteBackup(filename: string) {
   return apiFetch(`/backups/${filename}`, { method: 'DELETE' });
+}
+
+export async function downloadBackup(filename: string) {
+  return apiDownload(`/backups/download/${filename}`);
 }
 
 export async function createInventoryMovement(movement: any) {

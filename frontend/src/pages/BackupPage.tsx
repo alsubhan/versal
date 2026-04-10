@@ -20,7 +20,8 @@ import {
   getBackups, 
   createBackup, 
   restoreBackup, 
-  deleteBackup 
+  deleteBackup,
+  downloadBackup
 } from "@/lib/api";
 import {
   Dialog,
@@ -96,9 +97,9 @@ const BackupPage = () => {
       });
       fetchBackups();
       
-      // Auto-download
+      // Auto-download (Authenticated)
       if (result.filename) {
-          window.location.href = `/api/backups/download/${result.filename}`;
+          handleDownload(result.filename);
       }
     } catch (error) {
        toast({
@@ -163,6 +164,30 @@ const BackupPage = () => {
     }
   };
   
+
+  const downloadBlob = (blob: Blob, filename: string) => {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleDownload = async (filename: string) => {
+    try {
+      const blob = await downloadBackup(filename);
+      downloadBlob(blob, filename);
+    } catch (error) {
+       toast({
+        title: "Download Failed",
+        description: "Could not download the backup file.",
+        variant: "destructive"
+      });
+    }
+  };
 
   const formatDate = (dateString: string) => {
     const options: Intl.DateTimeFormatOptions = {
@@ -290,7 +315,7 @@ const BackupPage = () => {
                         </span>
                       </td>
                       <td className="py-3 px-4 text-right space-x-2">
-                        <Button variant="ghost" size="sm" onClick={() => window.location.href = `/api/backups/download/${backup.filename || backup.name}`}>
+                        <Button variant="ghost" size="sm" onClick={() => handleDownload(backup.filename || backup.name)}>
                           <Download size={14} className="mr-1" /> Download
                         </Button>
                         <Button 
