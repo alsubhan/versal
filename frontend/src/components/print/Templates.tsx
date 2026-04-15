@@ -187,7 +187,19 @@ export function StandardTemplate({
               )}
             </div>
             <div className="space-y-1">
-              <Row label="Supplier" value={po?.supplier?.name || (po?.supplierId as any) || ''} />
+              <Row 
+                label="Supplier" 
+                value={
+                  <div className="space-y-0.5">
+                    <div className="font-bold">{po?.supplier?.name || (po?.supplierId as any) || ''}</div>
+                    {po?.supplier && (
+                      <div className="text-xs text-muted-foreground whitespace-pre-wrap leading-tight font-normal">
+                        {parseAddress(po.supplier.billingAddress || po.supplier.address)}
+                      </div>
+                    )}
+                  </div>
+                } 
+              />
               <Row label="Status" value={po?.status || ''} />
             </div>
           </div>
@@ -730,7 +742,16 @@ export function CustomTemplate({
         <BlueBox>
           {row('Date', (data?.quotationDate || data?.invoiceDate || data?.orderDate || data?.receivedDate) ? new Date(data.quotationDate || data.invoiceDate || data.orderDate || data.receivedDate).toLocaleDateString() : '')}
           {documentType === 'purchaseOrder'
-            ? row('Supplier', data?.supplier?.name || '')
+            ? row('Supplier', (
+                <div className="space-y-0.5">
+                  <div className="font-bold">{data?.supplier?.name || ''}</div>
+                  {data?.supplier && (
+                    <div className="text-[10px] text-gray-600 leading-tight font-normal">
+                      {parseAddress(data.supplier.billingAddress || data.supplier.address)}
+                    </div>
+                  )}
+                </div>
+              ))
             : row('PO No.', data?.purchaseOrder?.orderNumber || data?.purchaseOrderId || '')}
           {row('Document No.', data?.quotationNumber || data?.invoiceNumber || data?.orderNumber || data?.grnNumber || data?.creditNoteNumber || '')}
           {row('Terms of Payment', '')}

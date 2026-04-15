@@ -4014,7 +4014,7 @@ def to_camel_case_purchase_order(purchase_order):
         "id": purchase_order.get("id"),
         "orderNumber": purchase_order.get("order_number"),
         "supplierId": purchase_order.get("supplier_id"),
-        "supplier": purchase_order.get("suppliers", {}),
+        "supplier": to_camel_case_supplier(purchase_order.get("suppliers", {})) if purchase_order.get("suppliers") else {},
         "orderDate": purchase_order.get("order_date"),
         "expectedDeliveryDate": purchase_order.get("expected_delivery_date"),
         "status": purchase_order.get("status"),
