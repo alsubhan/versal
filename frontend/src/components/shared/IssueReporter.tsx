@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -33,8 +33,13 @@ export function IssueReporter() {
   const [screenshotUrl, setScreenshotUrl] = useState<string | null>(null);
   const [recentIssues, setRecentIssues] = useState<GitHubIssue[]>([]);
   const [statsLoading, setStatsLoading] = useState(false);
+  const [pageUrl, setPageUrl] = useState('');
 
-  const pageUrl = useMemo(() => window.location.href, []);
+  const handleOpen = () => {
+    // Capture the current page URL each time the dialog opens
+    setPageUrl(window.location.href);
+    setOpen(true);
+  };
 
   const fetchLabels = async () => {
     try {
@@ -123,7 +128,7 @@ export function IssueReporter() {
       <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50">
         <button
           type="button"
-          onClick={() => setOpen(true)}
+          onClick={handleOpen}
           className="inline-flex h-10 items-center gap-2 rounded-full bg-primary px-4 text-primary-foreground shadow-lg hover:opacity-90"
           title="Report an issue"
         >
@@ -132,121 +137,125 @@ export function IssueReporter() {
         </button>
       </div>
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="sm:max-w-xl">
-          <DialogHeader>
-            <DialogTitle>Report an issue</DialogTitle>
-            <DialogDescription asChild>
-              <div className="space-y-4">
-                <p>Submit a concise report. Your account will be attached automatically.</p>
-                
-                {recentIssues.length > 0 && (
-                  <div className="space-y-2">
-                    <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Recent Activity</h4>
-                    <ScrollArea className="h-[120px] pr-4">
-                      <div className="space-y-3">
-                        {recentIssues.map((issue) => (
-                          <div key={issue.number} className="space-y-1">
-                            <div className="flex items-start justify-between gap-2">
-                              <div className="flex items-center gap-2 min-w-0">
-                                {issue.state === 'open' ? (
-                                  <CircleDot className="h-3.5 w-3.5 text-green-600 shrink-0" />
-                                ) : (
-                                  <CheckCircle2 className="h-3.5 w-3.5 text-blue-600 shrink-0" />
-                                )}
-                                <span className="text-sm font-medium truncate">{issue.title}</span>
-                              </div>
-                              <Badge variant={issue.state === 'open' ? 'secondary' : 'outline'} className="text-[10px] h-4 px-1 capitalize">
-                                {issue.state}
-                              </Badge>
-                            </div>
-                            {issue.state === 'closed' && issue.last_comment && (
-                              <div className="flex gap-2 pl-5">
-                                <MessageSquare className="h-3 w-3 text-muted-foreground mt-0.5" />
-                                <p className="text-xs text-muted-foreground italic line-clamp-2">
-                                  "{issue.last_comment}"
-                                </p>
-                              </div>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    </ScrollArea>
+        <DialogContent className={`${recentIssues.length > 0 ? 'sm:max-w-4xl' : 'sm:max-w-xl'}`}>
+          <div className={`${recentIssues.length > 0 ? 'flex gap-6' : ''}`}>
+            {/* Left side: Form */}
+            <div className={`${recentIssues.length > 0 ? 'flex-1 min-w-0' : 'w-full'}`}>
+              <DialogHeader>
+                <DialogTitle>Report an issue</DialogTitle>
+                <DialogDescription>
+                  Submit a concise report. Your account will be attached automatically.
+                </DialogDescription>
+              </DialogHeader>
+              <div className="space-y-3 mt-4">
+                <div className="space-y-1">
+                  <label className="text-sm">Title</label>
+                  <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Short summary" />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-sm">Description</label>
+                  <Textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={3} placeholder="What happened?" />
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
+                  <div className="space-y-1 sm:col-span-1">
+                    <label className="text-sm">Severity</label>
+                    <Select value={severity} onValueChange={(v) => setSeverity(v as any)}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="low">Low</SelectItem>
+                        <SelectItem value="medium">Medium</SelectItem>
+                        <SelectItem value="high">High</SelectItem>
+                      </SelectContent>
+                    </Select>
                   </div>
-                )}
+                  <div className="space-y-1 sm:col-span-2">
+                    <label className="text-sm">Page URL</label>
+                    <Input value={pageUrl} readOnly required />
+                  </div>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-sm">Labels</label>
+                  <div className="flex flex-wrap gap-2">
+                    {availableLabels.map((name) => {
+                      const active = selectedLabels.includes(name);
+                      return (
+                        <button
+                          key={name}
+                          type="button"
+                          onClick={() => setSelectedLabels((prev) => active ? prev.filter((n) => n !== name) : [...prev, name])}
+                          className={`px-2 py-1 rounded border text-xs ${active ? 'bg-primary text-primary-foreground' : 'bg-background'}`}
+                        >
+                          {name}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-sm">Steps to reproduce</label>
+                  <Textarea value={steps} onChange={(e) => setSteps(e.target.value)} rows={2} placeholder="1. ... 2. ... 3. ..." />
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <label className="text-sm">Expected</label>
+                    <Textarea value={expected} onChange={(e) => setExpected(e.target.value)} rows={2} />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-sm">Actual</label>
+                    <Textarea value={actual} onChange={(e) => setActual(e.target.value)} rows={2} />
+                  </div>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-sm">Screenshot (optional)</label>
+                  <input type="file" accept="image/*" onChange={(e) => setFile(e.target.files?.[0] || null)} />
+                </div>
               </div>
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-3">
-            <div className="space-y-1">
-              <label className="text-sm">Title</label>
-              <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Short summary" />
+              <DialogFooter className="mt-4">
+                <Button variant="outline" onClick={() => setOpen(false)} disabled={submitting}>Cancel</Button>
+                <Button onClick={handleSubmit} disabled={submitting}>
+                  {submitting ? <span className="inline-flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" />Submitting</span> : 'Submit'}
+                </Button>
+              </DialogFooter>
             </div>
-            <div className="space-y-1">
-              <label className="text-sm">Description</label>
-              <Textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={4} placeholder="What happened?" />
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
-              <div className="space-y-1 sm:col-span-1">
-                <label className="text-sm">Severity</label>
-                <Select value={severity} onValueChange={(v) => setSeverity(v as any)}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="low">Low</SelectItem>
-                    <SelectItem value="medium">Medium</SelectItem>
-                    <SelectItem value="high">High</SelectItem>
-                  </SelectContent>
-                </Select>
+
+            {/* Right side: Recent Issues */}
+            {recentIssues.length > 0 && (
+              <div className="hidden sm:block w-64 shrink-0 border-l pl-6">
+                <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">Recent Activity</h4>
+                <ScrollArea className="h-[450px] pr-2">
+                  <div className="space-y-3">
+                    {recentIssues.map((issue) => (
+                      <div key={issue.number} className="space-y-1">
+                        <div className="flex items-start gap-2">
+                          <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                            {issue.state === 'open' ? (
+                              <CircleDot className="h-3.5 w-3.5 text-green-600 shrink-0" />
+                            ) : (
+                              <CheckCircle2 className="h-3.5 w-3.5 text-blue-600 shrink-0" />
+                            )}
+                            <span className="text-xs font-medium leading-tight line-clamp-2">{issue.title}</span>
+                          </div>
+                          <Badge variant={issue.state === 'open' ? 'secondary' : 'outline'} className="text-[10px] h-4 px-1 capitalize shrink-0">
+                            {issue.state}
+                          </Badge>
+                        </div>
+                        {issue.state === 'closed' && issue.last_comment && (
+                          <div className="flex gap-1.5 pl-5">
+                            <MessageSquare className="h-3 w-3 text-muted-foreground mt-0.5 shrink-0" />
+                            <p className="text-[11px] text-muted-foreground italic line-clamp-2">
+                              "{issue.last_comment}"
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </ScrollArea>
               </div>
-              <div className="space-y-1 sm:col-span-2">
-                <label className="text-sm">Page URL</label>
-                <Input value={pageUrl} readOnly required />
-              </div>
-            </div>
-            <div className="space-y-1">
-              <label className="text-sm">Labels</label>
-              <div className="flex flex-wrap gap-2">
-                {availableLabels.map((name) => {
-                  const active = selectedLabels.includes(name);
-                  return (
-                    <button
-                      key={name}
-                      type="button"
-                      onClick={() => setSelectedLabels((prev) => active ? prev.filter((n) => n !== name) : [...prev, name])}
-                      className={`px-2 py-1 rounded border text-xs ${active ? 'bg-primary text-primary-foreground' : 'bg-background'}`}
-                    >
-                      {name}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-            <div className="space-y-1">
-              <label className="text-sm">Steps to reproduce</label>
-              <Textarea value={steps} onChange={(e) => setSteps(e.target.value)} rows={3} placeholder="1. ... 2. ... 3. ..." />
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div className="space-y-1">
-                <label className="text-sm">Expected</label>
-                <Textarea value={expected} onChange={(e) => setExpected(e.target.value)} rows={2} />
-              </div>
-              <div className="space-y-1">
-                <label className="text-sm">Actual</label>
-                <Textarea value={actual} onChange={(e) => setActual(e.target.value)} rows={2} />
-              </div>
-            </div>
-            <div className="space-y-1">
-              <label className="text-sm">Screenshot (optional)</label>
-              <input type="file" accept="image/*" onChange={(e) => setFile(e.target.files?.[0] || null)} />
-            </div>
+            )}
           </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setOpen(false)} disabled={submitting}>Cancel</Button>
-            <Button onClick={handleSubmit} disabled={submitting}>
-              {submitting ? <span className="inline-flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" />Submitting</span> : 'Submit'}
-            </Button>
-          </DialogFooter>
         </DialogContent>
       </Dialog>
     </>
