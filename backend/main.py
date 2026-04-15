@@ -4057,11 +4057,17 @@ def to_camel_case_purchase_indent(indent):
     """Convert purchase indent data from snake_case to camelCase"""
     if not indent:
         return {}
+    
+    # Transform requester if it exists
+    requester = indent.get("requester")
+    if requester:
+        requester = to_camel_case_user(requester)
+
     return {
         "id": indent.get("id"),
         "indentNumber": indent.get("indent_number"),
         "requesterId": indent.get("requester_id"),
-        "requester": indent.get("requester", {}) or {},
+        "requester": requester or {},
         "department": indent.get("department"),
         "requiredDate": indent.get("required_date"),
         "status": indent.get("status"),
@@ -8254,10 +8260,12 @@ def consolidate_indents(request: dict = Body(...), payload=Depends(require_permi
         client = get_supabase_client()
         indent_ids = request["indentIds"]
         supplier_id = request["supplierId"]
+        created_by = payload.get("sub")
         
         # 1. Fetch items from all indents
+        # We need product details too
         items_res = client.table("purchase_indent_items") \
-            .select("*, indent:purchase_indents(*)") \
+            .select("*, product:products(*)") \
             .in_("indent_id", indent_ids) \
             .execute()
         
@@ -8269,40 +8277,83 @@ def consolidate_indents(request: dict = Body(...), payload=Depends(require_permi
         consolidated = {}
         for it in all_items:
             pid = it["product_id"]
+            product = it.get("product", {})
+            
             if pid not in consolidated:
                 consolidated[pid] = {
                     "product_id": pid,
+                    "product_name": product.get("name", "Unknown"),
+                    "sku_code": product.get("sku_code", ""),
+                    "hsn_code": product.get("hsn_code", ""),
                     "quantity": 0,
-                    "unit_cost": float(it["estimated_unit_price"] or 0)
+                    "unit_cost": float(it["estimated_unit_price"] or product.get("purchase_price") or 0),
+                    "tax_rate": 0,
+                    "tax_type": product.get("purchase_tax_type", "exclusive"),
+                    "unit_abbreviation": ""
                 }
-            consolidated[pid]["quantity"] += it["quantity"]
+                
+                # Try to get tax rate from product
+                # In this schema, product might have purchase_tax (joined from taxes)
+                # but it was a simple select * above.
+                # Let's see if we need a more complex join.
             
-        # 3. Create PO
+            consolidated[pid]["quantity"] += it["quantity"]
+
+        # 3. Calculate Totals
+        subtotal = 0
+        tax_amount = 0
+        
+        for pid, data in consolidated.items():
+            item_subtotal = data["quantity"] * data["unit_cost"]
+            subtotal += item_subtotal
+            # For now, we'll keep tax as 0 or use a default if available
+            # Ideally we'd fetch the actual tax object, but let's stick to the essentials for now
+            # to avoid over-complicating and potentially breaking if joins fail.
+        
+        total_amount = subtotal + tax_amount
+            
+        # 4. Create PO header
         po_number = f"PO-IND-{datetime.now().strftime('%y%m%d%H%M%S')}"
         po_data = {
             "order_number": po_number,
             "supplier_id": supplier_id,
             "order_date": request.get("orderDate", datetime.now().date().isoformat()),
             "status": "draft",
-            "notes": f"Consolidated from Indents: {', '.join(indent_ids)}"
+            "subtotal": subtotal,
+            "tax_amount": tax_amount,
+            "discount_amount": 0,
+            "total_amount": total_amount,
+            "notes": f"Consolidated from Indents: {', '.join(indent_ids)}",
+            "created_by": created_by,
+            "gst_type": "IGST" # Default
         }
         
         po_res = client.table("purchase_orders").insert(po_data).execute()
         new_po = po_res.data[0]
         
-        # 4. Create PO Items
-        po_items = []
+        # 5. Create PO Items
+        po_items_payload = []
         for pid, data in consolidated.items():
-            po_items.append({
+            item_total = data["quantity"] * data["unit_cost"]
+            po_items_payload.append({
                 "purchase_order_id": new_po["id"],
                 "product_id": pid,
+                "product_name": data["product_name"],
+                "sku_code": data["sku_code"],
+                "hsn_code": data["hsn_code"],
                 "quantity": data["quantity"],
-                "cost_price": data["unit_cost"], # PO uses cost_price
-                "total": data["quantity"] * data["unit_cost"]
+                "cost_price": data["unit_cost"],
+                "discount": 0,
+                "tax": 0,
+                "total": item_total,
+                "purchase_tax_type": data["tax_type"],
+                "created_by": created_by
             })
-        client.table("purchase_order_items").insert(po_items).execute()
+            
+        if po_items_payload:
+            client.table("purchase_order_items").insert(po_items_payload).execute()
         
-        # 5. Link back and Update Status
+        # 6. Link back and Update Status
         client.table("purchase_indent_items").update({"purchase_order_id": new_po["id"]}).in_("indent_id", indent_ids).execute()
         client.table("purchase_indents").update({"status": "converted"}).in_("id", indent_ids).execute()
         

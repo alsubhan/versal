@@ -65,7 +65,7 @@ export function PurchaseIndentTable({
 
   const handleSelectAll = (checked: boolean) => {
     if (checked) {
-      onSelectionChange(safeIndents.map(i => i.id));
+      onSelectionChange(safeIndents.filter(i => i.status === 'approved').map(i => i.id));
     } else {
       onSelectionChange([]);
     }
@@ -148,6 +148,7 @@ export function PurchaseIndentTable({
                   <Checkbox 
                     checked={selectedIds.includes(indent.id)}
                     onCheckedChange={(checked) => handleSelectOne(indent.id, !!checked)}
+                    disabled={indent.status !== 'approved'}
                   />
                 </TableCell>
                 <TableCell className="font-medium">{indent.indentNumber}</TableCell>

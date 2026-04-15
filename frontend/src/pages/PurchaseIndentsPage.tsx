@@ -98,13 +98,20 @@ const PurchaseIndentsPage = () => {
     setIsDialogOpen(true);
   };
   
-  const handleEditIndent = (indent: PurchaseIndent) => {
+  const handleEditIndent = async (indent: PurchaseIndent) => {
     if (indent.status === 'approved' || indent.status === 'converted' || indent.status === 'rejected') {
       toast.error(`Cannot edit indent with status "${indent.status}".`);
       return;
     }
-    setEditingIndent(indent);
-    setIsDialogOpen(true);
+    
+    try {
+      const full = await getPurchaseIndent(indent.id);
+      setEditingIndent(full || indent);
+      setIsDialogOpen(true);
+    } catch (e) {
+      setEditingIndent(indent);
+      setIsDialogOpen(true);
+    }
   };
 
   const handleViewIndent = async (indent: PurchaseIndent) => {
