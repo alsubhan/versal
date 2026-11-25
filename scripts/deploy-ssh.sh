@@ -6,7 +6,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 # Configurable via env vars
-REMOTE_HOST="${REMOTE_HOST:-subhan@aifin.tolor.com}"
+REMOTE_HOST="${REMOTE_HOST:-subhan@desk6.tolor.com}"
 REMOTE_PORT="${REMOTE_PORT:-1022}"
 REMOTE_DIR="${REMOTE_DIR:-/home/subhan/versal}"
 SOURCE_DIR="${SOURCE_DIR:-${REPO_ROOT}}"   # default to repo root
