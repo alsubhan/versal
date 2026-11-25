@@ -332,6 +332,18 @@ mkdir -p "${SUPABASE_DATA_ROOT}"
 SUPABASE_DOCKER_DIR="${SUPABASE_DATA_ROOT}/supabase-docker"
 SETUP_SCRIPT="${SCRIPT_DIR}/setup-official-supabase.sh"
 
+# An existing setup copied from a newer upstream Supabase has no 'kong' service
+# (renamed to 'api-gw' in Aug 2026), which this script and docker-compose.versal.yml
+# depend on. Move it aside so the pinned version is installed fresh.
+if [[ -f "${SUPABASE_DOCKER_DIR}/docker-compose.yml" ]] && \
+   ! grep -qE '^  kong:' "${SUPABASE_DOCKER_DIR}/docker-compose.yml"; then
+  BACKUP_DIR="${SUPABASE_DOCKER_DIR}.bak-$(date +%Y%m%d-%H%M%S)"
+  echo ""
+  echo "Existing Supabase Docker setup has no 'kong' service (incompatible upstream version)."
+  echo "Moving it to ${BACKUP_DIR} and reinstalling the pinned version..."
+  mv "${SUPABASE_DOCKER_DIR}" "${BACKUP_DIR}"
+fi
+
 if [[ ! -d "${SUPABASE_DOCKER_DIR}" ]] || [[ ! -f "${SUPABASE_DOCKER_DIR}/docker-compose.yml" ]]; then
   echo ""
   echo "Official Supabase Docker setup not found."
